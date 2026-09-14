@@ -104,6 +104,9 @@ set(SOURCES
     src/CompositeModelCore.cpp
     src/SplintGenerator.cpp
     src/SplintHeightmapGenerator.cpp
+    src/SplintDesignCore.cpp
+    src/SplintContourEditCore.cpp
+    src/SplintPreviewScheduler.cpp
     src/AppStateManager.cpp
     src/LoggerCore.cpp
     src/RegistrationResult.cpp
@@ -149,6 +152,9 @@ set(HEADERS
     src/CompositeModelCore.h
     src/SplintGenerator.h
     src/SplintHeightmapGenerator.h
+    src/SplintDesignCore.h
+    src/SplintContourEditCore.h
+    src/SplintPreviewScheduler.h
     src/AppStateManager.h
     src/LoggerCore.h
     src/RegistrationResult.h
@@ -231,14 +237,24 @@ target_link_libraries(MeshGeneratorTests PRIVATE Qt6::Core ${VTK_LIBRARIES})
 vtk_module_autoinit(TARGETS MeshGeneratorTests MODULES ${VTK_LIBRARIES})
 add_test(NAME MeshGeneratorTests COMMAND MeshGeneratorTests)
 
-add_executable(SplintHeightmapTests tests/SplintHeightmapTests.cpp src/SplintHeightmapGenerator.cpp)
-target_include_directories(SplintHeightmapTests PRIVATE src)
-target_link_libraries(SplintHeightmapTests PRIVATE Qt6::Core ${VTK_LIBRARIES})
-if(MSVC)
-    target_compile_options(SplintHeightmapTests PRIVATE /utf-8)
-endif()
-vtk_module_autoinit(TARGETS SplintHeightmapTests MODULES ${VTK_LIBRARIES})
-add_test(NAME SplintHeightmapTests COMMAND SplintHeightmapTests)
+# Core (no Qt Widgets) test executable registered with CTest.
+function(add_core_test name)
+    add_executable(${name} ${ARGN})
+    target_include_directories(${name} PRIVATE src)
+    target_link_libraries(${name} PRIVATE Qt6::Core Qt6::Concurrent ${VTK_LIBRARIES})
+    if(MSVC)
+        target_compile_options(${name} PRIVATE /utf-8)
+    endif()
+    vtk_module_autoinit(TARGETS ${name} MODULES ${VTK_LIBRARIES})
+    add_test(NAME ${name} COMMAND ${name})
+endfunction()
+
+add_core_test(SplintHeightmapTests tests/SplintHeightmapTests.cpp src/SplintHeightmapGenerator.cpp)
+add_core_test(SplintDesignTests tests/SplintDesignTests.cpp
+    src/SplintDesignCore.cpp src/SplintHeightmapGenerator.cpp)
+add_core_test(SplintContourEditTests tests/SplintContourEditTests.cpp src/SplintContourEditCore.cpp)
+add_core_test(SplintPreviewSchedulerTests tests/SplintPreviewSchedulerTests.cpp
+    src/SplintPreviewScheduler.cpp src/SplintHeightmapGenerator.cpp)
 
 set(SEGMENTATION_TEST_PYTHON "$ENV{DENTALSEGMENTATOR_PYTHON}" CACHE FILEPATH
     "Python with numpy, scipy and SimpleITK for segmentation regression tests")

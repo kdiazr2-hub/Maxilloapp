@@ -39,7 +39,7 @@ struct SplintHeightmapParams
     // ── Build parameters ──────────────────────────────────────────────────
     double edgeOffsetMm = 1.0;       // 0.5–5, steps of 0.5
     double filletMm = 0.0;           // 0–1
-    double clearanceMm = 0.1;        // spherical offset from the teeth
+    double clearanceMm = 0.1;        // spherical offset from the teeth, 0–2
     double minFeatureMm = 0.4;       // 0–1, splint fins narrower than this are removed
     bool impressionUpper = true;     // off: flat side following the points, touching the cusps
     bool impressionLower = true;
@@ -131,6 +131,12 @@ struct SplintHeightmapPrepared
     SplintBoundarySurface lowerSurface;
     SplintHeightMap upperMap;
     SplintHeightMap lowerMap;
+    // Triangles kept for ray casting after cropping geometry that cannot
+    // affect the splint (e.g. bone far from the occlusal band).
+    vtkIdType upperTrianglesUsed = 0;
+    vtkIdType upperTrianglesTotal = 0;
+    vtkIdType lowerTrianglesUsed = 0;
+    vtkIdType lowerTrianglesTotal = 0;
 };
 
 struct SplintHeightmapResult

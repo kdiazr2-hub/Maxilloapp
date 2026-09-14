@@ -39,6 +39,10 @@ constexpr double kContourSampleMm = 0.2;
 constexpr double kMaxHoleAreaMm2 = 25.0;
 constexpr double kMinComponentFraction = 0.10;
 constexpr double kGridMarginMm = 8.0;
+constexpr double kMaxClearanceMm = 2.0;
+// Geometry beyond the point surfaces by more than this is irrelevant to the
+// splint (clamped to the surfaces); must exceed kMaxClearanceMm.
+constexpr double kCropMarginMm = 3.0;
 constexpr double kMaxUndercutAngleDeg = 60.0;
 constexpr double kFarDistance = 1.0e9;
 constexpr size_t kMaxGridCells = 6000000;
@@ -389,6 +393,47 @@ BandScan scanBand(vtkPolyData* mesh, const SplintOcclusalFrame& frame,
     return scan;
 }
 
+// Keeps the triangles that can influence the height map: those reaching below
+// (upper jaw) or above (lower jaw) wLimit whose footprint overlaps the rays.
+vtkSmartPointer<vtkPolyData> cropForRays(vtkPolyData* mesh, const SplintOcclusalFrame& frame, bool upperJaw,
+                                         double wLimit, double uMin, double uMax, double vMin, double vMax)
+{
+    const vtkIdType nPoints = mesh->GetNumberOfPoints();
+    std::vector<Vec3> local(static_cast<size_t>(nPoints));
+    double p[3] = {};
+    for (vtkIdType i = 0; i < nPoints; ++i) {
+        mesh->GetPoint(i, p);
+        local[static_cast<size_t>(i)] = frame.ToLocal({p[0], p[1], p[2]});
+    }
+
+    auto polys = vtkSmartPointer<vtkCellArray>::New();
+    auto it = vtk::TakeSmartPointer(mesh->GetPolys()->NewIterator());
+    for (it->GoToFirstCell(); !it->IsDoneWithTraversal(); it->GoToNextCell()) {
+        vtkIdType npts = 0;
+        const vtkIdType* ids = nullptr;
+        it->GetCurrentCell(npts, ids);
+        double minW = kFarDistance, maxW = -kFarDistance;
+        double bu0 = kFarDistance, bu1 = -kFarDistance, bv0 = kFarDistance, bv1 = -kFarDistance;
+        for (vtkIdType k = 0; k < npts; ++k) {
+            const Vec3& q = local[static_cast<size_t>(ids[k])];
+            minW = std::min(minW, q[2]);
+            maxW = std::max(maxW, q[2]);
+            bu0 = std::min(bu0, q[0]);
+            bu1 = std::max(bu1, q[0]);
+            bv0 = std::min(bv0, q[1]);
+            bv1 = std::max(bv1, q[1]);
+        }
+        const bool reaches = upperJaw ? minW <= wLimit : maxW >= wLimit;
+        if (!reaches || bu1 < uMin || bu0 > uMax || bv1 < vMin || bv0 > vMax)
+            continue;
+        polys->InsertNextCell(npts, ids);
+    }
+    auto out = vtkSmartPointer<vtkPolyData>::New();
+    out->SetPoints(mesh->GetPoints());
+    out->SetPolys(polys);
+    return out;
+}
+
 SplintHeightMap castHeightMap(vtkPolyData* mesh, const SplintOcclusalFrame& frame,
                               int nu, int nv, double u0, double v0, double spacing,
                               const UV& shear, bool upperJaw, double wStart, double wEnd,
@@ -402,6 +447,8 @@ SplintHeightMap castHeightMap(vtkPolyData* mesh, const SplintOcclusalFrame& fram
     map.spacing = spacing;
     map.shear = shear;
     map.values.assign(static_cast<size_t>(nu) * static_cast<size_t>(nv), kNaN);
+    if (mesh->GetNumberOfPolys() == 0)
+        return map;
 
     auto locator = vtkSmartPointer<vtkStaticCellLocator>::New();
     locator->SetDataSet(mesh);
@@ -1172,15 +1219,38 @@ SplintHeightmapPrepared SplintHeightmapGenerator::Prepare(const SplintHeightmapI
         return prep;
     }
 
+    // Rays only need to reach the clamp limit beyond the point surfaces; geometry
+    // past it (bone of a composite) and outside the ray footprint is cropped.
+    const double upperLimit = prep.upperSurface.maxW + kCropMarginMm;
+    const double lowerLimit = prep.lowerSurface.minW - kCropMarginMm;
+    const double upperStart = upperScan.wMin - 1.0;
+    const double upperEnd = std::min(upperScan.wMax, upperLimit) + 1.0;
+    const double lowerStart = lowerScan.wMax + 1.0;
+    const double lowerEnd = std::max(lowerScan.wMin, lowerLimit) - 1.0;
+    const double gridUMax = u0 + (nu - 1) * spacing;
+    const double gridVMax = v0 + (nv - 1) * spacing;
+    const auto cropJaw = [&](vtkPolyData* mesh, bool upperJaw, const UV& shear, double wLimit, double wA, double wB) {
+        const double reach = std::max(std::abs(wA), std::abs(wB));
+        const double du = std::abs(shear[0]) * reach + 1.0;
+        const double dv = std::abs(shear[1]) * reach + 1.0;
+        return cropForRays(mesh, frame, upperJaw, wLimit, u0 - du, gridUMax + du, v0 - dv, gridVMax + dv);
+    };
+    const auto upperRays = cropJaw(upperTri, true, upperShear, upperLimit, upperStart, upperEnd);
+    const auto lowerRays = cropJaw(lowerTri, false, lowerShear, lowerLimit, lowerStart, lowerEnd);
+    prep.upperTrianglesTotal = upperTri->GetNumberOfPolys();
+    prep.upperTrianglesUsed = upperRays->GetNumberOfPolys();
+    prep.lowerTrianglesTotal = lowerTri->GetNumberOfPolys();
+    prep.lowerTrianglesUsed = lowerRays->GetNumberOfPolys();
+
     const qint64 setupMs = timer.elapsed();
-    prep.upperMap = castHeightMap(upperTri, frame, nu, nv, u0, v0, spacing, upperShear, true,
-                                  upperScan.wMin - 1.0, upperScan.wMax + 1.0, inputs);
+    prep.upperMap = castHeightMap(upperRays, frame, nu, nv, u0, v0, spacing, upperShear, true,
+                                  upperStart, upperEnd, inputs);
     if (isCancelled(inputs)) {
         prep.error = cancelledMessage();
         return prep;
     }
-    prep.lowerMap = castHeightMap(lowerTri, frame, nu, nv, u0, v0, spacing, lowerShear, false,
-                                  lowerScan.wMax + 1.0, lowerScan.wMin - 1.0, inputs);
+    prep.lowerMap = castHeightMap(lowerRays, frame, nu, nv, u0, v0, spacing, lowerShear, false,
+                                  lowerStart, lowerEnd, inputs);
     if (isCancelled(inputs)) {
         prep.error = cancelledMessage();
         return prep;
@@ -1193,6 +1263,9 @@ SplintHeightmapPrepared SplintHeightmapGenerator::Prepare(const SplintHeightmapI
                       .arg(prep.upperSurface.quadratic ? QStringLiteral("cuadrática") : QStringLiteral("plana"))
                       .arg(prep.lowerSurface.quadratic ? QStringLiteral("cuadrática") : QStringLiteral("plana"))
                       .arg(frame.anteriorResolved ? QStringLiteral("resuelta") : QStringLiteral("no resuelta (eje PCA)"));
+    prep.report += QStringLiteral(" Triángulos usados: superior %1 de %2, inferior %3 de %4.")
+                       .arg(prep.upperTrianglesUsed).arg(prep.upperTrianglesTotal)
+                       .arg(prep.lowerTrianglesUsed).arg(prep.lowerTrianglesTotal);
     if (upperScan.bandCells == 0)
         prep.report += QStringLiteral(" Advertencia: los dientes superiores no cruzan la franja.");
     if (lowerScan.bandCells == 0)
@@ -1223,7 +1296,7 @@ SplintHeightmapResult SplintHeightmapGenerator::Build(const SplintHeightmapPrepa
     const double v0 = upperMap.v0;
     const size_t cells = static_cast<size_t>(nu) * static_cast<size_t>(nv);
     const double edgeOffset = std::clamp(params.edgeOffsetMm, 0.0, 5.0);
-    const double clearance = std::max(0.0, params.clearanceMm);
+    const double clearance = std::clamp(params.clearanceMm, 0.0, kMaxClearanceMm);
 
     std::vector<float> surfSup(cells), surfInf(cells);
     for (int j = 0; j < nv; ++j)
