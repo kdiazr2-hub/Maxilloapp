@@ -9,6 +9,7 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLocale>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QVBoxLayout>
@@ -285,7 +286,7 @@ SplintDesignPanel::SplintDesignPanel(QWidget* parent)
     auto* bracketForm = new QFormLayout();
     m_bracketOffsetCombo = new QComboBox(extrasBox);
     for (double value : {0.25, 0.5, 0.75, 1.0, 1.5, 2.0})
-        m_bracketOffsetCombo->addItem(tr("%1 mm").arg(value, 0, 'f', 2), value);
+        m_bracketOffsetCombo->addItem(tr("%1 mm").arg(QLocale().toString(value, 'f', 2)), value);
     m_brushRadiusSpin = makeSpin(extrasBox, 0.5, 5.0, 0.25, 2, tr(" mm"));
     bracketForm->addRow(tr("Margen:"), m_bracketOffsetCombo);
     bracketForm->addRow(tr("Radio del pincel:"), m_brushRadiusSpin);
@@ -512,7 +513,7 @@ void SplintDesignPanel::setExtrasSettings(double holeDiameterMm, SplintHoleOrien
         if (std::abs(m_bracketOffsetCombo->itemData(i).toDouble() - bracketOffsetMm) < 1e-6)
             offsetIndex = i;
     if (offsetIndex < 0) {
-        m_bracketOffsetCombo->addItem(tr("%1 mm").arg(bracketOffsetMm, 0, 'f', 2), bracketOffsetMm);
+        m_bracketOffsetCombo->addItem(tr("%1 mm").arg(QLocale().toString(bracketOffsetMm, 'f', 2)), bracketOffsetMm);
         offsetIndex = m_bracketOffsetCombo->count() - 1;
     }
     {
