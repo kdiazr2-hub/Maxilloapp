@@ -31,6 +31,8 @@ inline constexpr int kGenioPlaneLabel      = -320;
 inline constexpr int kGenioCutLineLabel    = -321;
 inline constexpr int kSplintPreviewActorKey = -510;  // live height-map splint preview
 inline constexpr int kSplintContourOverlayKey = 1;   // red contour in the occlusal views
+inline constexpr int kCompositeBlockActorKey = -520; // blue cutting block in MODELOS
+inline constexpr int kCompositeReviewActorKey = -521; // composite under review
 
 inline int objectActorKey(int label)
 {

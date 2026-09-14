@@ -14,6 +14,10 @@
 #include <vtkPolyData.h>
 #include <vtkSTLReader.h>
 #include <vtkSTLWriter.h>
+#include <vtkXMLPolyDataReader.h>
+#include <vtkXMLPolyDataWriter.h>
+
+#include "CompositeBlockCore.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -64,6 +68,16 @@ static QVector<double> jsonToMatrixVector(const QJsonArray& arr)
     return values;
 }
 
+// STL cannot store cell data: composite meshes keep their bone/dental part
+// tags in a VTP file next to the STL, which is preferred when loading.
+static QString partsSidecarPath(const QString& stlPath)
+{
+    QString base = stlPath;
+    if (base.endsWith(QStringLiteral(".stl"), Qt::CaseInsensitive))
+        base.chop(4);
+    return base + QStringLiteral(".vtp");
+}
+
 static bool saveStl(vtkPolyData* mesh, const QString& path, QString* err)
 {
     if (!mesh) return false;
@@ -75,11 +89,31 @@ static bool saveStl(vtkPolyData* mesh, const QString& path, QString* err)
         if (err) *err = QStringLiteral("STL write failed: ") + path;
         return false;
     }
+    const QString sidecar = partsSidecarPath(path);
+    if (CompositeBlockCore::HasParts(mesh)) {
+        auto xml = vtkSmartPointer<vtkXMLPolyDataWriter>::New();
+        xml->SetFileName(sidecar.toLocal8Bit().constData());
+        xml->SetInputData(mesh);
+        xml->SetDataModeToBinary();
+        xml->Write();
+    } else if (QFile::exists(sidecar)) {
+        QFile::remove(sidecar);
+    }
     return true;
 }
 
 static vtkSmartPointer<vtkPolyData> loadStl(const QString& path)
 {
+    const QString sidecar = partsSidecarPath(path);
+    if (QFile::exists(sidecar)) {
+        auto xml = vtkSmartPointer<vtkXMLPolyDataReader>::New();
+        xml->SetFileName(sidecar.toLocal8Bit().constData());
+        xml->Update();
+        auto tagged = vtkSmartPointer<vtkPolyData>::New();
+        tagged->DeepCopy(xml->GetOutput());
+        if (tagged->GetNumberOfPoints() > 0)
+            return tagged;
+    }
     auto r = vtkSmartPointer<vtkSTLReader>::New();
     r->SetFileName(path.toLocal8Bit().constData());
     r->Update();
@@ -212,6 +246,8 @@ bool ProjectSerializer::save(const QString& projectFilePath,
         root[QStringLiteral("splintDesigns")] = state.splintDesigns;
         root[QStringLiteral("activeSplintDesign")] = state.activeSplintDesignId;
     }
+    if (!state.compositeBlocks.isEmpty())
+        root[QStringLiteral("compositeBlocks")] = state.compositeBlocks;
 
     // ── Assets ────────────────────────────────────────────────────────────────
     QJsonObject assets;
@@ -390,6 +426,7 @@ bool ProjectSerializer::load(const QString& projectFilePath,
     // ── Assets ────────────────────────────────────────────────────────────────
     state.splintDesigns = root.value(QStringLiteral("splintDesigns")).toArray();
     state.activeSplintDesignId = root.value(QStringLiteral("activeSplintDesign")).toString();
+    state.compositeBlocks = root.value(QStringLiteral("compositeBlocks")).toObject();
 
     const QJsonObject assets = root[QStringLiteral("assets")].toObject();
 

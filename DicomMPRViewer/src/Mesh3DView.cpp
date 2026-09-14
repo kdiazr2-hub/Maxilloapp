@@ -833,7 +833,7 @@ void Mesh3DView::setMeshScalarColoring(int label, bool enabled)
     if (it == m_meshActors.end()) return;
     if (auto* mapper = vtkPolyDataMapper::SafeDownCast(it->second->GetMapper())) {
         mapper->SetScalarVisibility(enabled ? 1 : 0);
-        mapper->SetScalarModeToUsePointData();
+        mapper->SetScalarModeToDefault(); // point scalars, else cell scalars (composite parts)
         mapper->SetColorModeToDirectScalars();
     }
     render();

@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "MPRView.h"
 #include "Mesh3DView.h"
 #include "ObjectLabels.h"
 #include "ProjectSerializer.h"
@@ -21,7 +22,15 @@
 #include <QTimer>
 #include <QVTKOpenGLNativeWidget.h>
 
+#include <QDoubleSpinBox>
+#include <QMessageBox>
+#include <QStackedWidget>
+
+#include <vtkClipPolyData.h>
 #include <vtkFeatureEdges.h>
+#include <vtkImageData.h>
+#include <vtkMatrix4x4.h>
+#include <vtkPlane.h>
 
 #include <functional>
 #include <iostream>
@@ -257,6 +266,155 @@ public:
         std::cout << "Splint workspace: preview, contour editing, creation, designs and project OK\n";
     }
 
+    // MODELOS composite: block → review (mandatory), link through cuts, splint source, project.
+    static void runCompositeWorkflow(const QString& artifactsDir)
+    {
+        const auto capture = [&artifactsDir](MainWindow& w, const QString& name) {
+            w.m_modelMatchView->render();
+            settle();
+            const QImage view = w.m_modelMatchView->findChild<QVTKOpenGLNativeWidget*>()->grabFramebuffer();
+            const QImage panel = w.m_compositeBlockPanel->grab().toImage();
+            QImage image(std::max(view.width(), panel.width()), view.height() + panel.height(), QImage::Format_RGB32);
+            image.fill(QColor(30, 30, 32));
+            QPainter painter(&image);
+            painter.drawImage(0, 0, view);
+            painter.drawImage(0, view.height(), panel);
+            painter.end();
+            QDir().mkpath(artifactsDir);
+            require(image.save(QDir(artifactsDir).filePath(name)), "composite screenshot not written");
+        };
+        MainWindow window;
+        window.setAttribute(Qt::WA_DontShowOnScreen);
+        window.resize(1700, 950);
+        window.show();
+        settle();
+
+        auto volume = vtkSmartPointer<vtkImageData>::New();
+        volume->SetDimensions(16, 16, 16);
+        volume->SetSpacing(0.5, 0.5, 0.5);
+        volume->AllocateScalars(VTK_SHORT, 1);
+        window.m_volume = volume;
+
+        const auto setJaw = [&window](bool upper) {
+            const auto bone = upper ? boxMesh({-35, 35, -10, 35, 4, 30}, false, false)
+                                    : boxMesh({-35, 35, -10, 35, -30, -4}, false, false);
+            window.m_mesh3DView->addMesh(upper ? 5 : 6, bone, upper ? "Maxilar" : "Mandibula");
+            const auto arch = upper ? upperTeeth({}) : lowerTeeth({});
+            auto registered = vtkSmartPointer<vtkPolyData>::New();
+            registered->DeepCopy(arch);
+            auto identity = vtkSmartPointer<vtkMatrix4x4>::New();
+            identity->Identity();
+            if (upper) {
+                window.m_upperArchOriginalMesh = arch;
+                window.m_upperArchMesh = registered;
+                window.m_upperArchRegistrationMatrix = identity;
+                window.m_upperRegistrationCalculated = true;
+            } else {
+                window.m_lowerArchOriginalMesh = arch;
+                window.m_lowerArchMesh = registered;
+                window.m_lowerArchRegistrationMatrix = identity;
+                window.m_lowerRegistrationCalculated = true;
+            }
+        };
+        setJaw(true);
+        window.setModelsWorkspace(true);
+        settle();
+
+        // Fine adjustment: the registered scan is drawn on the CT slices.
+        window.updateModelWorkflowUi();
+        require(window.m_axialView && window.m_axialView->surfaceContourCount() == 1,
+                "registered scan contour not sent to the CT slices");
+
+        // Block stage.
+        window.m_modelStepStack->setCurrentIndex(0);
+        window.createDentalCompositeModels();
+        require(window.m_compositeStage == MainWindow::CompositeStage::Block, "composite did not open the block stage");
+        require(window.m_upperCompositeBlock.valid && std::abs(window.m_upperCompositeBlock.sizeMm[2] - 15.0) < 1e-9,
+                "initial cutting block is not 15 mm thick");
+        require(window.m_modelMatchView->meshData(kCompositeBlockActorKey) != nullptr, "cutting block not shown");
+        require(window.m_compositeBlockPanel->isVisibleTo(&window), "block panel not shown");
+        window.m_compositeThicknessSpin->setValue(12.0);
+        require(std::abs(window.m_upperCompositeBlock.sizeMm[2] - 12.0) < 1e-9, "thickness control did not resize the block");
+        window.m_compositeThicknessSpin->setValue(15.0);
+        window.m_modelMatchView->setStandardView(0);
+        capture(window, QStringLiteral("composite-block.png"));
+
+        // Review is mandatory; Atrás returns to the block without storing anything.
+        const auto waitReview = [&] {
+            return waitFor([&] {
+                return !window.m_compositeInProgress && window.m_compositeStage == MainWindow::CompositeStage::Review;
+            }, 60000);
+        };
+        window.calculateBlockComposite();
+        require(waitReview(), "composite review never opened");
+        require(!window.m_upperCompositeMesh, "composite stored before review");
+        require(CompositeBlockCore::HasParts(window.m_compositeReviewMesh), "reviewed composite has no linked parts");
+        window.m_modelMatchView->setStandardView(0);
+        capture(window, QStringLiteral("composite-review.png"));
+        window.backToCompositeBlockStage();
+        require(window.m_compositeStage == MainWindow::CompositeStage::Block && !window.m_upperCompositeMesh,
+                "Atrás did not return to the block stage");
+        window.calculateBlockComposite();
+        require(waitReview(), "composite review never reopened");
+        window.acceptCompositeReview();
+        require(window.m_compositeStage == MainWindow::CompositeStage::None &&
+                    CompositeBlockCore::HasParts(window.m_upperCompositeMesh) &&
+                    window.objectEntryExists(kUpperCompositeLabel),
+                "accepted composite not stored");
+
+        // A chained creation cannot skip the review.
+        setJaw(false);
+        window.m_autoCreateBothComposites = true;
+        window.m_modelStepStack->setCurrentIndex(1);
+        window.createDentalCompositeModels();
+        require(window.m_compositeStage == MainWindow::CompositeStage::Block && !window.m_lowerCompositeMesh,
+                "chained composite skipped the block and review stages");
+        window.cancelCompositeStage();
+        require(window.m_compositeStage == MainWindow::CompositeStage::None && !window.m_autoCreateBothComposites,
+                "cancel did not leave the composite stage");
+
+        // Link: a Le Fort-like cut keeps the scan with the tooth-bearing segment; the splint uses it.
+        auto plane = vtkSmartPointer<vtkPlane>::New();
+        plane->SetOrigin(0.0, 0.0, 12.0);
+        plane->SetNormal(0.0, 0.0, -1.0);
+        auto clip = vtkSmartPointer<vtkClipPolyData>::New();
+        clip->SetInputData(window.m_upperCompositeMesh);
+        clip->SetClipFunction(plane);
+        clip->Update();
+        auto segment = vtkSmartPointer<vtkPolyData>::New();
+        segment->DeepCopy(clip->GetOutput());
+        window.m_leFortSegmentMesh = segment;
+        const auto dental = CompositeBlockCore::ExtractPart(segment, CompositeBlockCore::DentalPart);
+        const auto source = window.splintSourceMesh(kLeFortSegLabel);
+        require(dental && source && source->GetNumberOfPolys() == dental->GetNumberOfPolys(),
+                "splint source is not the dental part of the Le Fort segment");
+
+        // Export union of the composite is a single closed mesh.
+        const VoxelUnionResult united = CompositeBlockCore::VoxelUnion({window.m_upperCompositeMesh.Get()}, 0.5, 3);
+        require(united.ok && isClosed(united.mesh), "voxel union of the composite is not closed");
+
+        // Save and reopen keeps the block and the link.
+        QTemporaryDir dir;
+        require(dir.isValid(), "no temporary directory");
+        const QString path = dir.filePath(QStringLiteral("compuesto.maxilloproject"));
+        QString error;
+        require(ProjectSerializer::save(path, window.collectProjectState(), &error), "save failed: " + error.toStdString());
+        ProjectState loaded;
+        require(ProjectSerializer::load(path, loaded, &error), "load failed: " + error.toStdString());
+        MainWindow reopened;
+        reopened.setAttribute(Qt::WA_DontShowOnScreen);
+        reopened.show();
+        settle();
+        reopened.applyProjectState(loaded);
+        settle();
+        require(CompositeBlockCore::HasParts(reopened.m_upperCompositeMesh), "composite link lost after reopening");
+        require(reopened.m_upperCompositeBlock.valid &&
+                    reopened.m_upperCompositeBlock.center == window.m_upperCompositeBlock.center &&
+                    reopened.m_upperCompositeBlock.sizeMm == window.m_upperCompositeBlock.sizeMm,
+                "cutting block lost after reopening");
+        std::cout << "Composite workspace: block, mandatory review, link, splint source, union and project OK\n";
+    }
+
 private:
     static QImage composeWorkspace(MainWindow& window)
     {
@@ -292,8 +450,24 @@ int main(int argc, char** argv)
     const QString artifacts = argc > 1
         ? QString::fromLocal8Bit(argv[1])
         : QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("../workspace-test-artifacts"));
+    // Any unexpected modal dialog would block the run: close it and fail.
+    QStringList unexpectedDialogs;
+    QTimer dialogWatchdog;
+    QObject::connect(&dialogWatchdog, &QTimer::timeout, [&unexpectedDialogs] {
+        if (auto* modal = QApplication::activeModalWidget()) {
+            const auto* box = qobject_cast<QMessageBox*>(modal);
+            unexpectedDialogs << (box ? box->text() : modal->windowTitle());
+            modal->close();
+        }
+    });
+    dialogWatchdog.start(250);
     try {
         SplintWorkspaceTests::run(artifacts);
+        SplintWorkspaceTests::runCompositeWorkflow(artifacts);
+        if (!unexpectedDialogs.isEmpty()) {
+            std::cerr << "FAIL unexpected dialogs: " << unexpectedDialogs.join(QStringLiteral(" | ")).toStdString() << '\n';
+            return 1;
+        }
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "FAIL " << error.what() << '\n';

@@ -604,8 +604,14 @@ vtkSmartPointer<vtkPolyData> MainWindow::splintSourceMesh(int choice) const
     SplintSourceCacheEntry& entry = m_splintSourceCache[choice];
     if (!entry.mesh || entry.fingerprint != fingerprint) {
         entry.fingerprint = fingerprint;
-        entry.mesh = vtkSmartPointer<vtkPolyData>::New();
-        entry.mesh->DeepCopy(mesh);
+        // Composite sources (and their osteotomy segments) carry the linked
+        // high-resolution scan: the splint is built on that dental part.
+        if (auto dental = CompositeBlockCore::ExtractPart(mesh, CompositeBlockCore::DentalPart)) {
+            entry.mesh = dental;
+        } else {
+            entry.mesh = vtkSmartPointer<vtkPolyData>::New();
+            entry.mesh->DeepCopy(mesh);
+        }
     }
     return entry.mesh;
 }

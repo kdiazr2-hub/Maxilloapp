@@ -2394,6 +2394,7 @@ void MainWindow::buildCentralWidget()
     connect(m_compositeButton, &QPushButton::clicked,
             this, &MainWindow::createDentalCompositeModels);
     modelPanelLayout->addWidget(m_compositeButton, 0);
+    modelPanelLayout->addWidget(buildCompositeBlockPanel(modelPanel), 0);
 
     // ── Wire all model views ──────────────────────────────────────────
     auto wireModelView = [this](Mesh3DView* view) {
@@ -5314,6 +5315,10 @@ void MainWindow::setModelsWorkspace(bool enabled)
         m_viewModeStack->setCurrentIndex(enabled ? 1 : 0);
     if (enabled) {
         updateButtonStates();
+        if (m_compositeStage != CompositeStage::None) {
+            showCompositeStage();
+            return;
+        }
         // If both composites already exist, jump directly to final view
         if (m_upperCompositeMesh && m_lowerCompositeMesh) {
             showFinalCompositeView();
@@ -5891,6 +5896,7 @@ ProjectState MainWindow::collectProjectState() const
     }
 
     state.splintDesigns = SplintDesignCore::DesignsToJson(m_splintDesigns);
+    state.compositeBlocks = compositeBlocksJson();
     if (m_activeSplintDesign >= 0 && m_activeSplintDesign < static_cast<int>(m_splintDesigns.size()))
         state.activeSplintDesignId = m_splintDesigns[static_cast<size_t>(m_activeSplintDesign)].id;
     return state;
@@ -6120,6 +6126,7 @@ void MainWindow::applyProjectState(const ProjectState& state)
     restoreSpecial(m_intermediateSplintMesh.Get(), kIntermediateSplintLabel);
     restoreSpecial(m_finalSplintMesh.Get(),        kFinalSplintLabel);
     restoreSplintDesigns(state);
+    restoreCompositeBlocks(state);
     syncVisibilityPanelToAllViews();
 
     // ── Populate MODELOS views ────────────────────────────────────────────
@@ -6400,6 +6407,7 @@ void MainWindow::updateButtonStates()
 
 void MainWindow::updateModelWorkflowUi()
 {
+    refreshRegisteredArchContours();
     const int step = m_modelStepStack ? m_modelStepStack->currentIndex() : 0;
     const bool finalComposite = m_upperCompositeMesh && m_lowerCompositeMesh;
     const bool upperStep = !finalComposite && step == 0;
@@ -6458,6 +6466,12 @@ void MainWindow::updateModelWorkflowUi()
     showOnly(m_exportPackAct, false, false);
     showOnly(m_clearPtsAct, false, false);
     showOnly(m_resetArchAct, false, false);
+
+    if (m_compositeStage != CompositeStage::None) {
+        // The block / review panel drives the workflow until the composite is accepted.
+        if (m_compositeButton) m_compositeButton->setVisible(false);
+        return;
+    }
 
     if (finalComposite) {
         showOnly(m_modelBackAct, true, true);
@@ -13604,45 +13618,9 @@ void MainWindow::createDentalCompositeModels()
     qInfo().noquote() << "Validacion previa compuesto:";
     qInfo().noquote() << scaleReport;
 
-    auto boneCopy = vtkSmartPointer<vtkPolyData>::New();
-    boneCopy->DeepCopy(bone);
-    auto archCopy = vtkSmartPointer<vtkPolyData>::New();
-    archCopy->DeepCopy(arch);
-
-    m_compositeInProgress = true;
-    if (m_compositeButton) {
-        m_compositeButton->setEnabled(false);
-        m_compositeButton->setText(tr("Calculando..."));
-    }
-    if (m_progressBar) {
-        m_progressBar->setRange(0, 0);
-        m_progressBar->setVisible(true);
-    }
-    statusBar()->showMessage(currentStep == 0
-        ? tr("Calculando modelo compuesto superior en segundo plano...")
-        : tr("Calculando modelo compuesto inferior en segundo plano..."));
-
-    QThread* worker = QThread::create([this, currentStep, boneCopy, archCopy]() {
-        QString report;
-        QString error;
-        auto result = CompositeModelCore::CreateNonDestructiveComposite(
-            boneCopy.GetPointer(),
-            nullptr,
-            archCopy.GetPointer(),
-            nullptr,
-            currentStep == 0 ? QStringLiteral("Maxilar") : QStringLiteral("Mandibula"),
-            &report,
-            &error);
-        if (!report.isEmpty())
-            qInfo().noquote() << "CompositeModelCore:" << report;
-        if (!error.isEmpty())
-            qWarning().noquote() << "CompositeModelCore:" << error;
-        QMetaObject::invokeMethod(this, [this, currentStep, result]() {
-            onDentalCompositeFinished(currentStep, result);
-        }, Qt::QueuedConnection);
-    });
-    connect(worker, &QThread::finished, worker, &QObject::deleteLater);
-    worker->start();
+    // Registrar → Ajuste fino → Bloque → Revisar (MainWindowComposite.cpp): the
+    // composite is computed from the cutting block and stored only after review.
+    startCompositeBlockStage(currentStep);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -13724,9 +13702,11 @@ void MainWindow::showRegistrationReview(int step)
             m_compositeButton->setText(tr("Calculando..."));
             m_compositeButton->setEnabled(false);
 
-            // m_autoCreateBothComposites chains: upper done → auto lower → orientation
+            // Chains upper → lower → orientation; each composite still goes through its review.
             m_autoCreateBothComposites = true;
-            createDentalCompositeModels();  // creates upper (step 0)
+            if (m_upperCompositeMesh && m_modelStepStack)
+                m_modelStepStack->setCurrentIndex(1);
+            createDentalCompositeModels();
         });
     }
 }
@@ -13958,16 +13938,8 @@ void MainWindow::exportDentalCompositeStl()
         this, tr("Exportar modelo compuesto STL"), QStringLiteral("modelo_compuesto.stl"), tr("STL (*.stl)"));
     if (path.isEmpty()) return;
 
-    auto writer = vtkSmartPointer<vtkSTLWriter>::New();
-    writer->SetFileName(path.toLocal8Bit().constData());
-    writer->SetInputData(finalMesh);
-    writer->SetFileTypeToBinary();
-    if (writer->Write() == 0) {
-        QMessageBox::critical(this, tr("Exportar STL"), tr("No se pudo escribir el STL."));
-        return;
-    }
-    LoggerCore::instance().logExport(path, QStringLiteral("composite_stl"));
-    statusBar()->showMessage(tr("Modelo compuesto exportado: %1").arg(path));
+    // Offers a voxel union into a single closed printable mesh (MainWindowComposite.cpp).
+    writeCompositeStl(parts, finalMesh, path);
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)

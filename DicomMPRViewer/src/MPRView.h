@@ -28,7 +28,15 @@ class QVTKOpenGLNativeWidget;
 class MPRViewInteractionCallback;
 class MeasurementOverlay;
 class SegmentationOverlay;
+class SurfaceContourOverlay;
 struct Measurement;
+
+// A surface drawn as its intersection with the current slice.
+struct MPRSurfaceContour
+{
+    vtkSmartPointer<vtkPolyData> mesh;
+    std::array<double, 3> color{1.0, 0.82, 0.0};
+};
 
 QT_BEGIN_NAMESPACE
 class QSlider;
@@ -88,6 +96,9 @@ public:
     void setSegmentationHiddenLabels(const std::set<int>& hiddenLabels);
     void setSegmentationVisible(bool visible);
     void setSegmentationOpacity(double opacity);
+    // Surfaces (e.g. registered intraoral scans) drawn as contours on the slice.
+    void setSurfaceContours(const std::vector<MPRSurfaceContour>& contours);
+    int surfaceContourCount() const;
     MPROrientation orientation() const { return m_orientation; }
 
     int currentSlice() const;
@@ -133,6 +144,7 @@ private:
     int sliceAxis() const;
     void planeAxes(int& horizontalAxis, int& verticalAxis, int& normalAxis) const;
     int sliceIndexFromCursor() const;
+    double slicePosition() const;
     int clampSlice(int value) const;
     void setSliceIndex(int value, bool notify);
     void updateCursorCenterFromSlice(int index);
@@ -149,6 +161,8 @@ private:
     vtkSmartPointer<vtkPolyData>           m_crosshairVerticalData;
     std::unique_ptr<MeasurementOverlay>    m_measurementOverlay;
     std::unique_ptr<SegmentationOverlay>   m_segmentationOverlay;
+    std::unique_ptr<SurfaceContourOverlay> m_surfaceContourOverlay;
+    std::vector<MPRSurfaceContour>         m_surfaceContours;
 
     QVTKOpenGLNativeWidget* m_vtkWidget  = nullptr;
     QSlider*                m_slider     = nullptr;

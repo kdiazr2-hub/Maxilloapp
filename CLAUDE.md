@@ -58,5 +58,11 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   `SplintContourEditCore`, `SplintPreviewScheduler` (background preview); UI in `SplintDesignPanel` and
   `MainWindowSplint.cpp` (MainWindow methods kept out of `MainWindow.cpp`). The classic `SplintGenerator` stays behind the "Método" selector.
 - Object label constants and `objectActorKey` live in `ObjectLabels.h`.
+- Composites: `CompositeBlockCore` cuts bone outside / intraoral scan inside an oriented block and merges them into one
+  mesh whose cells carry `CompositePart` (0 bone, 1 dental). Clips, transforms, clean and normals keep that cell data,
+  so the scan follows its bone through orientation, osteotomies and repositioning; `ExtractPart` recovers it (the splint
+  uses it). STL drops cell data: `ProjectSerializer` stores a `.vtp` next to tagged meshes. Avoid filters that drop cell
+  data (e.g. appending with untagged meshes) on composites and their segments. MODELOS flow in `MainWindowComposite.cpp`
+  (Registrar → Ajuste fino with scan contours on the MPR slices → Bloque → Revisar, review never skipped).
 
 `README.md` documents the load pipeline and cache but its build section is outdated.

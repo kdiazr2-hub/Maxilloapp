@@ -10,6 +10,7 @@
 #include "ProjectSerializer.h"
 #include "AppStateManager.h"
 #include "SplintDesignCore.h"
+#include "CompositeBlockCore.h"
 #include "RegistrationResult.h"
 
 #include <QList>
@@ -860,4 +861,59 @@ private:
     // Dialog hooks, replaced by the workspace tests.
     std::function<bool(const QString&)> m_splintConfirm;
     std::function<std::optional<QString>(const QString&, const QString&)> m_splintAskName;
+
+    // ── Composite with cutting block (implemented in MainWindowComposite.cpp) ──
+    // Registrar → Ajuste fino → Bloque → Revisar: a composite is only stored
+    // after the user accepts its review.
+    enum class CompositeStage { None, Block, Computing, Review };
+    QWidget* buildCompositeBlockPanel(QWidget* parent);
+    void startCompositeBlockStage(int step);
+    void showCompositeStage();
+    void updateCompositeStagePanel();
+    void updateCompositeBlockDisplay();
+    void updateCompositeReviewDisplay();
+    void onCompositeBlockSizeChanged();
+    void startCompositeBlockGizmo();
+    void acceptCompositeBlockGizmo();
+    void onCompositeBlockGizmoUpdated(int meshLabel, vtkSmartPointer<vtkPolyData> newMesh);
+    void resetCompositeBlock();
+    void calculateBlockComposite();
+    void onBlockCompositeCalculated(int step, const CompositeBlockResult& result);
+    void backToCompositeBlockStage();
+    void acceptCompositeReview();
+    void cancelCompositeStage();
+    void showCompositeSlicesInCt();
+    bool compositeBlockMethodActive() const;
+    CompositeCutBlock& compositeBlockForStep(int step);
+    vtkSmartPointer<vtkPolyData> compositeDentalForStep(int step, QString* error) const;
+    void refreshRegisteredArchContours();
+    void writeCompositeStl(const QVector<vtkSmartPointer<vtkPolyData>>& parts, vtkSmartPointer<vtkPolyData> mergedMesh,
+                           const QString& path);
+    QJsonObject compositeBlocksJson() const;
+    void restoreCompositeBlocks(const ProjectState& state);
+
+    CompositeStage               m_compositeStage = CompositeStage::None;
+    int                          m_compositeStageStep = 0;
+    CompositeCutBlock            m_upperCompositeBlock;
+    CompositeCutBlock            m_lowerCompositeBlock;
+    CompositeCutBlock            m_compositeBlockAtGizmoStart;
+    bool                         m_compositeBlockGizmoActive = false;
+    vtkSmartPointer<vtkPolyData> m_compositeReviewMesh;
+    QString                      m_compositeReviewReport;
+    QWidget*                     m_compositeBlockPanel = nullptr;
+    QWidget*                     m_compositeBlockControls = nullptr;
+    QWidget*                     m_compositeReviewControls = nullptr;
+    QLabel*                      m_compositeStageLabel = nullptr;
+    QComboBox*                   m_compositeMethodCombo = nullptr;
+    QDoubleSpinBox*              m_compositeWidthSpin = nullptr;
+    QDoubleSpinBox*              m_compositeLengthSpin = nullptr;
+    QDoubleSpinBox*              m_compositeThicknessSpin = nullptr;
+    QPushButton*                 m_compositeGizmoButton = nullptr;
+    QPushButton*                 m_compositeAcceptGizmoButton = nullptr;
+    QPushButton*                 m_compositeResetButton = nullptr;
+    QPushButton*                 m_compositeCalculateButton = nullptr;
+    vtkSmartPointer<vtkPolyData> m_contourUpperArchMesh;
+    vtkSmartPointer<vtkPolyData> m_contourLowerArchMesh;
+    vtkMTimeType                 m_contourUpperArchTime = 0;
+    vtkMTimeType                 m_contourLowerArchTime = 0;
 };

@@ -1,4 +1,5 @@
 #include "MPRView.h"
+#include "SurfaceContourOverlay.h"
 #include "CranioPalette.h"
 #include "MeasurementOverlay.h"
 #include "SegmentationOverlay.h"
@@ -412,6 +413,14 @@ void MPRView::initViewer()
         m_segmentationOverlay->setRenderer(m_viewer->GetRenderer());
     }
     m_segmentationOverlay->setCurrentSlice(currentSlice());
+    if (!m_surfaceContourOverlay) {
+        m_surfaceContourOverlay = std::make_unique<SurfaceContourOverlay>(
+            m_viewer->GetRenderer(), m_orientation);
+    } else {
+        m_surfaceContourOverlay->setRenderer(m_viewer->GetRenderer());
+    }
+    m_surfaceContourOverlay->setSurfaces(m_surfaceContours);
+    m_surfaceContourOverlay->setSlicePosition(slicePosition());
 
     if (m_viewer->GetRenderer()) {
         m_viewer->GetRenderer()->ResetCamera();
@@ -470,6 +479,9 @@ void MPRView::syncFromCursor()
     }
     if (m_segmentationOverlay) {
         m_segmentationOverlay->setCurrentSlice(index);
+    }
+    if (m_surfaceContourOverlay) {
+        m_surfaceContourOverlay->setSlicePosition(slicePosition());
     }
     refreshSliceLabel();
 }
@@ -813,6 +825,31 @@ void MPRView::updateCursorCenterFromSlice(int index)
 }
 
 int MPRView::currentSlice() const { return sliceIndexFromCursor(); }
+
+double MPRView::slicePosition() const
+{
+    if (!m_imageData) return 0.0;
+    double origin[3] = {};
+    double spacing[3] = {1.0, 1.0, 1.0};
+    m_imageData->GetOrigin(origin);
+    m_imageData->GetSpacing(spacing);
+    const int axis = sliceAxis();
+    return origin[axis] + currentSlice() * spacing[axis];
+}
+
+void MPRView::setSurfaceContours(const std::vector<MPRSurfaceContour>& contours)
+{
+    m_surfaceContours = contours;
+    if (m_surfaceContourOverlay) {
+        m_surfaceContourOverlay->setSurfaces(m_surfaceContours);
+        if (m_imageData) m_viewer->Render();
+    }
+}
+
+int MPRView::surfaceContourCount() const
+{
+    return static_cast<int>(m_surfaceContours.size());
+}
 
 void MPRView::frameAnatomyOnCurrentSlice()
 {

@@ -20,6 +20,7 @@
 
 #include <QColor>
 #include <QJsonArray>
+#include <QJsonObject>
 #include <QMap>
 #include <QString>
 #include <QVector>
@@ -107,6 +108,9 @@ struct ProjectState
     // ── Splint designs (SplintDesignCore JSON; empty in older projects) ───────
     QJsonArray splintDesigns;
     QString    activeSplintDesignId;
+
+    // ── Composite cutting blocks {"upper": block, "lower": block} (optional) ───
+    QJsonObject compositeBlocks;
 };
 
 class ProjectSerializer

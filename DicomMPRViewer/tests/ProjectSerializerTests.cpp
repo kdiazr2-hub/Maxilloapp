@@ -1,9 +1,12 @@
+#include "CompositeBlockCore.h"
 #include "ProjectSerializer.h"
 #include "SplintDesignCore.h"
 
 #include <QFile>
 #include <QTemporaryDir>
 
+#include <vtkAppendPolyData.h>
+#include <vtkCellData.h>
 #include <vtkCubeSource.h>
 
 #include <functional>
@@ -65,6 +68,53 @@ void testSplintDesignsRoundTrip()
             "designs not restorable from the project");
 }
 
+void testCompositePartsAndBlocksRoundTrip()
+{
+    QTemporaryDir dir;
+    require(dir.isValid(), "no temporary directory");
+    const QString path = dir.filePath(QStringLiteral("compuesto.maxilloproject"));
+
+    auto boneSource = vtkSmartPointer<vtkCubeSource>::New();
+    boneSource->SetCenter(0.0, 0.0, 20.0);
+    boneSource->Update();
+    auto dentalSource = vtkSmartPointer<vtkCubeSource>::New();
+    dentalSource->Update();
+    auto append = vtkSmartPointer<vtkAppendPolyData>::New();
+    append->AddInputData(CompositeBlockCore::TagPart(boneSource->GetOutput(), CompositeBlockCore::BonePart));
+    append->AddInputData(CompositeBlockCore::TagPart(dentalSource->GetOutput(), CompositeBlockCore::DentalPart));
+    append->Update();
+    auto composite = vtkSmartPointer<vtkPolyData>::New();
+    composite->DeepCopy(append->GetOutput());
+
+    CompositeCutBlock block;
+    block.center = {1.0, 2.0, 3.0};
+    block.sizeMm = {40.0, 30.0, 15.0};
+    block.valid = true;
+    ProjectState state;
+    state.upperCompositeMesh = composite;
+    state.compositeBlocks[QStringLiteral("upper")] = CompositeBlockCore::BlockToJson(block);
+
+    QString error;
+    require(ProjectSerializer::save(path, state, &error), "save failed: " + error.toStdString());
+    ProjectState loaded;
+    require(ProjectSerializer::load(path, loaded, &error), "load failed: " + error.toStdString());
+    require(CompositeBlockCore::HasParts(loaded.upperCompositeMesh), "composite part tags lost on disk");
+    const auto dental = CompositeBlockCore::ExtractPart(loaded.upperCompositeMesh, CompositeBlockCore::DentalPart);
+    require(dental && dental->GetNumberOfPolys() == dentalSource->GetOutput()->GetNumberOfPolys(),
+            "dental part changed on disk");
+    const CompositeCutBlock restored = CompositeBlockCore::BlockFromJson(loaded.compositeBlocks.value(QStringLiteral("upper")).toObject());
+    require(restored.valid && restored.center == block.center && restored.sizeMm == block.sizeMm, "cutting block lost on disk");
+
+    // An untagged mesh saved over it must not come back with stale tags.
+    loaded.upperCompositeMesh = CompositeBlockCore::ExtractPart(loaded.upperCompositeMesh, CompositeBlockCore::BonePart);
+    loaded.upperCompositeMesh->GetCellData()->RemoveArray(CompositeBlockCore::PartArrayName);
+    require(ProjectSerializer::save(path, loaded, &error), "resave failed: " + error.toStdString());
+    ProjectState reloaded;
+    require(ProjectSerializer::load(path, reloaded, &error), "reload failed: " + error.toStdString());
+    require(reloaded.upperCompositeMesh && !CompositeBlockCore::HasParts(reloaded.upperCompositeMesh),
+            "stale part tags came back after saving an untagged composite");
+}
+
 void testLegacyProjectWithoutDesigns()
 {
     QTemporaryDir dir;
@@ -96,6 +146,7 @@ int main()
 {
     const std::vector<std::pair<const char*, std::function<void()>>> tests = {
         {"splint designs round trip", testSplintDesignsRoundTrip},
+        {"composite parts and blocks round trip", testCompositePartsAndBlocksRoundTrip},
         {"legacy project without designs", testLegacyProjectWithoutDesigns},
     };
     int failures = 0;
