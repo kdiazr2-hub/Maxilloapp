@@ -30,6 +30,7 @@ Qt, VTK and GDCM DLLs are already deployed in `build/Release`. Scripts in `scrip
 
 Tests (CTest):
 - `GeometryCoreTests`, `BoneCavityFillTests`, `MeshGeneratorTests` — plain C++ executables
+- `MaskToObjectTests` checks exact label extraction, committed cavity filling and immutable input.
 - `SplintHeightmapTests`, `SplintDesignTests`, `SplintContourEditTests`, `SplintPreviewSchedulerTests`, `ProjectSerializerTests`, `CompositeBlockTests`, `MeshRepairTests`, `OsteotomyCoreTests` — core tests declared with `add_core_test()`; synthetic arches in `tests/SplintTestGeometry.h`
 - `SplintWorkspaceTests` also covers the composite block flow and the osteotomy wizard (Le Fort I → BSSO → genioplasty)
 - `RepositionWorkspaceTests`, `SplintWorkspaceTests` — instantiate `MainWindow` (declared `friend`), render offscreen, write PNGs to `build/workspace-test-artifacts`
@@ -65,6 +66,8 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   `OsteotomyWizardPanel` + `MainWindowOsteotomy.cpp` (tipo → hueso → puntos → trayectoria → finalizar); results land in the
   existing segment members/labels (Le Fort 205/206, BSSO 208–211, genioplasty 212/213). The old ribbon osteotomy actions in `MainWindow.cpp` are hidden but kept.
 - Object label constants and `objectActorKey` live in `ObjectLabels.h`.
+- Mask conversion uses `MaskToObjectCore` and `MainWindowSegmentation.cpp`: extract the current
+  label without smoothing or new filling; update object actors only, leaving mask data and display intact.
 - Composites: `CompositeBlockCore` cuts bone outside / intraoral scan inside an oriented block and merges them into one
   mesh whose cells carry `CompositePart` (0 bone, 1 dental). Clips, transforms, clean and normals keep that cell data,
   so the scan follows its bone through orientation, osteotomies and repositioning; `ExtractPart` recovers it (the splint

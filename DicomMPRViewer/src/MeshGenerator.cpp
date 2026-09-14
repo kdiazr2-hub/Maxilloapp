@@ -161,7 +161,9 @@ vtkSmartPointer<vtkPolyData> MeshGenerator::generateMesh(vtkImageData* labelmap,
     normals->SetInputConnection(meshPort);
     normals->ConsistencyOn();
     normals->SplittingOff();
-    normals->AutoOrientNormalsOn();
+    // Contours already point out of the selected label, including into cavities.
+    // Auto-orienting each disconnected shell would turn an inner cavity inside out.
+    normals->AutoOrientNormalsOff();
     normals->Update();
 
     vtkPolyData* output = normals->GetOutput();

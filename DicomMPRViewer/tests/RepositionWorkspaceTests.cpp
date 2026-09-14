@@ -320,12 +320,12 @@ public:
         window.m_repositionRotationDeg[206] = QVector3D(1, 2, 3);
         window.m_repositionOriginalMeshes[206] = segmentSource->GetOutput();
         window.m_repositionView->addMesh(1206, segmentSource->GetOutput(), "Moved Le Fort");
-        window.calculateObjectFromMask(5, MainWindow::MeshSmoothingPreset::Light);
+        const auto originalMaskSurface = window.m_mesh3DView->meshData(5);
+        window.calculateObjectFromMask(5);
         auto recalculated = window.meshForAnatomicLabel(5);
-        require(recalculated == window.m_mesh3DView->meshData(5), "Recalculation left an old mask copy");
+        require(originalMaskSurface == window.m_mesh3DView->meshData(5), "Conversion changed the mask surface");
         for (auto* view : views) {
-            for (int key : {5, 1005})
-                if (auto mesh = view->meshData(key))
+                if (auto mesh = view->meshData(1005))
                     require(mesh == recalculated, "Recalculation did not reach every source-bone view");
         }
         require(window.m_leFortSegmentMesh == segmentSource->GetOutput()
@@ -344,8 +344,8 @@ public:
             saved.maskMeshes[label] = window.m_mesh3DView->meshData(label);
             saved.objectMeshes[label] = window.m_mesh3DView->meshData(1000 + label);
         }
-        require(saved.maskMeshes.value(5) == recalculated && saved.objectMeshes.value(5) == recalculated,
-                "Saving would persist different versions of the same bone");
+        require(saved.maskMeshes.value(5) == originalMaskSurface && saved.objectMeshes.value(5) == recalculated,
+                "Saving did not preserve separate mask and converted object surfaces");
         const QString projectPath = temp.filePath("sync.maxilloproject");
         require(ProjectSerializer::save(projectPath, saved, &error), "Cannot save updated bone geometry");
         ProjectState restored;
@@ -482,6 +482,18 @@ public:
         require(window.m_segmentationLabelmap->GetScalarComponentAsDouble(18, 20, 20, 0) == 6,
                 "Apply did not commit the proposed fill");
         require(window.m_labelmapUndoStack.size() == 1, "Fill did not create one undo snapshot");
+        const auto filledMask = window.m_segmentationLabelmap;
+        const auto filledSurface = window.m_mesh3DView->meshData(6);
+        const auto filledTime = filledMask->GetMTime();
+        const auto smoothingBefore = window.m_maskSmoothingIterations.value(6);
+        window.calculateObjectFromMask(6);
+        require(window.m_mesh3DView->meshData(6) == filledSurface,
+                "Converting to an object replaced the source mask surface");
+        require(window.m_segmentationLabelmap == filledMask && filledMask->GetMTime() == filledTime,
+                "Converting to an object mutated the filled mask");
+        require(window.m_maskSmoothingIterations.value(6) == smoothingBefore,
+                "Converting to an object changed mask smoothing");
+        require(!window.m_hiddenMaskLabels.count(6), "Converting hid the source mask");
         window.undoLastEdit();
         require(window.m_segmentationLabelmap->GetScalarComponentAsDouble(18, 20, 20, 0) == before,
                 "Undo did not restore the cavity");

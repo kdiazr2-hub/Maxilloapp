@@ -92,6 +92,8 @@ set(SOURCES
     src/NrrdVolumeExporter.cpp
     src/SegmentationImporter.cpp
     src/MeshGenerator.cpp
+    src/MaskToObjectCore.cpp
+    src/MainWindowSegmentation.cpp
     src/SegmentationOverlay.cpp
     src/SegmentationMaskEditor.cpp
     src/BoneSplitterService.cpp
@@ -276,6 +278,8 @@ add_core_test(ProjectSerializerTests tests/ProjectSerializerTests.cpp
     src/SplintDesignCore.cpp src/SplintHeightmapGenerator.cpp src/CompositeBlockCore.cpp)
 add_core_test(CompositeBlockTests tests/CompositeBlockTests.cpp src/CompositeBlockCore.cpp)
 add_core_test(MeshRepairTests tests/MeshRepairTests.cpp src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)
+add_core_test(MaskToObjectTests tests/MaskToObjectTests.cpp src/MaskToObjectCore.cpp
+    src/MeshGenerator.cpp src/BoneCavityFill.cpp)
 add_core_test(OsteotomyCoreTests tests/OsteotomyCoreTests.cpp src/OsteotomyCore.cpp src/CompositeBlockCore.cpp)
 target_link_libraries(ProjectSerializerTests PRIVATE Qt6::Gui)
 

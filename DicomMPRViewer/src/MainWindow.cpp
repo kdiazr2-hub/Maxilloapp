@@ -5646,19 +5646,12 @@ QWidget* MainWindow::buildInfoPanel()
         if (label <= 0) return;
 
         QMenu menu(this);
-        QMenu* calcMenu = menu.addMenu(tr("Calcular objeto 3D"));
-        QAction* calcLightAct = calcMenu->addAction(tr("Leve"));
-        QAction* calcModerateAct = calcMenu->addAction(tr("Moderado"));
-        QAction* calcOptimalAct = calcMenu->addAction(tr("Optimo"));
+        QAction* convertAct = menu.addAction(tr("Convertir máscara a objeto 3D"));
         menu.addSeparator();
         QAction* deleteAct = menu.addAction(tr("Eliminar mascara"));
         QAction* chosen = menu.exec(m_maskTable->viewport()->mapToGlobal(pos));
-        if (chosen == calcLightAct) {
-            calculateObjectFromMask(label, MeshSmoothingPreset::Light);
-        } else if (chosen == calcModerateAct) {
-            calculateObjectFromMask(label, MeshSmoothingPreset::Moderate);
-        } else if (chosen == calcOptimalAct) {
-            calculateObjectFromMask(label, MeshSmoothingPreset::Optimal);
+        if (chosen == convertAct) {
+            calculateObjectFromMask(label);
         } else if (chosen == deleteAct) {
             deleteSelectedMask();
         }
@@ -8351,49 +8344,6 @@ void MainWindow::ensureOsteotomyMeshesPresent()
     add(kBssoGuideLabel, m_bssoGuideVisualMesh, 0.35);
 }
 
-void MainWindow::calculateObjectFromMask(int label, MeshSmoothingPreset smoothing)
-{
-    if (!m_segmentationLabelmap) {
-        QMessageBox::warning(this, tr("Objeto"), tr("Primero ejecute o cargue una segmentacion."));
-        return;
-    }
-    if (label <= 0) {
-        statusBar()->showMessage(tr("Selecciona una mascara valida."));
-        return;
-    }
-
-    QString name = meshLabelName(label);
-    QColor color = meshLabelColor(label);
-    if (m_maskTable) {
-        for (int row = 0; row < m_maskTable->rowCount(); ++row) {
-            auto* idItem = m_maskTable->item(row, 0);
-            if (!idItem || idItem->data(Qt::UserRole).toInt() != label) continue;
-            if (auto* nameItem = m_maskTable->item(row, 1)) name = nameItem->text();
-            color = idItem->background().color();
-            break;
-        }
-    }
-
-    const int smoothingIterations = smoothingIterationsForPreset(smoothing);
-    m_maskSmoothingIterations[label] = smoothingIterations;
-
-    QString error;
-    auto mesh = MeshGenerator::generateMesh(
-        m_segmentationLabelmap, label, true, smoothingIterations, &error);
-    if (!mesh) {
-        QMessageBox::critical(this, tr("Objeto"), error);
-        return;
-    }
-
-    addObjectEntry(name, color, label);
-    publishSegmentationMesh(label, mesh);
-    setMaskVisible(label, false);
-    syncModelViews();
-    updateButtonStates();
-    statusBar()->showMessage(
-        tr("Objeto calculado: %1 (%2).").arg(name, smoothingNameForPreset(smoothing)));
-}
-
 void MainWindow::addObjectEntry(const QString& name, const QColor& color, int label)
 {
     if (!m_objectTable || label <= 0) return;
@@ -8851,9 +8801,7 @@ void MainWindow::generateSelectedMesh()
         label = m_structureCombo ? m_structureCombo->currentData().toInt() : 1;
     }
 
-    MeshSmoothingPreset smoothing = MeshSmoothingPreset::Moderate;
-    if (!chooseMeshSmoothingPreset(&smoothing)) return;
-    calculateObjectFromMask(label, smoothing);
+    calculateObjectFromMask(label);
 }
 
 vtkSmartPointer<vtkPolyData> MainWindow::loadStlMesh(const QString& filePath, QString* error) const
