@@ -30,7 +30,9 @@ Qt, VTK and GDCM DLLs are already deployed in `build/Release`. Scripts in `scrip
 
 Tests (CTest):
 - `GeometryCoreTests`, `BoneCavityFillTests`, `MeshGeneratorTests` — plain C++ executables
-- `RepositionWorkspaceTests` — instantiates `MainWindow` (declared `friend`), renders offscreen, writes PNGs to `build/workspace-test-artifacts`
+- `SplintHeightmapTests`, `SplintDesignTests`, `SplintContourEditTests`, `SplintPreviewSchedulerTests`, `ProjectSerializerTests` — core tests declared with `add_core_test()`; synthetic arches in `tests/SplintTestGeometry.h`
+- `RepositionWorkspaceTests`, `SplintWorkspaceTests` — instantiate `MainWindow` (declared `friend`), render offscreen, write PNGs to `build/workspace-test-artifacts`
+- `Mesh3DViewInteractionTests` — drives `Mesh3DView` offscreen with synthetic mouse events
 - `BoneSegmentationPythonTests` — `tests/test_bone_segmentation.py`, runs with `DENTALSEGMENTATOR_PYTHON` (conda env `dentalgpu`: numpy, scipy, SimpleITK, torch, nnunetv2)
 
 ## Architecture
@@ -42,6 +44,10 @@ Tests (CTest):
 - DICOM load: `AsyncDicomLoader` (worker thread) → `DicomSeriesIndexer` → `VolumeCacheManager` (.mha cache in `%LOCALAPPDATA%`) → `DicomVolumeLoader`.
 - `MPRView` (2D reslice views), `Mesh3DView` (3D scenes, gizmos, picking).
 - AI segmentation: `StandaloneDentalSegmentatorService` launches `scripts/run_standalone_dental_segmentator.py` (nnU-Net DentalSegmentator, weights in `%LOCALAPPDATA%/DicomMPRViewer/DentalSegmentator/ML`).
-- `ProjectSerializer` saves/loads `.maxilloproject` files.
+- `ProjectSerializer` saves/loads `.maxilloproject` files; new keys must stay optional so older projects load.
+- Splints: `SplintHeightmapGenerator` (height-map splint, Prepare/Build), `SplintDesignCore` (named designs, JSON),
+  `SplintContourEditCore`, `SplintPreviewScheduler` (background preview); UI in `SplintDesignPanel` and
+  `MainWindowSplint.cpp` (MainWindow methods kept out of `MainWindow.cpp`). The classic `SplintGenerator` stays behind the "Método" selector.
+- Object label constants and `objectActorKey` live in `ObjectLabels.h`.
 
 `README.md` documents the load pipeline and cache but its build section is outdated.

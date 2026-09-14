@@ -19,6 +19,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 #include <QColor>
+#include <QJsonArray>
 #include <QMap>
 #include <QString>
 #include <QVector>
@@ -102,6 +103,10 @@ struct ProjectState
     double lowerLandmarkRms  = 0.0;
     double lowerMeanDist     = 0.0;
     double lowerP95Dist      = 0.0;
+
+    // ── Splint designs (SplintDesignCore JSON; empty in older projects) ───────
+    QJsonArray splintDesigns;
+    QString    activeSplintDesignId;
 };
 
 class ProjectSerializer

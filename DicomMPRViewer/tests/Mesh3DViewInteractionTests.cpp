@@ -8,6 +8,8 @@
 
 #include <vtkCellArray.h>
 #include <vtkCubeSource.h>
+#include <vtkPointData.h>
+#include <vtkUnsignedCharArray.h>
 #include <vtkPoints.h>
 #include <vtkPolyData.h>
 #include <vtkSmartPointer.h>
@@ -200,12 +202,45 @@ void testInteraction()
     square->SetPoints(points);
     square->SetLines(lines);
     view.setOverlayPolyline(7, square, QColor(255, 0, 0), 3.0);
+    require(view.hasOverlay(7), "overlay not registered");
     const int withOverlay = redPixels();
     view.removeOverlay(7);
+    require(!view.hasOverlay(7), "overlay still registered after removal");
     const int afterRemoval = redPixels();
     std::cout << "  red pixels: baseline " << baseline << ", overlay " << withOverlay << ", removed " << afterRemoval << '\n';
     require(withOverlay > baseline + 200, "overlay contour was not drawn on top of the mesh");
     require(afterRemoval <= baseline + 10, "removed overlay is still visible");
+
+    // A non-pickable mesh (e.g. a translucent preview) does not receive points.
+    view.setPointEditMode(true, 0);
+    view.setMeshPickable(1, false);
+    click(vtkWidget, center, Qt::LeftButton);
+    require(added.size() == 1, "non-pickable mesh received a point");
+    view.setMeshPickable(1, true);
+    click(vtkWidget, center, Qt::LeftButton);
+    require(added.size() == 2, "pickable mesh did not receive a point");
+    view.setPointEditMode(false);
+
+    // Scalar coloring shows the per-vertex RGB colors (thickness map).
+    auto colors = vtkSmartPointer<vtkUnsignedCharArray>::New();
+    colors->SetNumberOfComponents(3);
+    colors->SetNumberOfTuples(box->GetNumberOfPoints());
+    for (vtkIdType i = 0; i < box->GetNumberOfPoints(); ++i)
+        colors->SetTypedTuple(i, std::array<unsigned char, 3>{20, 220, 20}.data());
+    box->GetPointData()->SetScalars(colors);
+    box->Modified();
+    view.setMeshScalarColoring(1, true);
+    view.render();
+    settle();
+    QColor pixel = vtkWidget->grabFramebuffer().pixelColor(vtkWidget->grabFramebuffer().width() / 2,
+                                                          vtkWidget->grabFramebuffer().height() / 2);
+    require(pixel.green() > pixel.red() * 2 && pixel.green() > pixel.blue() * 2, "scalar colors not shown");
+    view.setMeshScalarColoring(1, false);
+    view.render();
+    settle();
+    pixel = vtkWidget->grabFramebuffer().pixelColor(vtkWidget->grabFramebuffer().width() / 2,
+                                                    vtkWidget->grabFramebuffer().height() / 2);
+    require(std::abs(pixel.green() - pixel.red()) < 30, "actor color not restored after scalar coloring");
 }
 } // namespace
 

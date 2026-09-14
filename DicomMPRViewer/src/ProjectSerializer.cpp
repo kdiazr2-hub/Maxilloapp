@@ -208,6 +208,11 @@ bool ProjectSerializer::save(const QString& projectFilePath,
         state.lowerP95Dist);
     root[QStringLiteral("registrations")] = registrationObj;
 
+    if (!state.splintDesigns.isEmpty()) {
+        root[QStringLiteral("splintDesigns")] = state.splintDesigns;
+        root[QStringLiteral("activeSplintDesign")] = state.activeSplintDesignId;
+    }
+
     // ── Assets ────────────────────────────────────────────────────────────────
     QJsonObject assets;
 
@@ -383,6 +388,9 @@ bool ProjectSerializer::load(const QString& projectFilePath,
                      state.lowerP95Dist);
 
     // ── Assets ────────────────────────────────────────────────────────────────
+    state.splintDesigns = root.value(QStringLiteral("splintDesigns")).toArray();
+    state.activeSplintDesignId = root.value(QStringLiteral("activeSplintDesign")).toString();
+
     const QJsonObject assets = root[QStringLiteral("assets")].toObject();
 
     // Labelmap

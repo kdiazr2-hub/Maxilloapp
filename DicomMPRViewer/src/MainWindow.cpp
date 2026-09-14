@@ -26,6 +26,7 @@
 #include "TransformCore.h"
 #include "GeometryValidation.h"
 #include "MeshGenerator.h"
+#include "ObjectLabels.h"
 
 #include <QAction>
 #include <QActionGroup>
@@ -185,31 +186,8 @@ static QString valueLabel(const Measurement& measurement)
     return QString();
 }
 
-static constexpr int kUpperArchLabel = 201;
 static constexpr int kObjectOpacityRole = Qt::UserRole + 2;
 static constexpr int kObjectOnTopRole = Qt::UserRole + 3;
-static constexpr int kLowerArchLabel = 202;
-static constexpr int kUpperCompositeLabel  = 203;
-static constexpr int kLowerCompositeLabel  = 204;
-static constexpr int kLeFortCranialLabel   = 205;   // cranial base after Le Fort I split
-static constexpr int kLeFortSegLabel       = 206;   // Le Fort I segment after split
-static constexpr int kBssoGuideLabel       = 207;   // bilateral sagittal ramus guide object
-static constexpr int kBssoDistalLabel      = 208;   // distal tooth-bearing mandibular segment
-static constexpr int kBssoProximalLabel    = 209;   // proximal ramus segments
-static constexpr int kBssoProximalRightLabel = 210; // right proximal ramus segment
-static constexpr int kBssoProximalLeftLabel  = 211; // left proximal ramus segment
-static constexpr int kGenioBodyLabel       = 212;   // mandible after chin segment split
-static constexpr int kGenioSegmentLabel    = 213;   // chin segment after genioplasty split
-static constexpr int kBiteScanLabel        = 214;   // intraoperative/post-osteotomy bite scan
-static constexpr int kIntermediateSplintLabel = 215; // Le Fort moved + initial mandible
-static constexpr int kFinalSplintLabel        = 216; // Le Fort moved + final distal mandible
-static constexpr int kSplintInitialMandibleChoice = -1001;
-static constexpr int kSplintFinalMandibleChoice   = -1002;
-static constexpr int kOrientGizmoTempLabel = -200;  // temporary combined mesh for orientation gizmo
-static constexpr int kLeFortPlaneLabel     = -300;
-static constexpr int kLeFortCutLineLabel   = -301;
-static constexpr int kGenioPlaneLabel      = -320;
-static constexpr int kGenioCutLineLabel    = -321;
 
 static vtkSmartPointer<vtkMatrix4x4> identityMatrix()
 {
@@ -426,11 +404,6 @@ static QString meshLabelName(int label)
         case kFinalSplintLabel:        return "Ferula final";
         default: return QString("Label %1").arg(label);
     }
-}
-
-static int objectActorKey(int label)
-{
-    return label > 0 ? 1000 + label : label;
 }
 
 static bool isEditableSegmentationLabel(int label)
@@ -2689,9 +2662,9 @@ void MainWindow::buildCentralWidget()
 
         auto* scroll = new QScrollArea(splintPanel);
         scroll->setWidgetResizable(true);
-        scroll->setFixedWidth(320);
         scroll->setWidget(controlsHost);
-        splintLayout->addWidget(scroll);
+        // Height-map method (new) and this classic panel, chosen with "Método".
+        splintLayout->addWidget(buildSplintMethodPanel(splintPanel, scroll));
 
         auto* viewSplitter = new QSplitter(Qt::Vertical, splintPanel);
         auto* topSplitter = new QSplitter(Qt::Horizontal, viewSplitter);
@@ -2722,6 +2695,7 @@ void MainWindow::buildCentralWidget()
             connect(view, &Mesh3DView::gizmoMeshUpdated,
                     this, &MainWindow::onSplintGizmoUpdated);
         }
+        connectSplintHeightmapViews();
 
         auto syncSplintControls = [this] {
             updateSplintControls();
@@ -3978,10 +3952,24 @@ void MainWindow::setSplintWorkspace(bool enabled)
         m_viewModeStack->setCurrentIndex(6);
         QApplication::processEvents();
     }
-    if (!enabled)
+    if (!enabled) {
+        if (m_splintDesignPanel) {
+            setSplintPointGroup(-1);
+            setSplintContourEditing(false);
+        }
         return;
+    }
     if (!m_splintView)
         return;
+
+    if (splintHeightmapMethodActive()) {
+        refreshSplintDesignPanel();
+        syncSplintView();
+        updateButtonStates();
+        requestSplintPreview();
+        statusBar()->showMessage(tr("Férula: elija el diseño y las fuentes, marque 3 puntos por arcada y revise la vista previa."));
+        return;
+    }
 
     updateSplintControls();
     syncSplintView();
@@ -4109,6 +4097,10 @@ void MainWindow::syncSplintView()
 {
     if (!m_splintView)
         return;
+    if (splintHeightmapMethodActive()) {
+        syncSplintHeightmapView();
+        return;
+    }
 
     for (Mesh3DView* view : {m_splintUpperView, m_splintLowerView, m_splintView}) {
         if (view) view->clearMeshes();
@@ -4342,6 +4334,11 @@ void MainWindow::clearSplintPoints()
 
 void MainWindow::createIntermediateSplint()
 {
+    if (splintHeightmapMethodActive()) {
+        selectSplintDesignByLabel(kIntermediateSplintLabel);
+        createHeightmapSplint();
+        return;
+    }
     if (m_splintDesignCombo)
         m_splintDesignCombo->setCurrentIndex(0);
     createSplint(false);
@@ -4349,6 +4346,11 @@ void MainWindow::createIntermediateSplint()
 
 void MainWindow::createFinalSplint()
 {
+    if (splintHeightmapMethodActive()) {
+        selectSplintDesignByLabel(kFinalSplintLabel);
+        createHeightmapSplint();
+        return;
+    }
     if (m_splintDesignCombo)
         m_splintDesignCombo->setCurrentIndex(1);
     createSplint(true);
@@ -4556,6 +4558,10 @@ void MainWindow::onSplintGenerated(int label, vtkSmartPointer<vtkPolyData> mesh,
 
 void MainWindow::exportSplintStl()
 {
+    if (splintHeightmapMethodActive()) {
+        exportHeightmapSplintStl();
+        return;
+    }
     if (!m_intermediateSplintMesh && !m_finalSplintMesh) {
         QMessageBox::warning(this, tr("Ferula"), tr("No hay ferulas para exportar."));
         return;
@@ -5795,7 +5801,14 @@ void MainWindow::onSaveProject()
     if (!path.endsWith(QStringLiteral(".maxilloproject"), Qt::CaseInsensitive))
         path += QStringLiteral(".maxilloproject");
 
-    // ── Build ProjectState from current MainWindow state ──────────────────
+    saveProjectTo(path);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// collectProjectState — snapshot of everything the project file stores.
+// ─────────────────────────────────────────────────────────────────────────────
+ProjectState MainWindow::collectProjectState() const
+{
     ProjectState state;
     state.dicomFolder   = m_dicomFolder;
     state.presetWindow  = m_currentPreset.window;
@@ -5877,7 +5890,16 @@ void MainWindow::onSaveProject()
         }
     }
 
-    // ── Save ──────────────────────────────────────────────────────────────
+    state.splintDesigns = SplintDesignCore::DesignsToJson(m_splintDesigns);
+    if (m_activeSplintDesign >= 0 && m_activeSplintDesign < static_cast<int>(m_splintDesigns.size()))
+        state.activeSplintDesignId = m_splintDesigns[static_cast<size_t>(m_activeSplintDesign)].id;
+    return state;
+}
+
+void MainWindow::saveProjectTo(const QString& path)
+{
+    const ProjectState state = collectProjectState();
+
     statusBar()->showMessage(tr("Guardando proyecto…"));
     QApplication::processEvents();
 
@@ -6097,6 +6119,7 @@ void MainWindow::applyProjectState(const ProjectState& state)
     restoreSpecial(m_lowerCompositeMesh.Get(), kLowerCompositeLabel);
     restoreSpecial(m_intermediateSplintMesh.Get(), kIntermediateSplintLabel);
     restoreSpecial(m_finalSplintMesh.Get(),        kFinalSplintLabel);
+    restoreSplintDesigns(state);
     syncVisibilityPanelToAllViews();
 
     // ── Populate MODELOS views ────────────────────────────────────────────

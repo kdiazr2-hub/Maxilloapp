@@ -95,6 +95,25 @@ void testBurstCacheAndRebuild()
     require(rec.failed.empty(), "unexpected failure: " + (rec.errors.isEmpty() ? std::string() : rec.errors.front().toStdString()));
 }
 
+void testCacheKeepsCoarseAndFinePrepare()
+{
+    Scene scene = makeScene();
+    SplintPreviewScheduler scheduler;
+    scheduler.setDebounceMs(0);
+    Recorder rec;
+    rec.attach(scheduler);
+    for (int round = 0; round < 2; ++round) {
+        for (double grid : {0.4, 0.3}) {
+            scene.inputs.params.gridResolutionMm = grid;
+            scheduler.request(scene.upper, scene.lower, scene.inputs);
+            waitIdle(scheduler, "alternating resolution");
+        }
+    }
+    require(rec.ready.size() == 4, "alternating resolutions did not produce four previews");
+    require(scheduler.prepareRuns() == 2 && scheduler.buildRuns() == 4,
+            "coarse and fine Prepare evicted each other: " + std::to_string(scheduler.prepareRuns()));
+}
+
 void testCancelBeforeStart()
 {
     Scene scene = makeScene();
@@ -153,6 +172,7 @@ int main(int argc, char** argv)
     QCoreApplication app(argc, argv);
     const std::vector<std::pair<const char*, std::function<void()>>> tests = {
         {"burst, cache and rebuild", testBurstCacheAndRebuild},
+        {"cache keeps coarse and fine prepare", testCacheKeepsCoarseAndFinePrepare},
         {"cancel before start", testCancelBeforeStart},
         {"newer request supersedes running job", testNewerRequestSupersedesRunningJob},
         {"failure reported", testFailureReported},

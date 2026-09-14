@@ -54,6 +54,10 @@ public:
     // User overrides survive workspace mesh rebuilds; negative opacity clears them.
     void setMeshDisplayOptions(int label, double opacity, bool alwaysOnTop);
     void setMeshVisible(int label, bool visible);
+    // Colors the mesh with its RGB point scalars instead of the actor color.
+    void setMeshScalarColoring(int label, bool enabled);
+    // Opacity changes make meshes pickable again; call after them.
+    void setMeshPickable(int label, bool pickable);
     void removeMesh(int label);
     void setPointPickMode(bool active);
     void addPointMarker(double x, double y, double z, const QColor& color);
@@ -97,6 +101,7 @@ public:
                             double lineWidth = 2.5);
     void removeOverlay(int key);
     void clearOverlays();
+    bool hasOverlay(int key) const { return m_overlayActors.count(key) > 0; }
 
     // Parallel-projection camera looking along `direction` at `focal`;
     // parallelScale <= 0 fits the scene.

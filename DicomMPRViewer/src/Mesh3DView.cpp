@@ -827,6 +827,25 @@ void Mesh3DView::setMeshVisible(int label, bool visible)
     render();
 }
 
+void Mesh3DView::setMeshScalarColoring(int label, bool enabled)
+{
+    auto it = m_meshActors.find(label);
+    if (it == m_meshActors.end()) return;
+    if (auto* mapper = vtkPolyDataMapper::SafeDownCast(it->second->GetMapper())) {
+        mapper->SetScalarVisibility(enabled ? 1 : 0);
+        mapper->SetScalarModeToUsePointData();
+        mapper->SetColorModeToDirectScalars();
+    }
+    render();
+}
+
+void Mesh3DView::setMeshPickable(int label, bool pickable)
+{
+    auto it = m_meshActors.find(label);
+    if (it == m_meshActors.end()) return;
+    it->second->SetPickable(pickable ? 1 : 0);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 void Mesh3DView::resetCamera()
 {

@@ -135,8 +135,12 @@ SplintPreviewScheduler::Outcome SplintPreviewScheduler::run(Job job, const std::
     std::shared_ptr<const SplintHeightmapPrepared> prepared;
     {
         std::lock_guard<std::mutex> lock(m_cacheMutex);
-        if (m_cachedPrepared && m_cacheKey == key)
-            prepared = m_cachedPrepared;
+        for (const auto& [cachedKey, cached] : m_preparedCache) {
+            if (cachedKey == key) {
+                prepared = cached;
+                break;
+            }
+        }
     }
     if (!prepared) {
         ++m_prepareRuns;
@@ -147,8 +151,9 @@ SplintPreviewScheduler::Outcome SplintPreviewScheduler::run(Job job, const std::
         }
         if (fresh->ok) {
             std::lock_guard<std::mutex> lock(m_cacheMutex);
-            m_cacheKey = key;
-            m_cachedPrepared = fresh;
+            m_preparedCache.emplace_front(key, fresh);
+            while (m_preparedCache.size() > kPreparedCacheSize)
+                m_preparedCache.pop_back();
         }
         prepared = fresh;
     }

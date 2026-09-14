@@ -7,7 +7,8 @@
 // Requests are debounced; a newer request cancels the running job and stale
 // results are never emitted. The last successful Prepare() is cached, so
 // changes that only affect Build() (edge offset, fillet, clearance, contour…)
-// skip the ray casting.
+// skip the ray casting. Two Prepare() results are kept so a coarse preview and
+// its refined version do not evict each other.
 //
 // The meshes passed to request() are shared with the worker: callers must not
 // modify them in place (replace them instead). The cache key includes each
@@ -23,6 +24,7 @@
 #include <QTimer>
 
 #include <atomic>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -79,9 +81,9 @@ private:
     bool m_running = false;
     std::shared_ptr<std::atomic<bool>> m_runningCancel;
 
+    static constexpr size_t kPreparedCacheSize = 2;
     std::mutex m_cacheMutex;
-    QString m_cacheKey;
-    std::shared_ptr<const SplintHeightmapPrepared> m_cachedPrepared;
+    std::deque<std::pair<QString, std::shared_ptr<const SplintHeightmapPrepared>>> m_preparedCache; // newest first
     std::atomic<int> m_prepareRuns{0};
     std::atomic<int> m_buildRuns{0};
 };

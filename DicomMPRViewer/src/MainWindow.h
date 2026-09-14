@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <optional>
 #include <set>
@@ -8,6 +9,7 @@
 
 #include "ProjectSerializer.h"
 #include "AppStateManager.h"
+#include "SplintDesignCore.h"
 #include "RegistrationResult.h"
 
 #include <QList>
@@ -35,6 +37,8 @@ class vtkPolyData;
 class MPRView;
 class Mesh3DView;
 class MeasurementTool;
+class SplintDesignPanel;
+class SplintPreviewScheduler;
 
 QT_BEGIN_NAMESPACE
 class QLabel;
@@ -55,6 +59,7 @@ class QDoubleSpinBox;
 class QRadioButton;
 class QTableWidget;
 class QToolButton;
+class QTimer;
 QT_END_NAMESPACE
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -108,6 +113,7 @@ private slots:
 
 private:
     friend class RepositionWorkspaceTests;
+    friend class SplintWorkspaceTests;
     enum class MeasurementToolMode
     {
         Cursor,
@@ -196,6 +202,8 @@ private:
     void setObjectDisplayOptions(int label, double opacity, bool alwaysOnTop);
     void updateObjectAppearanceControls();
     void applyProjectState(const ProjectState& state);
+    ProjectState collectProjectState() const;
+    void saveProjectTo(const QString& path);
     void setLoadingUiEnabled(bool enabled);
     void showSegmentationBackendInfo();
     void startAISegmentation(SegmentationTarget target);
@@ -759,4 +767,97 @@ private:
 
     RegistrationResult m_upperRegResult;
     RegistrationResult m_lowerRegResult;
+
+    // ── Splint workspace: named height-map designs ────────────────────────
+    std::vector<SplintDesign> m_splintDesigns;
+    int m_activeSplintDesign = 0;
+
+    // Height-map method (implemented in MainWindowSplint.cpp)
+    QWidget* buildSplintMethodPanel(QWidget* parent, QWidget* classicPanel);
+    void connectSplintHeightmapViews();
+    bool splintHeightmapMethodActive() const;
+    SplintDesign* activeSplintDesign();
+    const SplintDesign* activeSplintDesign() const;
+    void ensureSplintDesigns();
+    void refreshSplintDesignPanel();
+    void updateSplintPanelState();
+    void selectSplintDesign(int index);
+    void selectSplintDesignByLabel(int label);
+    void addSplintDesign();
+    void copySplintDesign();
+    void renameSplintDesign();
+    void deleteSplintDesign();
+    void onSplintSourcesChanged();
+    void onSplintParamsChanged();
+    void setSplintPointGroup(int group);
+    void clearSplintDesignPoints(int group);
+    void onSplintEditablePointAdded(int group, double x, double y, double z);
+    void onSplintEditablePointMoved(int group, int index, double x, double y, double z);
+    void onSplintEditablePointDragFinished(int group, int index);
+    void onSplintEditablePointRemoved(int group, int index);
+    void rebuildSplintEditablePoints();
+    bool confirmSplintContourLoss();
+    void discardSplintEditedContour(const QString& reason);
+    void requestSplintPreview();
+    void requestRefinedSplintPreview();
+    void onSplintPreviewReady(quint64 generation, const SplintHeightmapResult& result);
+    void onSplintPreviewFailed(quint64 generation, const QString& error);
+    void clearSplintPreviewDisplay();
+    void updateSplintPreviewMesh();
+    void updateSplintContourOverlay();
+    void applySplintOcclusalCameras(bool force);
+    void setSplintContourEditing(bool editing);
+    void resetSplintContour();
+    void onSplintPlaneDragStarted(double x, double y, double z, Qt::KeyboardModifiers modifiers);
+    void onSplintPlaneDragMoved(double x, double y, double z, double deltaY, Qt::KeyboardModifiers modifiers);
+    void onSplintPlaneDragFinished(double x, double y, double z);
+    vtkSmartPointer<vtkPolyData> splintSourceMesh(int choice) const;
+    SplintHeightmapInputs splintInputsForDesign(const SplintDesign& design) const;
+    void syncSplintHeightmapView();
+    void createHeightmapSplint();
+    void onHeightmapSplintCreated(int label, const QString& designName, const SplintHeightmapResult& result);
+    void exportHeightmapSplintStl();
+    void loadSplintTestStl();
+    void setSplintTestSources(vtkSmartPointer<vtkPolyData> upper, vtkSmartPointer<vtkPolyData> lower);
+    void exportSplintDesignPoints();
+    void exportSplintReport();
+    void restoreSplintDesigns(const ProjectState& state);
+
+    QComboBox*              m_splintMethodCombo = nullptr;
+    QStackedWidget*         m_splintMethodStack = nullptr;
+    SplintDesignPanel*      m_splintDesignPanel = nullptr;
+    SplintPreviewScheduler* m_splintPreview = nullptr;
+    QTimer*                 m_splintRefineTimer = nullptr;
+    quint64                 m_splintCoarseGeneration = 0;
+    SplintHeightmapResult   m_splintPreviewResult;
+    bool                    m_splintPreviewValid = false;
+    bool                    m_splintPreviewRefined = false;
+    SplintOcclusalFrame     m_splintCameraFrame;
+    bool                    m_splintCameraFrameSet = false;
+    int                     m_splintPointGroup = -1;     // 0 maxilla, 1 mandible
+    bool                    m_splintContourEditing = false;
+    double                  m_splintInfluencePercent = 20.0;
+    int                     m_splintDragContour = -1;
+    int                     m_splintDragVertex = -1;
+    SplintContourUV         m_splintDragStartContour;
+    SplintPointUV           m_splintDragStartUV{};
+    bool                    m_splintInfluenceDrag = false;
+    bool                    m_splintPointDragStarted = false;
+    bool                    m_splintPointDragRejected = false;
+    SplintDesign            m_splintPointDragSnapshot;
+    bool                    m_splintHeightmapBuildInProgress = false;
+    QString                 m_splintLastReport;
+    vtkSmartPointer<vtkPolyData> m_splintTestUpperMesh;
+    vtkSmartPointer<vtkPolyData> m_splintTestLowerMesh;
+    struct SplintSourceCacheEntry
+    {
+        QString fingerprint;
+        vtkSmartPointer<vtkPolyData> mesh;
+    };
+    // Private copies of the source meshes, stable while unchanged so the
+    // preview cache is reused and the worker never sees in-place edits.
+    mutable std::map<int, SplintSourceCacheEntry> m_splintSourceCache;
+    // Dialog hooks, replaced by the workspace tests.
+    std::function<bool(const QString&)> m_splintConfirm;
+    std::function<std::optional<QString>(const QString&, const QString&)> m_splintAskName;
 };

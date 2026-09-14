@@ -107,6 +107,8 @@ set(SOURCES
     src/SplintDesignCore.cpp
     src/SplintContourEditCore.cpp
     src/SplintPreviewScheduler.cpp
+    src/SplintDesignPanel.cpp
+    src/MainWindowSplint.cpp
     src/AppStateManager.cpp
     src/LoggerCore.cpp
     src/RegistrationResult.cpp
@@ -155,6 +157,8 @@ set(HEADERS
     src/SplintDesignCore.h
     src/SplintContourEditCore.h
     src/SplintPreviewScheduler.h
+    src/SplintDesignPanel.h
+    src/ObjectLabels.h
     src/AppStateManager.h
     src/LoggerCore.h
     src/RegistrationResult.h
@@ -255,6 +259,10 @@ add_core_test(SplintDesignTests tests/SplintDesignTests.cpp
 add_core_test(SplintContourEditTests tests/SplintContourEditTests.cpp src/SplintContourEditCore.cpp)
 add_core_test(SplintPreviewSchedulerTests tests/SplintPreviewSchedulerTests.cpp
     src/SplintPreviewScheduler.cpp src/SplintHeightmapGenerator.cpp)
+add_core_test(ProjectSerializerTests tests/ProjectSerializerTests.cpp
+    src/ProjectSerializer.cpp src/NrrdVolumeExporter.cpp src/SegmentationImporter.cpp
+    src/SplintDesignCore.cpp src/SplintHeightmapGenerator.cpp)
+target_link_libraries(ProjectSerializerTests PRIVATE Qt6::Gui)
 
 set(SEGMENTATION_TEST_PYTHON "$ENV{DENTALSEGMENTATOR_PYTHON}" CACHE FILEPATH
     "Python with numpy, scipy and SimpleITK for segmentation regression tests")
@@ -293,6 +301,21 @@ if(BUILD_WORKSPACE_TESTS)
     endif()
     vtk_module_autoinit(TARGETS Mesh3DViewInteractionTests MODULES ${VTK_LIBRARIES})
     add_test(NAME Mesh3DViewInteractionTests COMMAND Mesh3DViewInteractionTests)
+
+    add_executable(SplintWorkspaceTests
+        tests/SplintWorkspaceTests.cpp ${WORKSPACE_TEST_SOURCES} ${HEADERS} ${RESOURCES})
+    target_include_directories(SplintWorkspaceTests PRIVATE src tests)
+    target_compile_definitions(SplintWorkspaceTests PRIVATE APP_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    target_link_libraries(SplintWorkspaceTests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Concurrent ${VTK_LIBRARIES})
+    if(MSVC)
+        target_compile_options(SplintWorkspaceTests PRIVATE /utf-8)
+    endif()
+    if(USE_GDCM)
+        target_link_libraries(SplintWorkspaceTests PRIVATE gdcmMSFF gdcmDICT gdcmCommon)
+    endif()
+    vtk_module_autoinit(TARGETS SplintWorkspaceTests MODULES ${VTK_LIBRARIES})
+    add_test(NAME SplintWorkspaceTests COMMAND SplintWorkspaceTests)
 endif()
 
 add_custom_command(TARGET DicomMPRViewer POST_BUILD
