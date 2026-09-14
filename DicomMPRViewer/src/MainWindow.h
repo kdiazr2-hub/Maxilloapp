@@ -196,6 +196,12 @@ private:
     void syncModelViews();
     void syncOrientationView();
     void updateModelWorkflowUi();
+    void updateModelWorkflowActions();
+    QWidget* buildModelGuide(QWidget* parent);
+    QWidget* m_modelGuide = nullptr;
+    QVector<QLabel*> m_modelGuideSteps;
+    QLabel* m_modelGuideMessage = nullptr;
+    QLabel* m_modelGuidePoints = nullptr;
     void goBackModelWorkflow();
     QColor maskColorForLabel(int label) const;
     QColor objectColorForLabel(int label) const;

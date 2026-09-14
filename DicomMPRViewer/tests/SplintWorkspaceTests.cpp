@@ -10,6 +10,7 @@
 #include "OsteotomyWizardPanel.h"
 
 #include <QApplication>
+#include <QAction>
 #include <QCheckBox>
 #include <QDialog>
 #include <QDir>
@@ -18,6 +19,7 @@
 #include <QImage>
 #include <QLabel>
 #include <QPainter>
+#include <QPushButton>
 #include <QSurfaceFormat>
 #include <QTemporaryDir>
 #include <QThread>
@@ -354,6 +356,43 @@ public:
     }
 
     // MODELOS composite: block → review (mandatory), link through cuts, splint source, project.
+    static void runModelGuide(const QString& artifactsDir)
+    {
+        MainWindow window;
+        window.setAttribute(Qt::WA_DontShowOnScreen);
+        window.resize(1366, 768);
+        window.show();
+        window.m_mesh3DView->addMesh(5, boxMesh({-35, 35, -10, 35, 4, 30}, false, false), "Maxilar");
+        window.setModelsWorkspace(true);
+        window.updateModelWorkflowUi();
+        require(window.m_modelGuideSteps[0]->property("current").toBool(), "guide did not start at STL import");
+        require(!window.m_matchUpperAct->isEnabled(), "registration enabled before STL import");
+        window.m_upperArchMesh = upperTeeth({});
+        window.syncModelViews();
+        window.updateModelWorkflowUi();
+        window.setDentalPointCapture(MainWindow::DentalPointSet::MaxillaBone);
+        for (int i = 0; i < 3; ++i) window.onDentalPointPicked(5, i * 10.0, 0, 0);
+        require(!window.m_matchUpperAct->isEnabled(), "unpaired points allowed registration");
+        window.setDentalPointCapture(MainWindow::DentalPointSet::UpperArch);
+        for (int i = 0; i < 3; ++i) window.onDentalPointPicked(objectActorKey(kUpperArchLabel), i * 10.0, 0, 0);
+        require(window.m_matchUpperAct->isEnabled(), "paired points did not unlock registration");
+        require(window.m_modelGuidePoints->text().contains("3"), "point counts not displayed");
+        require(window.m_modelGuideSteps[2]->property("current").toBool(), "guide did not advance to registration");
+        window.onDentalPointPicked(objectActorKey(kUpperArchLabel), 0, 10, 0);
+        require(!window.m_matchUpperAct->isEnabled(), "unpaired extra point allowed registration");
+        for (QSize size : {QSize(1366, 768), QSize(1700, 950)}) {
+            window.resize(size);
+            settle();
+            require(window.m_modelGuide->isVisibleTo(&window), "model guide is not visible");
+            for (auto* label : window.m_modelGuideSteps)
+                require(window.m_modelGuide->rect().contains(label->geometry()), "guide label overflows");
+            require(window.m_modelGuideMessage->geometry().bottom() < window.m_modelGuidePoints->geometry().top(),
+                    "instructions overlap point counts");
+            QDir().mkpath(artifactsDir);
+            window.grab().save(QDir(artifactsDir).filePath(QString("model-guide-%1.png").arg(size.width())));
+        }
+    }
+
     static void runCompositeWorkflow(const QString& artifactsDir)
     {
         const auto capture = [&artifactsDir](MainWindow& w, const QString& name) {
@@ -419,12 +458,15 @@ public:
 
         // Block stage.
         window.m_modelStepStack->setCurrentIndex(0);
-        window.createDentalCompositeModels();
+        window.showRegistrationReview(0);
+        window.m_compositeButton->click();
         require(window.m_compositeStage == MainWindow::CompositeStage::Block, "composite did not open the block stage");
         require(window.m_upperCompositeBlock.valid && std::abs(window.m_upperCompositeBlock.sizeMm[2] - 15.0) < 1e-9,
                 "initial cutting block is not 15 mm thick");
         require(window.m_modelMatchView->meshData(kCompositeBlockActorKey) != nullptr, "cutting block not shown");
         require(window.m_compositeBlockPanel->isVisibleTo(&window), "block panel not shown");
+        require(window.m_modelGuide->isVisibleTo(&window) && window.m_modelGuideSteps[3]->property("current").toBool(),
+                "guide disappeared during block adjustment");
         window.m_compositeThicknessSpin->setValue(12.0);
         require(std::abs(window.m_upperCompositeBlock.sizeMm[2] - 12.0) < 1e-9, "thickness control did not resize the block");
         window.m_compositeThicknessSpin->setValue(15.0);
@@ -440,6 +482,8 @@ public:
         window.calculateBlockComposite();
         require(waitReview(), "composite review never opened");
         require(!window.m_upperCompositeMesh, "composite stored before review");
+        require(window.m_modelGuideMessage->text().contains(QStringLiteral("Revise")) &&
+                !window.m_modelGuideSteps[3]->property("complete").toBool(), "guide marked review as accepted");
         require(CompositeBlockCore::HasParts(window.m_compositeReviewMesh), "reviewed composite has no linked parts");
         window.m_modelMatchView->setStandardView(0);
         capture(window, QStringLiteral("composite-review.png"));
@@ -758,6 +802,7 @@ int main(int argc, char** argv)
     dialogWatchdog.start(250);
     try {
         SplintWorkspaceTests::run(artifacts);
+        SplintWorkspaceTests::runModelGuide(artifacts);
         SplintWorkspaceTests::runCompositeWorkflow(artifacts);
         SplintWorkspaceTests::runOsteotomyWorkflow(artifacts);
         if (!unexpectedDialogs.isEmpty()) {

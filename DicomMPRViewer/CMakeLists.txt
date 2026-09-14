@@ -118,6 +118,8 @@ set(SOURCES
     src/MainWindowOsteotomy.cpp
     src/SurfaceContourOverlay.cpp
     src/MainWindowComposite.cpp
+    src/MainWindowModels.cpp
+    src/ModelWorkflowCore.cpp
     src/AppStateManager.cpp
     src/LoggerCore.cpp
     src/RegistrationResult.cpp
@@ -280,6 +282,7 @@ add_core_test(CompositeBlockTests tests/CompositeBlockTests.cpp src/CompositeBlo
 add_core_test(MeshRepairTests tests/MeshRepairTests.cpp src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)
 add_core_test(MaskToObjectTests tests/MaskToObjectTests.cpp src/MaskToObjectCore.cpp
     src/MeshGenerator.cpp src/BoneCavityFill.cpp)
+add_core_test(ModelWorkflowTests tests/ModelWorkflowTests.cpp src/ModelWorkflowCore.cpp)
 add_core_test(OsteotomyCoreTests tests/OsteotomyCoreTests.cpp src/OsteotomyCore.cpp src/CompositeBlockCore.cpp)
 target_link_libraries(ProjectSerializerTests PRIVATE Qt6::Gui)
 

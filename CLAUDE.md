@@ -31,6 +31,7 @@ Qt, VTK and GDCM DLLs are already deployed in `build/Release`. Scripts in `scrip
 Tests (CTest):
 - `GeometryCoreTests`, `BoneCavityFillTests`, `MeshGeneratorTests` — plain C++ executables
 - `MaskToObjectTests` checks exact label extraction, committed cavity filling and immutable input.
+- `ModelWorkflowTests` checks guided MODELOS steps, paired point requirements, fine adjustment and mandatory acceptance.
 - `SplintHeightmapTests`, `SplintDesignTests`, `SplintContourEditTests`, `SplintPreviewSchedulerTests`, `ProjectSerializerTests`, `CompositeBlockTests`, `MeshRepairTests`, `OsteotomyCoreTests` — core tests declared with `add_core_test()`; synthetic arches in `tests/SplintTestGeometry.h`
 - `SplintWorkspaceTests` also covers the composite block flow and the osteotomy wizard (Le Fort I → BSSO → genioplasty)
 - `RepositionWorkspaceTests`, `SplintWorkspaceTests` — instantiate `MainWindow` (declared `friend`), render offscreen, write PNGs to `build/workspace-test-artifacts`
@@ -74,5 +75,7 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   uses it). STL drops cell data: `ProjectSerializer` stores a `.vtp` next to tagged meshes. Avoid filters that drop cell
   data (e.g. appending with untagged meshes) on composites and their segments. MODELOS flow in `MainWindowComposite.cpp`
   (Registrar → Ajuste fino with scan contours on the MPR slices → Bloque → Revisar, review never skipped).
+  The permanent eight-step guide and action gates use `ModelWorkflowCore` + `MainWindowModels.cpp`.
+  Each jaw's registration continues to its own block and acceptance before the next jaw.
 
 `README.md` documents the load pipeline and cache but its build section is outdated.

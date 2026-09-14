@@ -2333,6 +2333,7 @@ void MainWindow::buildCentralWidget()
     auto* modelPanelLayout = new QVBoxLayout(modelPanel);
     modelPanelLayout->setContentsMargins(0, 0, 0, 0);
     modelPanelLayout->setSpacing(0);
+    modelPanelLayout->addWidget(buildModelGuide(modelPanel));
 
     // ── Vertical splitter: top pair | match preview ────────────────────
     m_modelSplitter = new QSplitter(Qt::Vertical, modelPanel);
@@ -6418,7 +6419,7 @@ void MainWindow::updateButtonStates()
     updateModelWorkflowUi();
 }
 
-void MainWindow::updateModelWorkflowUi()
+void MainWindow::updateModelWorkflowActions()
 {
     refreshRegisteredArchContours();
     const int step = m_modelStepStack ? m_modelStepStack->currentIndex() : 0;
@@ -13630,9 +13631,7 @@ void MainWindow::createDentalCompositeModels()
 // Called after the dental registration gizmo is committed.
 // Collapses the step-pair panel and expands the match view to full height so
 // the user can review the bone+STL alignment before continuing.
-// step == 0 → upper (maxilla) registered; "Continuar con Mandíbula" advances to step 1.
-// step == 1 → lower (mandible) registered; "Continuar con Orientación" auto-creates
-//             both composites and navigates to the orientation module.
+// Each jaw proceeds through its own cutting block and mandatory composite review.
 void MainWindow::showRegistrationReview(int step)
 {
     if (!m_modelMatchView) return;
@@ -13676,42 +13675,9 @@ void MainWindow::showRegistrationReview(int step)
     disconnect(m_compositeButton, nullptr, nullptr, nullptr);
     m_compositeButton->setEnabled(true);
 
-    if (step == 0) {
-        m_compositeButton->setText(tr("Continuar con Mandíbula →"));
-        connect(m_compositeButton, &QPushButton::clicked, this, [this] {
-            // Restore step panel at mandible (step 1) and rewire button normally
-            if (m_modelStepStack) {
-                m_modelStepStack->setVisible(true);
-                m_modelStepStack->setCurrentIndex(1);
-            }
-            if (m_modelMatchView) m_modelMatchView->setTitle(tr("MATCH PREVIEW"));
-            syncModelViews();
-            updateModelWorkflowUi();
-            disconnect(m_compositeButton, nullptr, nullptr, nullptr);
-            m_compositeButton->setText(tr("Crear Modelo Compuesto"));
-            connect(m_compositeButton, &QPushButton::clicked,
-                    this, &MainWindow::createDentalCompositeModels);
-        });
-    } else {
-        m_compositeButton->setText(tr("Continuar con Orientación →"));
-        connect(m_compositeButton, &QPushButton::clicked, this, [this] {
-            // Restore step panel and auto-create both composites sequentially
-            if (m_modelStepStack) {
-                m_modelStepStack->setVisible(true);
-                m_modelStepStack->setCurrentIndex(0);
-            }
-            if (m_modelMatchView) m_modelMatchView->setTitle(tr("MATCH PREVIEW"));
-            disconnect(m_compositeButton, nullptr, nullptr, nullptr);
-            m_compositeButton->setText(tr("Calculando..."));
-            m_compositeButton->setEnabled(false);
-
-            // Chains upper → lower → orientation; each composite still goes through its review.
-            m_autoCreateBothComposites = true;
-            if (m_upperCompositeMesh && m_modelStepStack)
-                m_modelStepStack->setCurrentIndex(1);
-            createDentalCompositeModels();
-        });
-    }
+    if (m_modelStepStack) m_modelStepStack->setCurrentIndex(step);
+    connect(m_compositeButton, &QPushButton::clicked, this, &MainWindow::createDentalCompositeModels);
+    updateModelWorkflowUi();
 }
 
 void MainWindow::onDentalCompositeFinished(int step, vtkSmartPointer<vtkPolyData> mesh)
