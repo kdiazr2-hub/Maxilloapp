@@ -103,6 +103,7 @@ set(SOURCES
     src/GeometryValidationCore.cpp
     src/CompositeModelCore.cpp
     src/SplintGenerator.cpp
+    src/SplintHeightmapGenerator.cpp
     src/AppStateManager.cpp
     src/LoggerCore.cpp
     src/RegistrationResult.cpp
@@ -147,6 +148,7 @@ set(HEADERS
     src/GeometryValidationCore.h
     src/CompositeModelCore.h
     src/SplintGenerator.h
+    src/SplintHeightmapGenerator.h
     src/AppStateManager.h
     src/LoggerCore.h
     src/RegistrationResult.h
@@ -228,6 +230,15 @@ target_include_directories(MeshGeneratorTests PRIVATE src)
 target_link_libraries(MeshGeneratorTests PRIVATE Qt6::Core ${VTK_LIBRARIES})
 vtk_module_autoinit(TARGETS MeshGeneratorTests MODULES ${VTK_LIBRARIES})
 add_test(NAME MeshGeneratorTests COMMAND MeshGeneratorTests)
+
+add_executable(SplintHeightmapTests tests/SplintHeightmapTests.cpp src/SplintHeightmapGenerator.cpp)
+target_include_directories(SplintHeightmapTests PRIVATE src)
+target_link_libraries(SplintHeightmapTests PRIVATE Qt6::Core ${VTK_LIBRARIES})
+if(MSVC)
+    target_compile_options(SplintHeightmapTests PRIVATE /utf-8)
+endif()
+vtk_module_autoinit(TARGETS SplintHeightmapTests MODULES ${VTK_LIBRARIES})
+add_test(NAME SplintHeightmapTests COMMAND SplintHeightmapTests)
 
 set(SEGMENTATION_TEST_PYTHON "$ENV{DENTALSEGMENTATOR_PYTHON}" CACHE FILEPATH
     "Python with numpy, scipy and SimpleITK for segmentation regression tests")
