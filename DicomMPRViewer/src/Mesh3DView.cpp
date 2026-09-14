@@ -1,0 +1,1374 @@
+#include "Mesh3DView.h"
+#include "CranioPalette.h"
+
+#include <QEvent>
+#include <QColor>
+#include <QKeyEvent>
+#include <QLabel>
+#include <QMouseEvent>
+#include <QPainter>
+#include <QPen>
+#include <QSignalBlocker>
+#include <QToolButton>
+#include <QVBoxLayout>
+#include <QVTKOpenGLNativeWidget.h>
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <limits>
+
+#include <vtkActor.h>
+#include <vtkActor2D.h>
+#include <vtkArrowSource.h>
+#include <vtkBoundingBox.h>
+#include <vtkCallbackCommand.h>
+#include <vtkMath.h>
+#include <vtkCamera.h>
+#include <vtkCellArray.h>
+#include <vtkCellPicker.h>
+#include <vtkCoordinate.h>
+#include <vtkCubeSource.h>
+#include <vtkGenericOpenGLRenderWindow.h>
+#include <vtkInteractorStyle.h>
+#include <vtkInteractorStyleTrackballCamera.h>
+#include <vtkMatrix4x4.h>
+#include <vtkObjectFactory.h>
+#include <vtkPoints.h>
+#include <vtkPolyData.h>
+#include <vtkPolyDataMapper.h>
+#include <vtkPolyDataMapper2D.h>
+#include <vtkProperty.h>
+#include <vtkProperty2D.h>
+#include <vtkRegularPolygonSource.h>
+#include <vtkRenderWindowInteractor.h>
+#include <vtkRenderer.h>
+#include <vtkSmartPointer.h>
+#include <vtkSphereSource.h>
+#include <vtkTransform.h>
+#include <vtkTransformPolyDataFilter.h>
+#include <vtkTubeFilter.h>
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Custom interactor style
+//
+// Extends TrackballCamera so that BOTH left-click AND right-click rotate the
+// scene.  The middle button still pans; the scroll wheel still zooms.
+// This gives medical users the natural "right-click = rotate" feel.
+// ─────────────────────────────────────────────────────────────────────────────
+class vtkInteractorStyleRotateRight : public vtkInteractorStyleTrackballCamera
+{
+public:
+    static vtkInteractorStyleRotateRight* New();
+    vtkTypeMacro(vtkInteractorStyleRotateRight, vtkInteractorStyleTrackballCamera);
+
+    void OnRightButtonDown() override
+    {
+        this->FindPokedRenderer(
+            this->Interactor->GetEventPosition()[0],
+            this->Interactor->GetEventPosition()[1]);
+        if (!this->CurrentRenderer) return;
+        this->GrabFocus(static_cast<vtkCommand*>(this->EventCallbackCommand));
+        this->StartRotate();
+    }
+
+    void OnRightButtonUp() override
+    {
+        if (this->State == VTKIS_ROTATE) {
+            this->EndRotate();
+            if (this->Interactor) this->ReleaseFocus();
+        } else {
+            Superclass::OnRightButtonUp();
+        }
+    }
+};
+vtkStandardNewMacro(vtkInteractorStyleRotateRight);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Default per-label colours
+// ─────────────────────────────────────────────────────────────────────────────
+static void meshColor(int label, double rgb[3])
+{
+    auto assign = [rgb](const QColor& color) {
+        rgb[0] = color.redF();
+        rgb[1] = color.greenF();
+        rgb[2] = color.blueF();
+    };
+
+    switch (label) {
+        case 1: assign(CranioPalette::bone()); return;
+        case 2: assign(CranioPalette::softTissue()); return;
+        case 3: assign(CranioPalette::dental()); return;
+        case 4: assign(CranioPalette::guide()); return;
+        case 5: assign(CranioPalette::maxilla()); return;
+        case 6: assign(CranioPalette::mandible()); return;
+        case 8: assign(CranioPalette::dental()); return;
+        default: assign(CranioPalette::fallback()); return;
+    }
+
+    switch (label) {
+        case 1: rgb[0] = 0.92; rgb[1] = 0.82; rgb[2] = 0.72; return; // hueso
+        case 2: rgb[0] = 0.30; rgb[1] = 0.72; rgb[2] = 1.00; return; // blando
+        case 3: rgb[0] = 1.00; rgb[1] = 0.95; rgb[2] = 0.35; return; // dientes superiores
+        case 4: rgb[0] = 0.25; rgb[1] = 1.00; rgb[2] = 0.45; return; // via aerea
+        case 5: rgb[0] = 0.98; rgb[1] = 0.72; rgb[2] = 0.72; return; // maxilar  — rosado
+        case 6: rgb[0] = 0.62; rgb[1] = 0.80; rgb[2] = 0.98; return; // mandíbula — azul
+        case 8: rgb[0] = 1.00; rgb[1] = 0.82; rgb[2] = 0.18; return; // dientes inferiores
+        default: rgb[0] = 0.85; rgb[1] = 0.35; rgb[2] = 0.85; return;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Ray-casting even-odd point-in-polygon test (2-D)
+// ─────────────────────────────────────────────────────────────────────────────
+static bool lassoContains(double px, double py, const QVector<QPointF>& poly)
+{
+    bool inside = false;
+    const int n = poly.size();
+    for (int i = 0, j = n - 1; i < n; j = i++) {
+        const double xi = poly[i].x(), yi = poly[i].y();
+        const double xj = poly[j].x(), yj = poly[j].y();
+        if (((yi > py) != (yj > py)) &&
+            (px < (xj - xi) * (py - yi) / (yj - yi) + xi))
+            inside = !inside;
+    }
+    return inside;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LassoCanvas3D
+//
+// Transparent overlay that paints the in-progress lasso polygon in red.
+// WA_TransparentForMouseEvents lets all events fall through to the eventFilter.
+// ─────────────────────────────────────────────────────────────────────────────
+class LassoCanvas3D : public QWidget
+{
+public:
+    explicit LassoCanvas3D(QWidget* parent) : QWidget(parent)
+    {
+        setAttribute(Qt::WA_TransparentForMouseEvents);
+        setAttribute(Qt::WA_TranslucentBackground);
+        setStyleSheet("background: transparent;");
+    }
+
+    void setPoints(const QVector<QPointF>& pts)  { m_points = pts;  update(); }
+    void clearPoints()                           { m_points.clear(); update(); }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        if (m_points.size() < 2) return;
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        QPen pen(QColor(230, 55, 55, 220), 1.5, Qt::DashLine);
+        p.setPen(pen);
+        for (int i = 0; i + 1 < m_points.size(); ++i)
+            p.drawLine(m_points[i], m_points[i + 1]);
+        if (m_points.size() > 2)
+            p.drawLine(m_points.last(), m_points.first());
+        p.setPen(QPen(QColor(230, 55, 55, 220), 4.0, Qt::SolidLine));
+        p.drawPoint(m_points.first());
+    }
+
+private:
+    QVector<QPointF> m_points;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+Mesh3DView::Mesh3DView(QWidget* parent)
+    : QWidget(parent)
+{
+    buildLayout();
+    initRenderer();
+}
+
+Mesh3DView::~Mesh3DView() = default;
+
+void Mesh3DView::setTitle(const QString& title)
+{
+    if (m_titleLabel) m_titleLabel->setText(title);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+void Mesh3DView::buildLayout()
+{
+    setStyleSheet(
+        "Mesh3DView { background-color:#1f1f21; border:1px solid #2c2c2e; border-radius:14px; }"
+        "QVTKOpenGLNativeWidget { border-radius:10px; }");
+
+    auto* outer = new QVBoxLayout(this);
+    outer->setContentsMargins(6, 6, 6, 6);
+    outer->setSpacing(6);
+
+    m_titleLabel = new QLabel("3D", this);
+    m_titleLabel->setAlignment(Qt::AlignCenter);
+    m_titleLabel->setFixedHeight(22);
+    m_titleLabel->setStyleSheet(
+        "color:#f5f5f7; font-weight:700; font-size:11px;"
+        "background-color:#2c2c2e; border-radius:10px;");
+    outer->addWidget(m_titleLabel);
+
+    m_vtkWidget = new QVTKOpenGLNativeWidget(this);
+    m_vtkWidget->setMinimumSize(256, 256);
+    m_vtkWidget->setFocusPolicy(Qt::StrongFocus);
+    m_vtkWidget->setStyleSheet("background-color:#1f1f21;");
+    m_vtkWidget->installEventFilter(this);
+    outer->addWidget(m_vtkWidget, 1);
+
+    // Transparent lasso overlay on top of the VTK widget
+    m_lassoCanvas = new LassoCanvas3D(m_vtkWidget);
+    m_lassoCanvas->setGeometry(m_vtkWidget->rect());
+    m_lassoCanvas->hide();
+    m_lassoCanvas->raise();
+
+    m_gridToggleButton = new QToolButton(m_vtkWidget);
+    m_gridToggleButton->setCheckable(true);
+    m_gridToggleButton->setChecked(true);
+    m_gridToggleButton->setText("G");
+    m_gridToggleButton->setToolTip(tr("Mostrar/ocultar cuadricula 3D"));
+    m_gridToggleButton->setFixedSize(30, 30);
+    m_gridToggleButton->setStyleSheet(
+        "QToolButton {"
+        " background-color:rgba(44,44,46,220);"
+        " color:#f5f5f7;"
+        " border:1px solid rgba(255,255,255,55);"
+        " border-radius:10px;"
+        " font-weight:bold;"
+        "}"
+        "QToolButton:checked {"
+        " background-color:#0a84ff;"
+        " color:#ffffff;"
+        " border-color:#0a84ff;"
+        "}"
+        "QToolButton:hover { background-color:rgba(58,58,60,240); }");
+    connect(m_gridToggleButton, &QToolButton::toggled,
+            this, &Mesh3DView::setGridVisible);
+    positionOverlayControls();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+void Mesh3DView::initRenderer()
+{
+    m_renderWindow = vtkSmartPointer<vtkGenericOpenGLRenderWindow>::New();
+    m_renderWindow->SetNumberOfLayers(4);
+    m_renderWindow->SetAlphaBitPlanes(1);
+    m_renderWindow->SetMultiSamples(0);
+
+    m_backgroundRenderer = vtkSmartPointer<vtkRenderer>::New();
+    m_backgroundRenderer->SetLayer(0);
+    m_backgroundRenderer->SetBackground(0.12, 0.12, 0.14);
+    m_backgroundRenderer->InteractiveOff();
+
+    m_renderer     = vtkSmartPointer<vtkRenderer>::New();
+    m_renderer->SetLayer(1);
+    m_renderer->SetBackground(0.12, 0.12, 0.14);
+    m_renderer->SetBackgroundAlpha(0.0);
+
+    m_foregroundRenderer = vtkSmartPointer<vtkRenderer>::New();
+    m_foregroundRenderer->SetLayer(2);
+    m_foregroundRenderer->SetActiveCamera(m_renderer->GetActiveCamera());
+    m_foregroundRenderer->InteractiveOff();
+    m_foregroundRenderer->PreserveDepthBufferOff();
+    m_annotationRenderer = vtkSmartPointer<vtkRenderer>::New();
+    m_annotationRenderer->SetLayer(3);
+    m_annotationRenderer->SetActiveCamera(m_renderer->GetActiveCamera());
+    m_annotationRenderer->InteractiveOff();
+    for (auto* renderer : {m_renderer.GetPointer(), m_foregroundRenderer.GetPointer()}) {
+        renderer->SetUseDepthPeeling(true);
+        renderer->SetMaximumNumberOfPeels(100);
+        renderer->SetOcclusionRatio(0.1);
+    }
+
+    m_vtkWidget->setRenderWindow(m_renderWindow);
+    m_renderWindow->AddRenderer(m_backgroundRenderer);
+    m_renderWindow->AddRenderer(m_renderer);
+    m_renderWindow->AddRenderer(m_foregroundRenderer);
+    m_renderWindow->AddRenderer(m_annotationRenderer);
+
+    // Native camera interactions must also include foreground-only structures.
+    auto clippingObserver = vtkSmartPointer<vtkCallbackCommand>::New();
+    clippingObserver->SetClientData(this);
+    clippingObserver->SetCallback([](vtkObject*, unsigned long, void* data, void*) {
+        auto* view = static_cast<Mesh3DView*>(data);
+        double bounds[6];
+        view->sceneBounds(bounds);
+        if (vtkBoundingBox::IsValid(bounds))
+            view->m_renderer->ResetCameraClippingRange(bounds);
+    });
+    m_renderWindow->AddObserver(vtkCommand::StartEvent, clippingObserver);
+
+    m_gridPolyData = vtkSmartPointer<vtkPolyData>::New();
+    auto gridMapper = vtkSmartPointer<vtkPolyDataMapper2D>::New();
+    auto gridCoord = vtkSmartPointer<vtkCoordinate>::New();
+    gridCoord->SetCoordinateSystemToDisplay();
+    gridMapper->SetTransformCoordinate(gridCoord);
+    gridMapper->SetInputData(m_gridPolyData);
+
+    m_gridActor = vtkSmartPointer<vtkActor2D>::New();
+    m_gridActor->SetMapper(gridMapper);
+    m_gridActor->GetProperty()->SetColor(0.35, 0.35, 0.40);
+    m_gridActor->GetProperty()->SetOpacity(0.34);
+    m_gridActor->GetProperty()->SetLineWidth(1.0);
+    m_gridActor->SetVisibility(m_gridVisible ? 1 : 0);
+    m_backgroundRenderer->AddActor2D(m_gridActor);
+    updateGridGeometry();
+
+    // Right-click = rotate (same as left-click); scroll = zoom; middle = pan
+    auto style = vtkSmartPointer<vtkInteractorStyleRotateRight>::New();
+    if (auto* interactor = m_renderWindow->GetInteractor())
+        interactor->SetInteractorStyle(style);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+bool Mesh3DView::eventFilter(QObject* watched, QEvent* event)
+{
+    if (watched != m_vtkWidget) return QWidget::eventFilter(watched, event);
+
+    // Keep canvas sized to the vtk widget
+    if (event->type() == QEvent::Resize) {
+        positionOverlayControls();
+        updateGridGeometry();
+        render();
+    }
+
+    if (event->type() == QEvent::MouseButtonDblClick) {
+        emit fullScreenToggleRequested(this);
+        return true;
+    }
+
+    if (event->type() == QEvent::MouseButtonPress) {
+        m_vtkWidget->setFocus(Qt::MouseFocusReason);
+    }
+
+    if (event->type() == QEvent::KeyPress) {
+        auto* key = static_cast<QKeyEvent*>(event);
+        if (key->key() == Qt::Key_Space && key->modifiers() == Qt::NoModifier) {
+            emit fullScreenToggleRequested(this);
+            return true;
+        }
+    }
+
+    if (m_pointPickActive && event->type() == QEvent::MouseButtonPress) {
+        auto* me = static_cast<QMouseEvent*>(event);
+        if (me->button() == Qt::LeftButton && m_renderer) {
+            const double dpr = m_vtkWidget ? m_vtkWidget->devicePixelRatioF() : 1.0;
+            auto picker = vtkSmartPointer<vtkCellPicker>::New();
+            picker->SetTolerance(0.0025);
+            const int px = static_cast<int>(std::lround(me->position().x() * dpr));
+            const int py = static_cast<int>(std::lround((m_vtkWidget->height() - me->position().y()) * dpr));
+            // Pick the visible foreground first, matching its display order.
+            if (picker->Pick(px, py, 0.0, m_foregroundRenderer) ||
+                picker->Pick(px, py, 0.0, m_renderer)) {
+                vtkActor* actor = picker->GetActor();
+                auto it = m_actorLabels.find(actor);
+                if (it != m_actorLabels.end()) {
+                    double p[3] = {};
+                    picker->GetPickPosition(p);
+                    emit pointPicked(it->second, p[0], p[1], p[2]);
+                }
+            }
+            return true;
+        }
+    }
+
+    if (!m_lassoActive) return QWidget::eventFilter(watched, event);
+
+    // ── Lasso erase mouse events (LEFT button only) ───────────────────────
+    // Right button always falls through to VTK so the camera can rotate.
+    if (event->type() == QEvent::MouseButtonPress) {
+        auto* me = static_cast<QMouseEvent*>(event);
+        if (me->button() == Qt::LeftButton) {
+            m_lassoDrawing = true;
+            m_lassoPoints.clear();
+            m_lassoPoints.append(me->pos());
+            if (m_lassoCanvas) {
+                static_cast<LassoCanvas3D*>(m_lassoCanvas)->setPoints(m_lassoPoints);
+                m_lassoCanvas->show();
+                m_lassoCanvas->raise();
+            }
+            return true;   // prevent VTK from consuming the left press
+        }
+        // Right button → let VTK handle it (rotation via custom style)
+    }
+
+    if (event->type() == QEvent::MouseMove && m_lassoDrawing) {
+        auto* me = static_cast<QMouseEvent*>(event);
+        m_lassoPoints.append(me->pos());
+        if (m_lassoCanvas)
+            static_cast<LassoCanvas3D*>(m_lassoCanvas)->setPoints(m_lassoPoints);
+        return true;
+    }
+
+    if (event->type() == QEvent::MouseButtonRelease && m_lassoDrawing) {
+        auto* me = static_cast<QMouseEvent*>(event);
+        if (me->button() == Qt::LeftButton) {
+            m_lassoDrawing = false;
+            if (m_lassoCanvas) {
+                static_cast<LassoCanvas3D*>(m_lassoCanvas)->clearPoints();
+                m_lassoCanvas->hide();
+            }
+            if (m_lassoPoints.size() >= 3)
+                applyLassoErase();
+            m_lassoPoints.clear();
+            return true;
+        }
+    }
+
+    return QWidget::eventFilter(watched, event);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// pushUndoState — deep-copies current polydata into the undo stack.
+// Called at the start of applyLassoErase(), before any modification.
+// ─────────────────────────────────────────────────────────────────────────────
+void Mesh3DView::pushUndoState()
+{
+    MeshSnapshot snap;
+    for (const auto& [label, pd] : m_meshPolyData) {
+        if (!pd) continue;
+        auto copy = vtkSmartPointer<vtkPolyData>::New();
+        copy->DeepCopy(pd);
+        snap[label] = copy;
+    }
+    if (m_undoStack.size() >= kMaxUndo)
+        m_undoStack.removeFirst();
+    m_undoStack.push(snap);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// applyLassoErase — removes triangles whose centroid projects inside the lasso.
+// ─────────────────────────────────────────────────────────────────────────────
+void Mesh3DView::applyLassoErase()
+{
+    if (!m_renderer || m_lassoPoints.size() < 3) return;
+
+    // Save undo state BEFORE any modification
+    pushUndoState();
+
+    const double dpr = m_vtkWidget->devicePixelRatioF();
+    const double h   = static_cast<double>(m_vtkWidget->height());
+
+    auto coord = vtkSmartPointer<vtkCoordinate>::New();
+    coord->SetCoordinateSystemToWorld();
+
+    bool anyModified = false;
+
+    for (auto& [label, polyData] : m_meshPolyData) {
+        if (!polyData || polyData->GetNumberOfCells() == 0) continue;
+
+        auto newPolys = vtkSmartPointer<vtkCellArray>::New();
+        bool modified = false;
+
+        const vtkIdType nCells = polyData->GetNumberOfCells();
+        for (vtkIdType cellId = 0; cellId < nCells; ++cellId) {
+            vtkIdType        npts = 0;
+            const vtkIdType* pts  = nullptr;
+            polyData->GetCellPoints(cellId, npts, pts);
+
+            // Centroid in world space
+            double cx = 0.0, cy = 0.0, cz = 0.0;
+            for (vtkIdType k = 0; k < npts; ++k) {
+                double p[3];
+                polyData->GetPoint(pts[k], p);
+                cx += p[0]; cy += p[1]; cz += p[2];
+            }
+            if (npts > 0) { cx /= npts; cy /= npts; cz /= npts; }
+
+            // Project world → VTK display (physical px, y=0 at bottom)
+            coord->SetValue(cx, cy, cz);
+            int* disp = coord->GetComputedDisplayValue(m_renderer);
+
+            // Convert to Qt widget coords (logical px, y=0 at top)
+            const double qt_x = disp[0] / dpr;
+            const double qt_y = h - disp[1] / dpr;
+
+            if (lassoContains(qt_x, qt_y, m_lassoPoints)) {
+                modified = true;
+                continue;   // erase this cell
+            }
+            newPolys->InsertNextCell(npts, pts);
+        }
+
+        if (!modified) continue;
+
+        auto newPD = vtkSmartPointer<vtkPolyData>::New();
+        newPD->SetPoints(polyData->GetPoints());
+        newPD->SetPolys(newPolys);
+        polyData = newPD;
+
+        auto it = m_meshActors.find(label);
+        if (it != m_meshActors.end()) {
+            auto mapper = vtkSmartPointer<vtkPolyDataMapper>::New();
+            mapper->SetInputData(newPD);
+            mapper->ScalarVisibilityOff();
+            it->second->SetMapper(mapper);
+        }
+        emit meshEdited(label, newPD);
+        anyModified = true;
+    }
+
+    if (anyModified)
+        render();
+    else
+        m_undoStack.pop();   // nothing changed → discard the snapshot we just pushed
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// undo — restores the most recent mesh snapshot.
+// ─────────────────────────────────────────────────────────────────────────────
+void Mesh3DView::undo()
+{
+    if (m_undoStack.isEmpty()) return;
+
+    const MeshSnapshot snap = m_undoStack.pop();
+    for (const auto& [label, pd] : snap) {
+        m_meshPolyData[label] = pd;
+        auto it = m_meshActors.find(label);
+        if (it != m_meshActors.end()) {
+            auto mapper = vtkSmartPointer<vtkPolyDataMapper>::New();
+            mapper->SetInputData(pd);
+            mapper->ScalarVisibilityOff();
+            it->second->SetMapper(mapper);
+        }
+        emit meshEdited(label, pd);
+    }
+    updateGridGeometry();
+    render();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+void Mesh3DView::setLassoEraseMode(bool active)
+{
+    m_lassoActive  = active;
+    m_lassoDrawing = false;
+    m_lassoPoints.clear();
+    if (m_lassoCanvas) {
+        static_cast<LassoCanvas3D*>(m_lassoCanvas)->clearPoints();
+        m_lassoCanvas->setVisible(false);
+    }
+    const Qt::CursorShape cur = active ? Qt::CrossCursor : Qt::ArrowCursor;
+    setCursor(cur);
+    if (m_vtkWidget) m_vtkWidget->setCursor(cur);
+}
+
+void Mesh3DView::setFullScreenActive(bool active)
+{
+    if (!m_titleLabel) return;
+    m_titleLabel->setStyleSheet(
+        active
+            ? "color:#ffffff; font-weight:700; font-size:11px;"
+              "background-color:#0a84ff; border-radius:10px;"
+            : "color:#f5f5f7; font-weight:700; font-size:11px;"
+              "background-color:#2c2c2e; border-radius:10px;");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+void Mesh3DView::setGridVisible(bool visible)
+{
+    m_gridVisible = visible;
+    if (m_gridToggleButton && m_gridToggleButton->isChecked() != visible) {
+        const QSignalBlocker blocker(m_gridToggleButton);
+        m_gridToggleButton->setChecked(visible);
+    }
+    if (m_gridActor)
+        m_gridActor->SetVisibility(visible ? 1 : 0);
+    render();
+}
+
+void Mesh3DView::positionOverlayControls()
+{
+    if (!m_vtkWidget) return;
+
+    if (m_lassoCanvas)
+        m_lassoCanvas->setGeometry(m_vtkWidget->rect());
+
+    if (m_lassoCanvas)
+        m_lassoCanvas->raise();
+
+    if (m_gridToggleButton) {
+        const int margin = 8;
+        const int size = m_gridToggleButton->width() > 0 ? m_gridToggleButton->width() : 30;
+        m_gridToggleButton->move(std::max(margin, m_vtkWidget->width() - size - margin), margin);
+        m_gridToggleButton->raise();
+    }
+}
+
+void Mesh3DView::updateGridGeometry()
+{
+    if (!m_gridPolyData)
+        return;
+
+    const double dpr = m_vtkWidget ? m_vtkWidget->devicePixelRatioF() : 1.0;
+    int width = m_vtkWidget ? static_cast<int>(std::round(m_vtkWidget->width() * dpr)) : 640;
+    int height = m_vtkWidget ? static_cast<int>(std::round(m_vtkWidget->height() * dpr)) : 480;
+
+    width = std::max(width, 2);
+    height = std::max(height, 2);
+    const double step = width > 1300 || height > 900 ? 40.0 : 28.0;
+    const double x0 = -step;
+    const double y0 = -step;
+    const double x1 = width + step;
+    const double y1 = height + step;
+
+    auto points = vtkSmartPointer<vtkPoints>::New();
+    auto lines = vtkSmartPointer<vtkCellArray>::New();
+
+    auto addLine = [&](double x0, double y0, double x1, double y1) {
+        const vtkIdType start = points->GetNumberOfPoints();
+        points->InsertNextPoint(x0, y0, 0.0);
+        points->InsertNextPoint(x1, y1, 0.0);
+        lines->InsertNextCell(2);
+        lines->InsertCellPoint(start);
+        lines->InsertCellPoint(start + 1);
+    };
+
+    for (double x = x0; x <= x1 + 1.0; x += step)
+        addLine(x, y0, x, y1);
+    for (double y = y0; y <= y1 + 1.0; y += step)
+        addLine(x0, y, x1, y);
+
+    m_gridPolyData->SetPoints(points);
+    m_gridPolyData->SetLines(lines);
+    m_gridPolyData->Modified();
+}
+
+void Mesh3DView::addMesh(int label, vtkSmartPointer<vtkPolyData> mesh,
+                         const QString&)
+{
+    if (!mesh || !m_renderer) return;
+
+    const bool hadMeshesBeforeAdd = !m_meshActors.empty();
+
+    auto it = m_meshActors.find(label);
+    if (it != m_meshActors.end()) {
+        m_renderer->RemoveActor(it->second);
+        m_foregroundRenderer->RemoveActor(it->second);
+        m_actorLabels.erase(it->second);
+        m_meshActors.erase(it);
+    }
+    m_meshPolyData[label] = mesh;
+
+    auto mapper = vtkSmartPointer<vtkPolyDataMapper>::New();
+    mapper->SetInputData(mesh);
+    mapper->ScalarVisibilityOff();
+
+    auto actor = vtkSmartPointer<vtkActor>::New();
+    actor->SetMapper(mapper);
+
+    double color[3] = {};
+    meshColor(label, color);
+    actor->GetProperty()->SetColor(color);
+    actor->GetProperty()->SetSpecular(0.18);
+    actor->GetProperty()->SetSpecularPower(16.0);
+    actor->GetProperty()->SetInterpolationToPhong();
+
+    const auto display = m_displayOptions.find(label);
+    const bool onTop = display != m_displayOptions.end() && display->second.alwaysOnTop;
+    if (display != m_displayOptions.end())
+        actor->GetProperty()->SetOpacity(display->second.opacity);
+    actor->SetPickable(actor->GetProperty()->GetOpacity() > 0.0);
+    (onTop ? m_foregroundRenderer : m_renderer)->AddActor(actor);
+    m_meshActors[label] = actor;
+    m_actorLabels[actor] = label;
+    updateGridGeometry();
+
+    if (!hadMeshesBeforeAdd && !m_preserveCameraOnNextMesh) {
+        resetCamera();
+    } else {
+        double bounds[6];
+        sceneBounds(bounds);
+        m_renderer->ResetCameraClippingRange(bounds);
+        render();
+    }
+    m_preserveCameraOnNextMesh = false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+void Mesh3DView::clearMeshes(bool preserveCamera)
+{
+    if (!m_renderer) return;
+    m_preserveCameraOnNextMesh = preserveCamera && (!m_meshActors.empty() || m_preserveCameraOnNextMesh);
+    for (auto& entry : m_meshActors) {
+        m_renderer->RemoveActor(entry.second);
+        m_foregroundRenderer->RemoveActor(entry.second);
+    }
+    m_meshActors.clear();
+    m_meshPolyData.clear();
+    m_actorLabels.clear();
+    clearPointMarkers();
+    m_undoStack.clear();
+    updateGridGeometry();
+    render();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+void Mesh3DView::setMeshColor(int label, const QColor& color)
+{
+    auto it = m_meshActors.find(label);
+    if (it == m_meshActors.end()) return;
+    it->second->GetProperty()->SetColor(color.redF(), color.greenF(), color.blueF());
+    render();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+void Mesh3DView::setMeshOpacity(int label, double opacity)
+{
+    auto it = m_meshActors.find(label);
+    if (it == m_meshActors.end()) return;
+    opacity = std::clamp(opacity, 0.0, 1.0);
+    if (const auto display = m_displayOptions.find(label); display != m_displayOptions.end())
+        opacity = display->second.opacity;
+    it->second->GetProperty()->SetOpacity(opacity);
+    it->second->SetPickable(opacity > 0.0);
+    render();
+}
+
+void Mesh3DView::setMeshDisplayOptions(int label, double opacity, bool alwaysOnTop)
+{
+    if (!std::isfinite(opacity)) return;
+    if (opacity < 0.0) {
+        m_displayOptions.erase(label);
+        opacity = 1.0;
+        alwaysOnTop = false;
+    } else {
+        opacity = std::clamp(opacity, 0.0, 1.0);
+        m_displayOptions[label] = {opacity, alwaysOnTop};
+    }
+    const auto it = m_meshActors.find(label);
+    if (it == m_meshActors.end()) return;
+    auto* actor = it->second.GetPointer();
+    auto* target = alwaysOnTop ? m_foregroundRenderer.GetPointer() : m_renderer.GetPointer();
+    if (actor->GetProperty()->GetOpacity() == opacity && target->HasViewProp(actor)) return;
+    actor->GetProperty()->SetOpacity(opacity);
+    actor->SetPickable(opacity > 0.0);
+    m_renderer->RemoveActor(actor);
+    m_foregroundRenderer->RemoveActor(actor);
+    target->AddActor(actor);
+    render();
+}
+
+vtkSmartPointer<vtkPolyData> Mesh3DView::meshData(int label) const
+{
+    auto it = m_meshPolyData.find(label);
+    return it == m_meshPolyData.end() ? nullptr : it->second;
+}
+
+void Mesh3DView::setPointPickMode(bool active)
+{
+    m_pointPickActive = active;
+    const Qt::CursorShape cursor = active ? Qt::CrossCursor : Qt::ArrowCursor;
+    setCursor(cursor);
+    if (m_vtkWidget) m_vtkWidget->setCursor(cursor);
+}
+
+void Mesh3DView::addPointMarker(double x, double y, double z, const QColor& color)
+{
+    if (!m_renderer) return;
+
+    auto sphere = vtkSmartPointer<vtkSphereSource>::New();
+    sphere->SetCenter(x, y, z);
+    sphere->SetRadius(1.4);
+    sphere->SetThetaResolution(16);
+    sphere->SetPhiResolution(16);
+    sphere->Update();
+
+    auto mapper = vtkSmartPointer<vtkPolyDataMapper>::New();
+    mapper->SetInputConnection(sphere->GetOutputPort());
+
+    auto actor = vtkSmartPointer<vtkActor>::New();
+    actor->SetMapper(mapper);
+    actor->GetProperty()->SetColor(color.redF(), color.greenF(), color.blueF());
+    actor->GetProperty()->SetAmbient(0.35);
+    actor->GetProperty()->SetDiffuse(0.9);
+    actor->GetProperty()->SetSpecular(0.3);
+
+    m_annotationRenderer->AddActor(actor);
+    m_pointMarkerActors.push_back(actor);
+    render();
+}
+
+void Mesh3DView::clearPointMarkers()
+{
+    if (!m_renderer) {
+        m_pointMarkerActors.clear();
+        return;
+    }
+    for (const auto& actor : m_pointMarkerActors)
+        m_annotationRenderer->RemoveActor(actor);
+    m_pointMarkerActors.clear();
+    render();
+}
+
+void Mesh3DView::removeMesh(int label)
+{
+    auto it = m_meshActors.find(label);
+    if (it != m_meshActors.end()) {
+        if (m_renderer) m_renderer->RemoveActor(it->second);
+        if (m_foregroundRenderer) m_foregroundRenderer->RemoveActor(it->second);
+        m_actorLabels.erase(it->second);
+        m_meshActors.erase(it);
+    }
+    m_meshPolyData.erase(label);
+    updateGridGeometry();
+    render();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+void Mesh3DView::setMeshVisible(int label, bool visible)
+{
+    auto it = m_meshActors.find(label);
+    if (it == m_meshActors.end()) return;
+    it->second->SetVisibility(visible ? 1 : 0);
+    render();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+void Mesh3DView::resetCamera()
+{
+    if (!m_renderer) return;
+    m_standardViewIndex = -1;
+    double bounds[6];
+    sceneBounds(bounds);
+    m_renderer->ResetCamera(bounds);
+    if (auto* camera = m_renderer->GetActiveCamera()) {
+        camera->ParallelProjectionOff();
+        camera->Elevation(15.0);
+        camera->Azimuth(-35.0);
+        camera->Dolly(1.2);
+        m_renderer->ResetCameraClippingRange(bounds);
+    }
+    render();
+}
+
+void Mesh3DView::cycleStandardView()
+{
+    m_standardViewIndex = (m_standardViewIndex + 1) % 5;
+    applyStandardView(m_standardViewIndex);
+}
+
+void Mesh3DView::setStandardView(int viewIndex)
+{
+    m_standardViewIndex = ((viewIndex % 5) + 5) % 5;
+    applyStandardView(m_standardViewIndex);
+}
+
+void Mesh3DView::applyStandardView(int viewIndex)
+{
+    if (!m_renderer) return;
+    auto* camera = m_renderer->GetActiveCamera();
+    if (!camera) return;
+
+    double bounds[6] = {};
+    sceneBounds(bounds);
+    if (!std::isfinite(bounds[0]) || bounds[0] > bounds[1] ||
+        bounds[2] > bounds[3] || bounds[4] > bounds[5]) {
+        resetCamera();
+        return;
+    }
+
+    const std::array<double, 3> center {
+        (bounds[0] + bounds[1]) * 0.5,
+        (bounds[2] + bounds[3]) * 0.5,
+        (bounds[4] + bounds[5]) * 0.5
+    };
+    const double dx = std::max(1.0, bounds[1] - bounds[0]);
+    const double dy = std::max(1.0, bounds[3] - bounds[2]);
+    const double dz = std::max(1.0, bounds[5] - bounds[4]);
+    const double diagonal = std::sqrt(dx * dx + dy * dy + dz * dz);
+    const double distance = std::max(200.0, diagonal * 1.8);
+    const double scale = std::max({dx, dy, dz}) * 0.62;
+
+    std::array<double, 3> position = center;
+    std::array<double, 3> viewUp {0.0, 0.0, 1.0};
+
+    switch (viewIndex) {
+        case 0: // frontal
+            position[1] -= distance;
+            break;
+        case 1: // lateral izquierda
+            position[0] -= distance;
+            break;
+        case 2: // lateral derecha
+            position[0] += distance;
+            break;
+        case 3: // desde abajo
+            position[2] -= distance;
+            viewUp = {0.0, 1.0, 0.0};
+            break;
+        case 4: // desde arriba
+            position[2] += distance;
+            viewUp = {0.0, 1.0, 0.0};
+            break;
+        default:
+            break;
+    }
+
+    camera->SetFocalPoint(center.data());
+    camera->SetPosition(position.data());
+    camera->SetViewUp(viewUp.data());
+    camera->ParallelProjectionOn();
+    camera->SetParallelScale(scale);
+    m_renderer->ResetCameraClippingRange(bounds);
+    render();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+void Mesh3DView::render()
+{
+    if (m_renderWindow) m_renderWindow->Render();
+}
+
+void Mesh3DView::sceneBounds(double bounds[6]) const
+{
+    vtkBoundingBox box;
+    for (auto* renderer : {m_renderer.GetPointer(), m_foregroundRenderer.GetPointer()}) {
+        double part[6];
+        renderer->ComputeVisiblePropBounds(part);
+        if (vtkBoundingBox::IsValid(part)) box.AddBounds(part);
+    }
+    box.GetBounds(bounds);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Gizmo  (interactive box widget for manual mesh repositioning)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+void Mesh3DView::startGizmo(int label)
+{
+    // Stop any existing gizmo first
+    if (hasGizmo()) stopGizmo();
+
+    if (m_meshPolyData.find(label) == m_meshPolyData.end() ||
+        m_meshActors.find(label)   == m_meshActors.end())
+        return;
+
+    m_gizmoLabel = label;
+
+    // Snapshot the mesh so updateGizmoTransform() always transforms from rest
+    m_gizmoOriginalMesh = vtkSmartPointer<vtkPolyData>::New();
+    m_gizmoOriginalMesh->DeepCopy(m_meshPolyData[label]);
+    m_gizmoTransformMatrix = vtkSmartPointer<vtkMatrix4x4>::New();
+    m_gizmoTransformMatrix->Identity();
+
+    // Build visual actors: X/Y/Z arrows + X/Y/Z rings + gold cube
+    // All actors are now SetPickable(true) so they can be directly clicked
+    double bounds[6];
+    m_meshActors[label]->GetBounds(bounds);
+    buildGizmoVisuals(bounds);
+
+    // Store the gizmo center for rotation math and axis projection
+    m_gizmoCenterWorld[0] = (bounds[0] + bounds[1]) * 0.5;
+    m_gizmoCenterWorld[1] = (bounds[2] + bounds[3]) * 0.5;
+    m_gizmoCenterWorld[2] = (bounds[4] + bounds[5]) * 0.5;
+
+    // Create a cell picker restricted to the gizmo visual actors only
+    m_gizmoPicker = vtkSmartPointer<vtkCellPicker>::New();
+    m_gizmoPicker->SetTolerance(0.005);
+    m_gizmoPicker->PickFromListOn();
+    for (auto& actor : m_gizmoVisualActors)
+        m_gizmoPicker->GetPickList()->AddItem(actor);
+
+    // Register mouse event observer on the render-window interactor
+    auto* iren = m_renderWindow->GetInteractor();
+    if (iren) {
+        m_gizmoInteractorObs = vtkSmartPointer<vtkCallbackCommand>::New();
+        m_gizmoInteractorObs->SetCallback(GizmoInteractorCallback);
+        m_gizmoInteractorObs->SetClientData(this);
+        // Priority 1.0 fires before the default trackball-camera style
+        iren->AddObserver(vtkCommand::LeftButtonPressEvent,   m_gizmoInteractorObs, 1.0);
+        iren->AddObserver(vtkCommand::MouseMoveEvent,         m_gizmoInteractorObs, 1.0);
+        iren->AddObserver(vtkCommand::LeftButtonReleaseEvent, m_gizmoInteractorObs, 1.0);
+    }
+
+    m_renderWindow->Render();
+}
+
+void Mesh3DView::buildGizmoVisuals(const double bounds[6])
+{
+    clearGizmoVisuals();
+    if (!m_renderer) return;
+
+    const double cx = (bounds[0] + bounds[1]) * 0.5;
+    const double cy = (bounds[2] + bounds[3]) * 0.5;
+    const double cz = (bounds[4] + bounds[5]) * 0.5;
+    const double dx = std::max(1.0, bounds[1] - bounds[0]);
+    const double dy = std::max(1.0, bounds[3] - bounds[2]);
+    const double dz = std::max(1.0, bounds[5] - bounds[4]);
+    const double size = std::max({dx, dy, dz});
+    const double arrowLength = size * 0.72;
+    const double ringRadius = size * 0.58;
+    const double tubeRadius = std::max(0.35, size * 0.006);
+
+    auto makeActor = [&](vtkPolyData* pd, double r, double g, double b, double opacity = 0.92) {
+        auto mapper = vtkSmartPointer<vtkPolyDataMapper>::New();
+        mapper->SetInputData(pd);
+        mapper->ScalarVisibilityOff();
+        auto actor = vtkSmartPointer<vtkActor>::New();
+        actor->SetMapper(mapper);
+        actor->GetProperty()->SetColor(r, g, b);
+        actor->GetProperty()->SetOpacity(opacity);
+        actor->GetProperty()->SetAmbient(0.35);
+        actor->GetProperty()->SetDiffuse(0.75);
+        actor->SetPickable(true);  // gizmo handles are directly clickable
+        m_annotationRenderer->AddActor(actor);
+        m_gizmoVisualActors.push_back(actor);
+    };
+
+    auto makeArrow = [&](double rx, double ry, double rz, double r, double g, double b) {
+        auto source = vtkSmartPointer<vtkArrowSource>::New();
+        source->SetShaftRadius(0.035);
+        source->SetTipRadius(0.095);
+        source->SetTipLength(0.28);
+        source->Update();
+
+        auto t = vtkSmartPointer<vtkTransform>::New();
+        t->Translate(cx, cy, cz);
+        t->RotateX(rx);
+        t->RotateY(ry);
+        t->RotateZ(rz);
+        t->Scale(arrowLength, arrowLength, arrowLength);
+
+        auto filter = vtkSmartPointer<vtkTransformPolyDataFilter>::New();
+        filter->SetInputConnection(source->GetOutputPort());
+        filter->SetTransform(t);
+        filter->Update();
+        makeActor(filter->GetOutput(), r, g, b);
+    };
+
+    makeArrow(0.0, 0.0, 0.0, 1.0, 0.05, 0.05);      // X red
+    makeArrow(0.0, 0.0, 90.0, 0.05, 0.95, 0.10);    // Y green
+    makeArrow(0.0, -90.0, 0.0, 0.15, 0.35, 1.0);    // Z blue
+
+    auto makeRing = [&](double nx, double ny, double nz, double r, double g, double b) {
+        auto ring = vtkSmartPointer<vtkRegularPolygonSource>::New();
+        ring->SetNumberOfSides(160);
+        ring->SetRadius(ringRadius);
+        ring->SetCenter(cx, cy, cz);
+        ring->SetNormal(nx, ny, nz);
+        ring->GeneratePolygonOff();
+        ring->Update();
+
+        auto tube = vtkSmartPointer<vtkTubeFilter>::New();
+        tube->SetInputConnection(ring->GetOutputPort());
+        tube->SetRadius(tubeRadius);
+        tube->SetNumberOfSides(12);
+        tube->Update();
+        makeActor(tube->GetOutput(), r, g, b, 0.78);
+    };
+
+    makeRing(1.0, 0.0, 0.0, 1.0, 0.05, 0.05);
+    makeRing(0.0, 1.0, 0.0, 0.05, 0.95, 0.10);
+    makeRing(0.0, 0.0, 1.0, 0.15, 0.35, 1.0);
+
+    auto cube = vtkSmartPointer<vtkCubeSource>::New();
+    const double cubeSize = std::max(3.0, size * 0.08);
+    cube->SetCenter(cx, cy, cz);
+    cube->SetXLength(cubeSize);
+    cube->SetYLength(cubeSize);
+    cube->SetZLength(cubeSize);
+    cube->Update();
+    makeActor(cube->GetOutput(), 1.0, 0.86, 0.05, 0.95);
+
+    auto makeScaleHandle = [&](double ax, double ay, double az, double r, double g, double b) {
+        auto handle = vtkSmartPointer<vtkCubeSource>::New();
+        const double handleSize = std::max(4.0, size * 0.095);
+        handle->SetCenter(cx + ax * arrowLength * 1.08,
+                          cy + ay * arrowLength * 1.08,
+                          cz + az * arrowLength * 1.08);
+        handle->SetXLength(handleSize);
+        handle->SetYLength(handleSize);
+        handle->SetZLength(handleSize);
+        handle->Update();
+        makeActor(handle->GetOutput(), r, g, b, 0.98);
+    };
+
+    // Scale handles: draggable colored cubes at the end of each axis.
+    // Actor indices must stay in sync with roleForActorIndex().
+    makeScaleHandle(1.0, 0.0, 0.0, 1.0, 0.18, 0.18);   // Scale X
+    makeScaleHandle(0.0, 1.0, 0.0, 0.18, 1.0, 0.22);   // Scale Y
+    makeScaleHandle(0.0, 0.0, 1.0, 0.25, 0.45, 1.0);   // Scale Z
+}
+
+void Mesh3DView::clearGizmoVisuals()
+{
+    if (m_renderer) {
+        for (auto& actor : m_gizmoVisualActors) {
+            if (actor) m_annotationRenderer->RemoveActor(actor);
+        }
+    }
+    m_gizmoVisualActors.clear();
+}
+
+void Mesh3DView::updateGizmoVisuals(vtkTransform* transform)
+{
+    for (auto& actor : m_gizmoVisualActors) {
+        if (actor) actor->SetUserTransform(transform);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Applies the accumulated m_gizmoTransformMatrix to the original mesh and
+// to all visual actors, giving the user real-time drag feedback.
+void Mesh3DView::updateGizmoTransform()
+{
+    if (m_gizmoLabel == -1 || !m_gizmoOriginalMesh || !m_gizmoTransformMatrix) return;
+
+    auto t = vtkSmartPointer<vtkTransform>::New();
+    t->SetMatrix(m_gizmoTransformMatrix);
+
+    updateGizmoVisuals(t);
+
+    auto filter = vtkSmartPointer<vtkTransformPolyDataFilter>::New();
+    filter->SetTransform(t);
+    filter->SetInputData(m_gizmoOriginalMesh);  // always transform from rest position
+    filter->Update();
+
+    // In-place update: same vtkPolyData pointer the mapper already watches
+    m_meshPolyData[m_gizmoLabel]->DeepCopy(filter->GetOutput());
+    m_meshPolyData[m_gizmoLabel]->Modified();
+    m_renderWindow->Render();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Static VTK interactor callback — routes press/move/release to handlers.
+// Uses AbortFlagOn() to absorb events that are consumed by the gizmo, so the
+// default interactor style (camera rotate/pan) never sees them.  This is
+// preferable to SetEnabled(0/1) which can leave the style in a confused state.
+void Mesh3DView::GizmoInteractorCallback(vtkObject* caller, unsigned long event,
+                                          void* clientData, void*)
+{
+    auto* self = static_cast<Mesh3DView*>(clientData);
+    auto* iren = static_cast<vtkRenderWindowInteractor*>(caller);
+    const int x = iren->GetEventPosition()[0];
+    const int y = iren->GetEventPosition()[1];
+
+    if (event == vtkCommand::LeftButtonPressEvent) {
+        self->handleGizmoPress(x, y);
+        // Absorb the press only if a handle was actually hit
+        if (self->m_gizmoDragRole != GizmoRole::None && self->m_gizmoInteractorObs)
+            self->m_gizmoInteractorObs->AbortFlagOn();
+
+    } else if (event == vtkCommand::MouseMoveEvent) {
+        if (self->m_gizmoDragRole != GizmoRole::None) {
+            self->handleGizmoMove(x, y);
+            // Absorb move events while dragging so the camera doesn't pan
+            if (self->m_gizmoInteractorObs)
+                self->m_gizmoInteractorObs->AbortFlagOn();
+        }
+
+    } else if (event == vtkCommand::LeftButtonReleaseEvent) {
+        if (self->m_gizmoDragRole != GizmoRole::None) {
+            self->handleGizmoRelease();
+            // Absorb the release that ends the drag
+            if (self->m_gizmoInteractorObs)
+                self->m_gizmoInteractorObs->AbortFlagOn();
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+Mesh3DView::GizmoRole Mesh3DView::roleForActorIndex(int idx) const
+{
+    switch (idx) {
+        case 0: return GizmoRole::TransX;
+        case 1: return GizmoRole::TransY;
+        case 2: return GizmoRole::TransZ;
+        case 3: return GizmoRole::RotX;
+        case 4: return GizmoRole::RotY;
+        case 5: return GizmoRole::RotZ;
+        case 6: return GizmoRole::FreeMove;
+        case 7: return GizmoRole::ScaleX;
+        case 8: return GizmoRole::ScaleY;
+        case 9: return GizmoRole::ScaleZ;
+        default: return GizmoRole::None;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+void Mesh3DView::handleGizmoPress(int x, int y)
+{
+    if (!m_gizmoPicker || m_gizmoVisualActors.empty()) return;
+
+    m_gizmoPicker->Pick(x, y, 0.0, m_annotationRenderer);
+    vtkActor* picked = m_gizmoPicker->GetActor();
+    if (!picked) {
+        // Clicked outside all handles — let the default camera style handle it
+        m_gizmoDragRole = GizmoRole::None;
+        return;
+    }
+
+    // Find the index of the picked actor
+    int idx = -1;
+    for (int i = 0; i < static_cast<int>(m_gizmoVisualActors.size()); ++i) {
+        if (m_gizmoVisualActors[i].Get() == picked) { idx = i; break; }
+    }
+    if (idx < 0) { m_gizmoDragRole = GizmoRole::None; return; }
+
+    m_gizmoDragRole  = roleForActorIndex(idx);
+    m_gizmoDragLastX = x;
+    m_gizmoDragLastY = y;
+    // Event absorption is handled in GizmoInteractorCallback via AbortFlagOn()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+void Mesh3DView::handleGizmoMove(int x, int y)
+{
+    if (m_gizmoDragRole == GizmoRole::None) return;
+
+    const int dx = x - m_gizmoDragLastX;
+    const int dy = y - m_gizmoDragLastY;
+    m_gizmoDragLastX = x;
+    m_gizmoDragLastY = y;
+    if (dx == 0 && dy == 0) return;
+
+    // Compute the current center of the mesh in world space
+    // (original center transformed by the accumulated matrix)
+    double oc[4] = { m_gizmoCenterWorld[0], m_gizmoCenterWorld[1],
+                     m_gizmoCenterWorld[2], 1.0 };
+    double cc[4];
+    m_gizmoTransformMatrix->MultiplyPoint(oc, cc);
+
+    // Build the incremental world-space delta transform
+    auto delta = vtkSmartPointer<vtkTransform>::New();
+    delta->Identity();
+
+    if (m_gizmoDragRole == GizmoRole::FreeMove) {
+        // Translate in the camera plane (right + up vectors)
+        auto* cam = m_renderer->GetActiveCamera();
+        double vUp[3], pos[3], foc[3];
+        cam->GetViewUp(vUp);
+        cam->GetPosition(pos);
+        cam->GetFocalPoint(foc);
+        double fwd[3] = { foc[0]-pos[0], foc[1]-pos[1], foc[2]-pos[2] };
+        double rgt[3];
+        vtkMath::Cross(fwd, vUp, rgt);
+        vtkMath::Normalize(rgt);
+        vtkMath::Normalize(vUp);
+        const double wpp = cam->GetDistance() / m_renderer->GetSize()[1] * 2.0;
+        delta->Translate( rgt[0]*dx*wpp + vUp[0]*dy*wpp,
+                          rgt[1]*dx*wpp + vUp[1]*dy*wpp,
+                          rgt[2]*dx*wpp + vUp[2]*dy*wpp );
+    } else if (m_gizmoDragRole == GizmoRole::TransX ||
+               m_gizmoDragRole == GizmoRole::TransY ||
+               m_gizmoDragRole == GizmoRole::TransZ) {
+        const double ax = (m_gizmoDragRole == GizmoRole::TransX) ? 1.0 : 0.0;
+        const double ay = (m_gizmoDragRole == GizmoRole::TransY) ? 1.0 : 0.0;
+        const double az = (m_gizmoDragRole == GizmoRole::TransZ) ? 1.0 : 0.0;
+
+        // Project the world axis onto display space at the current mesh center
+        double d0[2], d1[2];
+        m_renderer->SetWorldPoint(cc[0], cc[1], cc[2], 1.0);
+        m_renderer->WorldToDisplay();
+        d0[0] = m_renderer->GetDisplayPoint()[0];
+        d0[1] = m_renderer->GetDisplayPoint()[1];
+        m_renderer->SetWorldPoint(cc[0]+ax, cc[1]+ay, cc[2]+az, 1.0);
+        m_renderer->WorldToDisplay();
+        d1[0] = m_renderer->GetDisplayPoint()[0];
+        d1[1] = m_renderer->GetDisplayPoint()[1];
+
+        const double sX = d1[0] - d0[0];
+        const double sY = d1[1] - d0[1];
+        const double len2 = sX*sX + sY*sY;
+        if (len2 < 1e-10) return;
+        const double proj = (dx*sX + dy*sY) / len2;  // world units along axis
+        delta->Translate(ax*proj, ay*proj, az*proj);
+    } else if (m_gizmoDragRole == GizmoRole::ScaleX ||
+               m_gizmoDragRole == GizmoRole::ScaleY ||
+               m_gizmoDragRole == GizmoRole::ScaleZ) {
+        const double ax = (m_gizmoDragRole == GizmoRole::ScaleX) ? 1.0 : 0.0;
+        const double ay = (m_gizmoDragRole == GizmoRole::ScaleY) ? 1.0 : 0.0;
+        const double az = (m_gizmoDragRole == GizmoRole::ScaleZ) ? 1.0 : 0.0;
+
+        double d0[2], d1[2];
+        m_renderer->SetWorldPoint(cc[0], cc[1], cc[2], 1.0);
+        m_renderer->WorldToDisplay();
+        d0[0] = m_renderer->GetDisplayPoint()[0];
+        d0[1] = m_renderer->GetDisplayPoint()[1];
+        m_renderer->SetWorldPoint(cc[0]+ax, cc[1]+ay, cc[2]+az, 1.0);
+        m_renderer->WorldToDisplay();
+        d1[0] = m_renderer->GetDisplayPoint()[0];
+        d1[1] = m_renderer->GetDisplayPoint()[1];
+
+        const double sX = d1[0] - d0[0];
+        const double sY = d1[1] - d0[1];
+        const double len = std::sqrt(sX*sX + sY*sY);
+        if (len < 1e-6) return;
+
+        const double pixelsAlongAxis = (dx*sX + dy*sY) / len;
+        const double factor = std::clamp(std::exp(pixelsAlongAxis * 0.008), 0.92, 1.08);
+        const double sx = (m_gizmoDragRole == GizmoRole::ScaleX) ? factor : 1.0;
+        const double sy = (m_gizmoDragRole == GizmoRole::ScaleY) ? factor : 1.0;
+        const double sz = (m_gizmoDragRole == GizmoRole::ScaleZ) ? factor : 1.0;
+
+        delta->Translate( cc[0],  cc[1],  cc[2]);
+        delta->Scale(sx, sy, sz);
+        delta->Translate(-cc[0], -cc[1], -cc[2]);
+    } else {
+        // Rotation: dx → angle in degrees (0.5°/pixel)
+        const double angle = dx * 0.5;
+        delta->Translate( cc[0],  cc[1],  cc[2]);
+        if      (m_gizmoDragRole == GizmoRole::RotX) delta->RotateX(angle);
+        else if (m_gizmoDragRole == GizmoRole::RotY) delta->RotateY(angle);
+        else if (m_gizmoDragRole == GizmoRole::RotZ) delta->RotateZ(angle);
+        delta->Translate(-cc[0], -cc[1], -cc[2]);
+    }
+
+    // Compose: new_total = delta * old_total  (world-space increment applied last)
+    auto composed = vtkSmartPointer<vtkTransform>::New();
+    composed->PreMultiply();
+    composed->SetMatrix(m_gizmoTransformMatrix);
+    composed->Concatenate(delta->GetMatrix());
+    m_gizmoTransformMatrix->DeepCopy(composed->GetMatrix());
+
+    updateGizmoTransform();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+void Mesh3DView::handleGizmoRelease()
+{
+    m_gizmoDragRole = GizmoRole::None;
+    // No style re-enable needed — we use AbortFlagOn() instead of SetEnabled(0)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Removes the gizmo handles, releases the interactor observer, and emits
+// gizmoMeshUpdated() with the baked polydata.
+// The polydata was already updated in real-time, so no extra baking is needed.
+void Mesh3DView::stopGizmo()
+{
+    if (!hasGizmo()) return;
+
+    // Restore the default interactor style before removing the observer
+    if (m_gizmoDragRole != GizmoRole::None) {
+        if (m_renderWindow && m_renderWindow->GetInteractor())
+            if (auto* style = m_renderWindow->GetInteractor()->GetInteractorStyle())
+                style->SetEnabled(1);
+    }
+    m_gizmoDragRole = GizmoRole::None;
+
+    if (m_gizmoInteractorObs && m_renderWindow && m_renderWindow->GetInteractor())
+        m_renderWindow->GetInteractor()->RemoveObserver(m_gizmoInteractorObs);
+    m_gizmoInteractorObs = nullptr;
+    m_gizmoPicker = nullptr;
+
+    const int label = m_gizmoLabel;
+    m_gizmoLabel = -1;
+    m_gizmoOriginalMesh = nullptr;
+    clearGizmoVisuals();
+
+    if (m_meshPolyData.count(label))
+        emit gizmoMeshUpdated(label, m_meshPolyData[label]);
+
+    m_renderWindow->Render();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+vtkSmartPointer<vtkMatrix4x4> Mesh3DView::lastGizmoTransformMatrix() const
+{
+    auto matrix = vtkSmartPointer<vtkMatrix4x4>::New();
+    matrix->Identity();
+    if (m_gizmoTransformMatrix)
+        matrix->DeepCopy(m_gizmoTransformMatrix);
+    return matrix;
+}

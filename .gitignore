@@ -1,0 +1,18 @@
+# VTK source clone (the build uses C:/VTK instead)
+/vtk/
+
+# CMake / MSBuild output
+build/
+out/
+CMakeUserPresets.json
+.vs/
+
+# Python
+__pycache__/
+*.pyc
+
+# Screenshots produced by RepositionWorkspaceTests
+workspace-test-artifacts/
+
+# Local Claude Code settings
+.claude/settings.local.json

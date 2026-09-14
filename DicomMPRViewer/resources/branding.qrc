@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/branding">
+        <file alias="craniosync_splash.png">branding/craniosync_splash.png</file>
+    </qresource>
+</RCC>
