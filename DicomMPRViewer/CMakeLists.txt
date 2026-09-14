@@ -264,6 +264,25 @@ add_core_test(ProjectSerializerTests tests/ProjectSerializerTests.cpp
     src/SplintDesignCore.cpp src/SplintHeightmapGenerator.cpp)
 target_link_libraries(ProjectSerializerTests PRIVATE Qt6::Gui)
 
+# Splint generator timing with real or synthetic STL (not a CTest by default).
+add_executable(SplintBenchmark tools/SplintBenchmark.cpp
+    src/SplintHeightmapGenerator.cpp src/SplintDesignCore.cpp)
+target_include_directories(SplintBenchmark PRIVATE src tests)
+target_link_libraries(SplintBenchmark PRIVATE Qt6::Core ${VTK_LIBRARIES})
+if(WIN32)
+    target_link_libraries(SplintBenchmark PRIVATE psapi)
+endif()
+if(MSVC)
+    target_compile_options(SplintBenchmark PRIVATE /utf-8)
+endif()
+vtk_module_autoinit(TARGETS SplintBenchmark MODULES ${VTK_LIBRARIES})
+
+option(BUILD_PERF_TESTS "Register slow splint performance smoke tests" OFF)
+if(BUILD_PERF_TESTS)
+    add_test(NAME SplintPerfSmoke300k
+        COMMAND SplintBenchmark --synthetic-triangles 300000 --repeat 1 --max-total-ms 30000)
+endif()
+
 set(SEGMENTATION_TEST_PYTHON "$ENV{DENTALSEGMENTATOR_PYTHON}" CACHE FILEPATH
     "Python with numpy, scipy and SimpleITK for segmentation regression tests")
 if(SEGMENTATION_TEST_PYTHON)
