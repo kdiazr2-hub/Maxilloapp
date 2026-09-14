@@ -10,6 +10,7 @@
 #include "ProjectSerializer.h"
 #include "AppStateManager.h"
 #include "SplintDesignCore.h"
+#include "OsteotomyCore.h"
 #include "CompositeBlockCore.h"
 #include "RegistrationResult.h"
 
@@ -39,6 +40,7 @@ class MPRView;
 class Mesh3DView;
 class MeasurementTool;
 class SplintDesignPanel;
+class OsteotomyWizardPanel;
 class SplintPreviewScheduler;
 
 QT_BEGIN_NAMESPACE
@@ -330,6 +332,72 @@ private:
     void updateGenioPlaneGuide();
     vtkSmartPointer<vtkPolyData> buildGenioGuideMesh() const;
     void rebuildGenioPlaneFromState();
+
+    // ProPlan-style osteotomy wizard (MainWindowOsteotomy.cpp)
+    struct OsteotomyWizardState
+    {
+        int type = 0;      // OsteotomyType
+        int boneLabel = 0; // composite or segment being cut
+        std::vector<std::optional<OstPoint3>> landmarks;
+        int currentLandmark = 0; // -1 when every landmark is placed
+        bool planReady = false;
+        QString planError;
+        OsteotomyPath path; // Le Fort I, genioplasty
+        BssoPlan bsso;
+        bool gizmoActive = false;
+        int gizmoSide = 0;
+        std::vector<int> createdLabels;
+    };
+    struct OsteotomyTypeProperties
+    {
+        double widthMm = 120.0;
+        double thicknessMm = 1.0;
+        double extensionRightMm = 20.0;
+        double extensionLeftMm = 20.0;
+        double posteriorExtensionMm = 20.0;
+        double inferiorExtensionMm = 30.0;
+        double mediolateralExtensionMm = 15.0;
+    };
+    struct OsteotomyBoneChoice
+    {
+        QString name;
+        int label = 0;
+    };
+    QWidget* buildOsteotomyWizard(QWidget* parent);
+    void startOsteotomyWizard();
+    void refreshOsteotomyWizard();
+    void selectOsteotomyType(int type);
+    void selectOsteotomyBone(int label);
+    std::vector<OsteotomyBoneChoice> osteotomyBoneChoices(int type) const;
+    vtkSmartPointer<vtkPolyData> osteotomyBoneMesh(int label) const;
+    void setOsteotomyWizardStep(int step);
+    void osteotomyWizardNext();
+    void osteotomyWizardBack();
+    void cancelOsteotomyWizard();
+    void finishOsteotomyWizard();
+    void setOsteotomyLandmarkIndex(int index);
+    void onOsteotomyLandmarkAdded(int group, double x, double y, double z);
+    void onOsteotomyLandmarkMoved(int group, int index, double x, double y, double z);
+    void onOsteotomyLandmarkRemoved(int group, int index);
+    void clearOsteotomyLandmarks();
+    void updateOsteotomyLandmarkMarkers();
+    void rebuildOsteotomyPlan();
+    void onOsteotomyPropertiesChanged();
+    void setOsteotomyGizmo(bool active);
+    void applyOsteotomyGizmo(vtkSmartPointer<vtkMatrix4x4> matrix);
+    void updateOsteotomyGuideDisplay();
+    std::vector<vtkSmartPointer<vtkPolyData>> osteotomyContourMeshes() const;
+    void showOsteotomySlicesInCt();
+    void showOsteotomyScene();
+    bool applyOsteotomyCut();
+
+    OsteotomyWizardPanel* m_osteotomyWizard = nullptr;
+    OsteotomyWizardState m_ostWizard;
+    std::array<OsteotomyTypeProperties, 3> m_ostProperties{};
+    std::vector<vtkSmartPointer<vtkPolyData>> m_ostGuideMeshes;
+    bool m_ostShowContour = true;
+    quint64 m_osteotomyContourGeneration = 0;
+    quint64 m_contourOsteotomyGeneration = 0;
     void importBiteScanStl();
     void setBitePointCapture(BitePointSet set);
     void onBitePointPicked(int actorLabel, double x, double y, double z);
@@ -942,4 +1010,5 @@ private:
     vtkSmartPointer<vtkPolyData> m_contourLowerArchMesh;
     vtkMTimeType                 m_contourUpperArchTime = 0;
     vtkMTimeType                 m_contourLowerArchTime = 0;
+    std::vector<vtkSmartPointer<vtkPolyData>> m_contourOsteotomyMeshes;
 };

@@ -375,7 +375,8 @@ static QVector3D projectedInPlaneAxis(QVector3D axis, QVector3D normal)
     return axis;
 }
 
-static QString meshLabelName(int label)
+// Also used by MainWindowOsteotomy.cpp.
+QString meshLabelName(int label)
 {
     switch (label) {
         case 1: return "Hueso";
@@ -411,7 +412,7 @@ static bool isEditableSegmentationLabel(int label)
     return label > 0 && label < kUpperArchLabel;
 }
 
-static QColor meshLabelColor(int label)
+QColor meshLabelColor(int label)
 {
     switch (label) {
         case 1: return CranioPalette::bone();
@@ -2447,9 +2448,14 @@ void MainWindow::buildCentralWidget()
         ostLayout->setSpacing(0);
         m_osteotomyWizardPanel = nullptr;
 
+        auto* ostRow = new QHBoxLayout();
+        ostRow->setContentsMargins(0, 0, 0, 0);
+        ostRow->setSpacing(0);
+        ostLayout->addLayout(ostRow, 1);
         m_osteotomyView = new Mesh3DView(ostPanel);
-        m_osteotomyView->setTitle(tr("LE FORT I — OSTEOTOMÍA"));
-        ostLayout->addWidget(m_osteotomyView, 1);
+        m_osteotomyView->setTitle(tr("OSTEOTOMÍA"));
+        ostRow->addWidget(buildOsteotomyWizard(ostPanel));
+        ostRow->addWidget(m_osteotomyView, 1);
 
         connect(m_osteotomyView, &Mesh3DView::fullScreenToggleRequested,
                 this, [this](Mesh3DView* source) {
@@ -10624,6 +10630,7 @@ void MainWindow::setOsteotomyWorkspace(bool enabled)
     updateGenioPointStatus();
     updateOsteotomyWorkflowUi();
     setLeFortWizardStep(0);
+    startOsteotomyWizard();
     syncVisibilityPanelToAllViews();
 
     // resetCamera fits all actors, then setStandardView adjusts orientation.
@@ -10953,6 +10960,22 @@ void MainWindow::updateOsteotomyWorkflowUi()
                 widget->setVisible(visible);
         }
     };
+
+    if (m_osteotomyWizard) {
+        // The wizard panel drives the osteotomies; the ribbon keeps the export only.
+        for (QAction* action : {m_leFortPirDACt, m_leFortPirIAct, m_leFortPilaxDAct, m_leFortPilaxIAct,
+                                m_leFortAdjustPlaneAct, m_leFortGuidePropsAct, m_leFortAcceptPlaneAct, m_leFortSplitAct,
+                                m_leFortTargMaxAct, m_leFortTargMandAct, m_bssoAutoGuideAct, m_bssoLeftGuideAct,
+                                m_bssoRamusRightAct, m_bssoBodyRightAct, m_bssoPlaneRightAct, m_bssoRamusLeftAct,
+                                m_bssoBodyLeftAct, m_bssoPlaneLeftAct, m_bssoAdjustGuideAct, m_bssoGuidePropsAct,
+                                m_bssoAcceptGuideAct, m_genioApicalRightAct, m_genioBasalRightAct, m_genioApicalLeftAct,
+                                m_genioBasalLeftAct, m_genioAdjustPlaneAct, m_genioAcceptPlaneAct})
+            showOnly(action, false, false);
+        showOnly(m_leFortExportAct, true, m_leFortCranialMesh && m_leFortSegmentMesh);
+        for (QLabel* label : {m_leFortCutLabel, m_bssoStatusLabel, m_genioStatusLabel})
+            if (label) label->setVisible(false);
+        return;
+    }
 
     const bool hasUpper = m_upperCompositeMesh && m_upperCompositeMesh->GetNumberOfPoints() > 0;
     const bool hasLower = m_lowerCompositeMesh && m_lowerCompositeMesh->GetNumberOfPoints() > 0;
@@ -12052,6 +12075,10 @@ void MainWindow::rebuildLeFortPlaneFromState()
 // redraws the plane disc + cut line at the new position.
 void MainWindow::onOsteotomyGizmoUpdated(int meshLabel, vtkSmartPointer<vtkPolyData> newMesh)
 {
+    if (meshLabel == kOsteotomyGuideActorKey || meshLabel == kOsteotomyGuideLeftActorKey) {
+        applyOsteotomyGizmo(m_osteotomyView ? m_osteotomyView->lastGizmoTransformMatrix() : nullptr);
+        return;
+    }
     if (meshLabel == kBssoGuideLabel) {
         if (newMesh && newMesh->GetNumberOfPoints() > 0) {
             m_bssoGuideVisualMesh = vtkSmartPointer<vtkPolyData>::New();

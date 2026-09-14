@@ -7,6 +7,7 @@
 #include "SplintDesignPanel.h"
 #include "SplintPreviewScheduler.h"
 #include "SplintTestGeometry.h"
+#include "OsteotomyWizardPanel.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -27,7 +28,10 @@
 #include <QMessageBox>
 #include <QStackedWidget>
 
+#include <vtkAppendPolyData.h>
 #include <vtkClipPolyData.h>
+#include <vtkPlaneSource.h>
+#include <vtkTriangleFilter.h>
 #include <vtkFeatureEdges.h>
 #include <vtkImageData.h>
 #include <vtkMatrix4x4.h>
@@ -497,7 +501,188 @@ public:
         std::cout << "Composite workspace: block, mandatory review, link, splint source, union and project OK\n";
     }
 
+    // OSTEOTOMIA wizard: Le Fort I → BSSO (6 points, both sides) → genioplasty on the distal segment.
+    static void runOsteotomyWorkflow(const QString& artifactsDir)
+    {
+        MainWindow window;
+        window.setAttribute(Qt::WA_DontShowOnScreen);
+        window.resize(1700, 950);
+        window.show();
+        settle();
+
+        auto volume = vtkSmartPointer<vtkImageData>::New();
+        volume->SetDimensions(16, 16, 16);
+        volume->SetSpacing(0.5, 0.5, 0.5);
+        volume->AllocateScalars(VTK_SHORT, 1);
+        window.m_volume = volume;
+
+        window.m_upperCompositeMesh =
+            CompositeBlockCore::TagPart(gridBox(-30.0, 30.0, 0.0, 40.0, 0.0, 40.0), CompositeBlockCore::DentalPart);
+        auto mandible = vtkSmartPointer<vtkAppendPolyData>::New();
+        for (double sign : {1.0, -1.0}) {
+            const double a = 20.0 * sign;
+            const double b = 30.0 * sign;
+            mandible->AddInputData(gridBox(std::min(a, b), std::max(a, b), -10.0, 40.0, -80.0, -60.0));
+            mandible->AddInputData(gridBox(std::min(a, b), std::max(a, b), -40.0, -10.0, -80.0, -20.0));
+        }
+        mandible->AddInputData(gridBox(-30.0, 30.0, 30.0, 40.0, -80.0, -60.0));
+        mandible->Update();
+        window.m_lowerCompositeMesh = CompositeBlockCore::TagPart(mandible->GetOutput(), CompositeBlockCore::DentalPart);
+        window.addObjectEntry(QStringLiteral("Compuesto maxilar"), QColor(200, 190, 170), kUpperCompositeLabel);
+        window.addObjectEntry(QStringLiteral("Compuesto mandibular"), QColor(190, 180, 160), kLowerCompositeLabel);
+
+        window.setOsteotomyWorkspace(true);
+        settle();
+        require(window.m_osteotomyWizard && window.m_osteotomyWizard->step() == OsteotomyWizardPanel::TypeStep,
+                "osteotomy wizard did not start at the type step");
+        require(window.m_osteotomyView->meshData(objectActorKey(kUpperCompositeLabel)) != nullptr,
+                "upper composite not shown in the osteotomy view");
+
+        const auto capture = [&](const QString& name) {
+            window.m_osteotomyView->render();
+            settle();
+            const QImage view = window.m_osteotomyView->findChild<QVTKOpenGLNativeWidget*>()->grabFramebuffer();
+            const QImage panel = window.m_osteotomyWizard->grab().toImage();
+            QImage image(panel.width() + view.width(), std::max(panel.height(), view.height()), QImage::Format_RGB32);
+            image.fill(QColor(30, 30, 32));
+            QPainter painter(&image);
+            painter.drawImage(0, 0, panel);
+            painter.drawImage(panel.width(), 0, view);
+            painter.end();
+            QDir().mkpath(artifactsDir);
+            require(image.save(QDir(artifactsDir).filePath(name)), "osteotomy screenshot not written");
+        };
+        const auto place = [&](const std::vector<OstPoint3>& points) {
+            for (size_t i = 0; i < points.size(); ++i) {
+                require(window.m_ostWizard.currentLandmark == static_cast<int>(i), "landmarks did not auto-advance");
+                window.onOsteotomyLandmarkAdded(static_cast<int>(i), points[i][0], points[i][1], points[i][2]);
+            }
+        };
+
+        // ── Le Fort I ─────────────────────────────────────────────────────
+        window.selectOsteotomyType(static_cast<int>(OsteotomyType::LeFortI));
+        window.osteotomyWizardNext();
+        require(window.m_ostWizard.boneLabel == kUpperCompositeLabel, "Le Fort I did not select the maxillary composite");
+        window.osteotomyWizardNext();
+        require(window.m_osteotomyWizard->step() == OsteotomyWizardPanel::LandmarkStep &&
+                    window.m_ostWizard.landmarks.size() == 4,
+                "Le Fort I landmark step not reached");
+        const std::vector<OstPoint3> leFort = {{-10.0, 35.0, 20.0}, {10.0, 35.0, 21.0}, {-25.0, 10.0, 15.0}, {25.0, 10.0, 14.0}};
+        place(leFort);
+        require(window.m_ostWizard.planReady && window.m_ostWizard.currentLandmark == -1, "Le Fort I plan not ready");
+        require(window.m_osteotomyView->meshData(kOsteotomyGuideActorKey) != nullptr, "cutting path guide not shown");
+        require(window.m_axialView && window.m_axialView->surfaceContourCount() >= 1, "cutting path contour not on the CT slices");
+        // Re-indicate a landmark.
+        window.onOsteotomyLandmarkRemoved(1, 0);
+        require(!window.m_ostWizard.planReady && window.m_ostWizard.currentLandmark == 1, "removing a landmark did not reopen it");
+        window.onOsteotomyLandmarkAdded(1, leFort[1][0], leFort[1][1], leFort[1][2]);
+        require(window.m_ostWizard.planReady, "re-indicated landmark did not rebuild the plan");
+
+        window.osteotomyWizardNext();
+        require(window.m_osteotomyWizard->step() == OsteotomyWizardPanel::PathStep, "path step not reached");
+        OsteotomyWizardPanel::PathProperties properties = window.m_osteotomyWizard->pathProperties();
+        require(std::abs(properties.widthMm - 120.0) < 1e-9 && std::abs(properties.extensionRightMm - 20.0) < 1e-9,
+                "Le Fort I properties are not the ProPlan defaults");
+        properties.widthMm = 100.0;
+        window.m_osteotomyWizard->setPathProperties(properties);
+        window.onOsteotomyPropertiesChanged();
+        require(std::abs(window.m_ostWizard.path.widthMm - 100.0) < 1e-9, "width property not applied to the path");
+        auto lift = vtkSmartPointer<vtkMatrix4x4>::New();
+        lift->Identity();
+        lift->SetElement(2, 3, 2.0);
+        window.applyOsteotomyGizmo(lift);
+        require(OsteotomyCore::PathField(window.m_ostWizard.path, leFort[0]) < -1.5, "gizmo did not move the cutting path");
+        window.m_osteotomyView->setStandardView(0);
+        capture(QStringLiteral("osteotomy-lefort.png"));
+
+        window.osteotomyWizardNext();
+        require(window.m_osteotomyWizard->step() == OsteotomyWizardPanel::FinalizeStep, "Le Fort I cut not applied");
+        require(CompositeBlockCore::HasParts(window.m_leFortSegmentMesh) && CompositeBlockCore::HasParts(window.m_leFortCranialMesh),
+                "Le Fort I segments lost the dental link");
+        require(window.objectEntryExists(kLeFortSegLabel) && window.objectEntryExists(kLeFortCranialLabel) &&
+                    window.m_ostWizard.createdLabels.size() == 2,
+                "Le Fort I objects not created");
+        require(!window.m_osteotomyView->meshData(kOsteotomyGuideActorKey), "guide still shown after the cut");
+        window.osteotomyWizardNext(); // Crear otra osteotomía
+        require(window.m_osteotomyWizard->step() == OsteotomyWizardPanel::TypeStep, "finalize did not return to the type step");
+
+        // ── BSSO: 6 landmarks, both sides at once ────────────────────────
+        window.selectOsteotomyType(static_cast<int>(OsteotomyType::Bsso));
+        window.osteotomyWizardNext();
+        window.osteotomyWizardNext();
+        require(window.m_ostWizard.landmarks.size() == 6, "BSSO does not ask for 6 landmarks");
+        place({{20.0, -25.0, -50.0}, {25.0, -8.0, -60.0}, {30.0, 10.0, -75.0},
+               {-20.0, -25.0, -50.0}, {-25.0, -8.0, -60.0}, {-30.0, 10.0, -75.0}});
+        require(window.m_ostWizard.planReady, "BSSO plan not ready: " + window.m_ostWizard.planError.toStdString());
+        require(window.m_osteotomyView->meshData(kOsteotomyGuideActorKey) && window.m_osteotomyView->meshData(kOsteotomyGuideLeftActorKey),
+                "BSSO guides not shown for both sides");
+        window.osteotomyWizardNext();
+        window.m_osteotomyView->setStandardView(0);
+        capture(QStringLiteral("osteotomy-bsso.png"));
+        window.osteotomyWizardNext();
+        require(window.m_osteotomyWizard->step() == OsteotomyWizardPanel::FinalizeStep, "BSSO cut not applied");
+        require(CompositeBlockCore::HasParts(window.m_bssoRightProximalMesh) && CompositeBlockCore::HasParts(window.m_bssoLeftProximalMesh) &&
+                    CompositeBlockCore::HasParts(window.m_bssoDistalMesh),
+                "BSSO segments missing");
+        double bounds[6];
+        window.m_bssoRightProximalMesh->GetBounds(bounds);
+        require(bounds[0] > 15.0 && bounds[5] > -21.0, "right proximal segment does not hold the right ramus");
+        require(window.objectEntryExists(kBssoProximalRightLabel) && window.objectEntryExists(kBssoProximalLeftLabel) &&
+                    window.objectEntryExists(kBssoDistalLabel),
+                "BSSO objects not created");
+        window.osteotomyWizardNext();
+
+        // ── Genioplasty on the distal segment ─────────────────────────────
+        window.selectOsteotomyType(static_cast<int>(OsteotomyType::Genioplasty));
+        window.osteotomyWizardNext();
+        require(window.m_ostWizard.boneLabel == kBssoDistalLabel, "genioplasty did not default to the distal segment");
+        window.osteotomyWizardNext();
+        place({{-15.0, 40.0, -65.0}, {-15.0, 30.0, -80.0}, {15.0, 40.0, -65.0}, {15.0, 30.0, -80.0}});
+        require(window.m_ostWizard.planReady, "genioplasty plan not ready");
+        require(std::abs(window.m_osteotomyWizard->pathProperties().widthMm - 50.0) < 1e-9, "genioplasty width is not 50 mm");
+        window.osteotomyWizardNext();
+        window.osteotomyWizardNext();
+        require(window.m_osteotomyWizard->step() == OsteotomyWizardPanel::FinalizeStep, "genioplasty cut not applied");
+        require(window.m_genioSegmentMesh && window.m_genioBodyMesh && !window.m_bssoDistalMesh &&
+                    !window.objectEntryExists(kBssoDistalLabel) && window.objectEntryExists(kGenioSegmentLabel),
+                "genioplasty did not replace the distal segment");
+        window.m_genioSegmentMesh->GetBounds(bounds);
+        require(bounds[3] > 39.0 && bounds[4] < -79.0, "chin segment is not the anterior-inferior part");
+        std::cout << "Osteotomy wizard: Le Fort I, bilateral BSSO and genioplasty OK\n";
+    }
+
 private:
+    // Finely tessellated box so clipped cuts are accurate.
+    static vtkSmartPointer<vtkPolyData> gridBox(double x0, double x1, double y0, double y1, double z0, double z1)
+    {
+        auto append = vtkSmartPointer<vtkAppendPolyData>::New();
+        const auto face = [&](const OstPoint3& o, const OstPoint3& p1, const OstPoint3& p2) {
+            auto plane = vtkSmartPointer<vtkPlaneSource>::New();
+            plane->SetOrigin(o[0], o[1], o[2]);
+            plane->SetPoint1(p1[0], p1[1], p1[2]);
+            plane->SetPoint2(p2[0], p2[1], p2[2]);
+            const auto cells = [](const OstPoint3& a, const OstPoint3& b) {
+                return std::max(1, static_cast<int>(std::ceil(std::hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) / 1.5)));
+            };
+            plane->SetResolution(cells(o, p1), cells(o, p2));
+            plane->Update();
+            append->AddInputData(plane->GetOutput());
+        };
+        face({x0, y0, z0}, {x1, y0, z0}, {x0, y1, z0});
+        face({x0, y0, z1}, {x1, y0, z1}, {x0, y1, z1});
+        face({x0, y0, z0}, {x1, y0, z0}, {x0, y0, z1});
+        face({x0, y1, z0}, {x1, y1, z0}, {x0, y1, z1});
+        face({x0, y0, z0}, {x0, y1, z0}, {x0, y0, z1});
+        face({x1, y0, z0}, {x1, y1, z0}, {x1, y0, z1});
+        append->Update();
+        auto triangles = vtkSmartPointer<vtkTriangleFilter>::New();
+        triangles->SetInputConnection(append->GetOutputPort());
+        triangles->Update();
+        auto out = vtkSmartPointer<vtkPolyData>::New();
+        out->DeepCopy(triangles->GetOutput());
+        return out;
+    }
+
     static QImage composeWorkspace(MainWindow& window)
     {
         const auto grabView = [](Mesh3DView* view) {
@@ -546,6 +731,7 @@ int main(int argc, char** argv)
     try {
         SplintWorkspaceTests::run(artifacts);
         SplintWorkspaceTests::runCompositeWorkflow(artifacts);
+        SplintWorkspaceTests::runOsteotomyWorkflow(artifacts);
         if (!unexpectedDialogs.isEmpty()) {
             std::cerr << "FAIL unexpected dialogs: " << unexpectedDialogs.join(QStringLiteral(" | ")).toStdString() << '\n';
             return 1;

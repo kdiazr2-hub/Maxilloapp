@@ -44,6 +44,7 @@ const QColor kBlockColor(40, 120, 255);
 const std::array<unsigned char, 3> kReviewBoneColor{226, 212, 190};
 const std::array<unsigned char, 3> kReviewDentalColor{250, 250, 244};
 const std::array<double, 3> kUpperContourColor{1.0, 0.82, 0.0};
+const std::array<double, 3> kOsteotomyContourColor{1.0, 0.45, 0.1};
 const std::array<double, 3> kLowerContourColor{0.0, 0.86, 1.0};
 
 QDoubleSpinBox* makeSizeSpin(QWidget* parent, double min, double max)
@@ -507,19 +508,25 @@ void MainWindow::refreshRegisteredArchContours()
     const auto lower = m_lowerRegistrationCalculated ? m_lowerArchMesh : vtkSmartPointer<vtkPolyData>();
     const vtkMTimeType upperTime = upper ? upper->GetMTime() : 0;
     const vtkMTimeType lowerTime = lower ? lower->GetMTime() : 0;
+    const auto osteotomyGuides = osteotomyContourMeshes();
     if (upper == m_contourUpperArchMesh && lower == m_contourLowerArchMesh &&
-        upperTime == m_contourUpperArchTime && lowerTime == m_contourLowerArchTime)
+        upperTime == m_contourUpperArchTime && lowerTime == m_contourLowerArchTime &&
+        osteotomyGuides == m_contourOsteotomyMeshes)
         return;
     m_contourUpperArchMesh = upper;
     m_contourLowerArchMesh = lower;
     m_contourUpperArchTime = upperTime;
     m_contourLowerArchTime = lowerTime;
+    m_contourOsteotomyMeshes = osteotomyGuides;
 
     std::vector<MPRSurfaceContour> contours;
     if (upper)
         contours.push_back({upper, kUpperContourColor});
     if (lower)
         contours.push_back({lower, kLowerContourColor});
+    // Cutting path of the osteotomy being planned (ProPlan "Show Contour").
+    for (const auto& guide : osteotomyGuides)
+        contours.push_back({guide, kOsteotomyContourColor});
     for (MPRView* view : {m_axialView, m_coronalView, m_sagittalView})
         if (view) view->setSurfaceContours(contours);
 }

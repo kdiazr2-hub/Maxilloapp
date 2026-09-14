@@ -40,6 +40,10 @@ inline constexpr int kSplintWireHolesActorKey = -511;
 inline constexpr int kSplintBracketMarksActorKey = -512;
 inline constexpr int kSplintBevelOverlayKey = 2;
 
+// Osteotomy wizard cutting-path guides (BSSO uses both: right, left).
+inline constexpr int kOsteotomyGuideActorKey = -530;
+inline constexpr int kOsteotomyGuideLeftActorKey = -531;
+
 inline int objectActorKey(int label)
 {
     return label > 0 ? 1000 + label : label;

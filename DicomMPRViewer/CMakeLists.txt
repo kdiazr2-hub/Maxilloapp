@@ -112,6 +112,8 @@ set(SOURCES
     src/CompositeBlockCore.cpp
     src/MeshRepairCore.cpp
     src/OsteotomyCore.cpp
+    src/OsteotomyWizardPanel.cpp
+    src/MainWindowOsteotomy.cpp
     src/SurfaceContourOverlay.cpp
     src/MainWindowComposite.cpp
     src/AppStateManager.cpp
@@ -167,6 +169,7 @@ set(HEADERS
     src/CompositeBlockCore.h
     src/MeshRepairCore.h
     src/OsteotomyCore.h
+    src/OsteotomyWizardPanel.h
     src/SurfaceContourOverlay.h
     src/AppStateManager.h
     src/LoggerCore.h
