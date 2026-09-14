@@ -5306,6 +5306,20 @@ void MainWindow::setOrientationWorkspace(bool enabled)
         if (m_midlineAcceptGizmoAct) m_midlineAcceptGizmoAct->setEnabled(false);
         if (m_saveOrientationAct)   m_saveOrientationAct->setEnabled(false);
         if (m_exportOrientedAct)    m_exportOrientedAct->setEnabled(false);
+
+        // Only accepted composites are oriented: say why the view is empty.
+        const bool hasComposite = m_upperCompositeMesh || m_lowerCompositeMesh;
+        m_orientationView->setTitle(hasComposite ? tr("ORIENTACIÓN — Plano de Frankfort")
+                                                 : tr("ORIENTACIÓN — sin modelos compuestos"));
+        if (!hasComposite) {
+            if (m_frankfortPorionDAct) m_frankfortPorionDAct->setEnabled(false);
+            statusBar()->showMessage(m_compositeStage != CompositeStage::None
+                ? tr("Orientación: el modelo compuesto aún no está aceptado. En MODELOS pulse «Calcular compuesto» "
+                     "y después «Aceptar compuesto».")
+                : tr("Orientación: no hay modelos compuestos. Créelos en MODELOS o use «Continuar sin match» "
+                     "para orientar con los huesos segmentados."));
+        }
+        m_orientationView->render();
     }
 
     if (!enabled && m_orientationView) {

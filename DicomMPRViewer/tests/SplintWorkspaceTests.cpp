@@ -27,6 +27,7 @@
 #include <QDoubleSpinBox>
 #include <QMessageBox>
 #include <QStackedWidget>
+#include <QStatusBar>
 
 #include <vtkAppendPolyData.h>
 #include <vtkClipPolyData.h>
@@ -402,6 +403,11 @@ public:
                 window.m_lowerRegistrationCalculated = true;
             }
         };
+        // ORIENTACION without composites explains what is missing instead of an empty view.
+        window.setOrientationWorkspace(true);
+        require(window.statusBar()->currentMessage().contains(QStringLiteral("modelos compuestos")),
+                "empty ORIENTACION does not explain that the composites are missing");
+
         setJaw(true);
         window.setModelsWorkspace(true);
         settle();
@@ -478,6 +484,28 @@ public:
         // Export union of the composite is a single closed mesh.
         const VoxelUnionResult united = CompositeBlockCore::VoxelUnion({window.m_upperCompositeMesh.Get()}, 0.5, 3);
         require(united.ok && isClosed(united.mesh), "voxel union of the composite is not closed");
+
+        // ORIENTACION shows the accepted composite and the Frankfort alignment levels it.
+        window.setOrientationWorkspace(true);
+        settle();
+        require(window.m_orientationView->meshData(objectActorKey(kUpperCompositeLabel)) != nullptr,
+                "ORIENTACION did not receive the accepted composite");
+        window.m_frankfurtPoints = {QVector3D(-30.0f, -5.0f, 20.0f), QVector3D(30.0f, -5.0f, 20.0f),
+                                    QVector3D(-25.0f, 30.0f, 26.0f), QVector3D(25.0f, 30.0f, 26.0f)};
+        window.alignFrankfurtPlane();
+        require(window.m_orientationView->meshData(objectActorKey(kUpperCompositeLabel)) != nullptr &&
+                    window.m_orientationView->meshData(-100) != nullptr,
+                "Frankfort alignment left the orientation view without the composite or the plane");
+        require(std::abs(window.m_frankfurtPoints[0].z() - window.m_frankfurtPoints[2].z()) < 1e-3 &&
+                    std::abs(window.m_frankfurtPoints[1].z() - window.m_frankfurtPoints[3].z()) < 1e-3,
+                "Frankfort plane is not horizontal after alignment");
+        require(CompositeBlockCore::HasParts(window.m_upperCompositeMesh), "Frankfort alignment dropped the dental link");
+        window.m_orientationView->setStandardView(1);
+        window.m_orientationView->render();
+        settle();
+        QDir().mkpath(artifactsDir);
+        window.m_orientationView->findChild<QVTKOpenGLNativeWidget*>()->grabFramebuffer().save(
+            QDir(artifactsDir).filePath(QStringLiteral("orientation-frankfort.png")));
 
         // Save and reopen keeps the block and the link.
         QTemporaryDir dir;
