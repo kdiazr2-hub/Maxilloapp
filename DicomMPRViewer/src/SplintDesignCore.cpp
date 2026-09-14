@@ -240,6 +240,102 @@ bool SameFrame(const SplintOcclusalFrame& a, const SplintOcclusalFrame& b,
            dot(a.axisV, b.axisV) >= axisToleranceCos;
 }
 
+bool AddBracketMark(SplintExtras& extras, const SplintPoint3& center, double radiusMm)
+{
+    const double radius = std::clamp(radiusMm, 0.1, 10.0);
+    for (const SplintBracketMark& mark : extras.bracketMarks) {
+        const double dx = mark.center[0] - center[0];
+        const double dy = mark.center[1] - center[1];
+        const double dz = mark.center[2] - center[2];
+        if (std::sqrt(dx * dx + dy * dy + dz * dz) < 0.5 * radius)
+            return false;
+    }
+    extras.bracketMarks.push_back({center, radius});
+    return true;
+}
+
+int RemoveBracketMarks(SplintExtras& extras, const SplintPoint3& center, double radiusMm)
+{
+    const auto before = extras.bracketMarks.size();
+    extras.bracketMarks.erase(
+        std::remove_if(extras.bracketMarks.begin(), extras.bracketMarks.end(),
+                       [&](const SplintBracketMark& mark) {
+                           const double dx = mark.center[0] - center[0];
+                           const double dy = mark.center[1] - center[1];
+                           const double dz = mark.center[2] - center[2];
+                           return std::sqrt(dx * dx + dy * dy + dz * dz) <= radiusMm;
+                       }),
+        extras.bracketMarks.end());
+    return static_cast<int>(before - extras.bracketMarks.size());
+}
+
+void ReorientWireHoles(SplintDesign& design, const SplintOcclusalFrame& frame)
+{
+    for (SplintWireHole& hole : design.extras.wireHoles)
+        hole.axis = SplintHeightmapGenerator::WireHoleAxis(design.wireHoleOrientation, hole.surfaceNormal,
+                                                           design.extras.bevel, frame);
+}
+
+QJsonObject ExtrasToJson(const SplintExtras& e)
+{
+    QJsonObject o;
+    if (e.bevel) {
+        QJsonObject bevel;
+        bevel[QStringLiteral("first")] = vec3Json(e.bevel->first);
+        bevel[QStringLiteral("second")] = vec3Json(e.bevel->second);
+        o[QStringLiteral("bevel")] = bevel;
+    }
+    QJsonArray holes;
+    for (const SplintWireHole& hole : e.wireHoles) {
+        QJsonObject h;
+        h[QStringLiteral("center")] = vec3Json(hole.center);
+        h[QStringLiteral("axis")] = vec3Json(hole.axis);
+        h[QStringLiteral("surfaceNormal")] = vec3Json(hole.surfaceNormal);
+        h[QStringLiteral("diameterMm")] = hole.diameterMm;
+        holes.append(h);
+    }
+    o[QStringLiteral("wireHoles")] = holes;
+    QJsonArray marks;
+    for (const SplintBracketMark& mark : e.bracketMarks) {
+        QJsonObject m;
+        m[QStringLiteral("center")] = vec3Json(mark.center);
+        m[QStringLiteral("radiusMm")] = mark.radiusMm;
+        marks.append(m);
+    }
+    o[QStringLiteral("bracketMarks")] = marks;
+    o[QStringLiteral("bracketOffsetMm")] = e.bracketOffsetMm;
+    return o;
+}
+
+SplintExtras ExtrasFromJson(const QJsonObject& o)
+{
+    SplintExtras e;
+    const QJsonObject bevel = o.value(QStringLiteral("bevel")).toObject();
+    SplintBevel b;
+    if (vec3From(bevel.value(QStringLiteral("first")), b.first) && vec3From(bevel.value(QStringLiteral("second")), b.second))
+        e.bevel = b;
+    for (const QJsonValue& value : o.value(QStringLiteral("wireHoles")).toArray()) {
+        const QJsonObject h = value.toObject();
+        SplintWireHole hole;
+        if (!vec3From(h.value(QStringLiteral("center")), hole.center) || !vec3From(h.value(QStringLiteral("axis")), hole.axis))
+            continue;
+        if (!vec3From(h.value(QStringLiteral("surfaceNormal")), hole.surfaceNormal))
+            hole.surfaceNormal = hole.axis;
+        hole.diameterMm = h.value(QStringLiteral("diameterMm")).toDouble(1.0);
+        e.wireHoles.push_back(hole);
+    }
+    for (const QJsonValue& value : o.value(QStringLiteral("bracketMarks")).toArray()) {
+        const QJsonObject m = value.toObject();
+        SplintBracketMark mark;
+        if (!vec3From(m.value(QStringLiteral("center")), mark.center))
+            continue;
+        mark.radiusMm = m.value(QStringLiteral("radiusMm")).toDouble(1.5);
+        e.bracketMarks.push_back(mark);
+    }
+    e.bracketOffsetMm = o.value(QStringLiteral("bracketOffsetMm")).toDouble(e.bracketOffsetMm);
+    return e;
+}
+
 QJsonObject ParamsToJson(const SplintHeightmapParams& p)
 {
     QJsonObject o;
@@ -328,6 +424,13 @@ QJsonObject DesignToJson(const SplintDesign& d)
         o[QStringLiteral("editedContourUV")] = contours;
         o[QStringLiteral("editedContourFrame")] = frameJson(d.editedContourFrame);
     }
+    o[QStringLiteral("extras")] = ExtrasToJson(d.extras);
+    o[QStringLiteral("wireHoleDiameterMm")] = d.wireHoleDiameterMm;
+    o[QStringLiteral("wireHoleOrientation")] =
+        d.wireHoleOrientation == SplintHoleOrientation::Bevel ? QStringLiteral("bevel") : QStringLiteral("normal");
+    o[QStringLiteral("bracketBrushRadiusMm")] = d.bracketBrushRadiusMm;
+    if (!d.createdSourceKey.isEmpty())
+        o[QStringLiteral("createdSourceKey")] = d.createdSourceKey;
     return o;
 }
 
@@ -369,6 +472,13 @@ bool DesignFromJson(const QJsonObject& o, SplintDesign& design, QString* error)
     }
     if (!d.editedContourUV.empty())
         d.editedContourFrame = frameFrom(o.value(QStringLiteral("editedContourFrame")).toObject());
+    d.extras = ExtrasFromJson(o.value(QStringLiteral("extras")).toObject());
+    d.wireHoleDiameterMm = o.value(QStringLiteral("wireHoleDiameterMm")).toDouble(d.wireHoleDiameterMm);
+    d.wireHoleOrientation = o.value(QStringLiteral("wireHoleOrientation")).toString() == QStringLiteral("bevel")
+        ? SplintHoleOrientation::Bevel
+        : SplintHoleOrientation::SurfaceNormal;
+    d.bracketBrushRadiusMm = o.value(QStringLiteral("bracketBrushRadiusMm")).toDouble(d.bracketBrushRadiusMm);
+    d.createdSourceKey = o.value(QStringLiteral("createdSourceKey")).toString();
     design = std::move(d);
     return true;
 }

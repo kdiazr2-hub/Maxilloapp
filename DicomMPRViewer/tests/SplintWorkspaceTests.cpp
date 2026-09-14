@@ -15,6 +15,7 @@
 #include <QElapsedTimer>
 #include <QFont>
 #include <QImage>
+#include <QLabel>
 #include <QPainter>
 #include <QSurfaceFormat>
 #include <QTemporaryDir>
@@ -207,6 +208,83 @@ public:
         require(isClosed(window.repositionMeshForLabel(kIntermediateSplintLabel)), "created splint is not a closed mesh");
         require(window.m_intermediateSplintMesh != nullptr, "Intermedia splint mesh not stored");
 
+        // ── Extras: bevel, wire hole, bracket margins, repair, outdated splint ─
+        {
+            SplintDesign* design = window.activeSplintDesign();
+            const auto c5 = toothCenter(5);
+            const double len5 = std::hypot(c5[0], c5[1]);
+            const auto radial = [&](double offset, double z) {
+                return SplintPoint3{c5[0] + c5[0] / len5 * offset, c5[1] + c5[1] / len5 * offset, z};
+            };
+            window.setSplintTool(MainWindow::SplintToolBevel);
+            require(window.m_splintTool == MainWindow::SplintToolBevel && window.m_splintPointGroup < 0,
+                    "bevel tool not active");
+            SplintPoint3 b0 = radial(0.5, 5.0);
+            SplintPoint3 b1 = radial(2.0, -5.0);
+            window.onSplintEditablePointAdded(2, b0[0], b0[1], b0[2]);
+            require(!design->extras.bevel && window.m_splintBevelPendingPoint.has_value(), "first bevel point not pending");
+            window.onSplintEditablePointAdded(2, b1[0], b1[1], b1[2]);
+            require(design->extras.bevel.has_value() && !window.m_splintBevelPendingPoint, "bevel not stored");
+            b1 = radial(2.5, -5.0);
+            window.onSplintEditablePointMoved(2, 1, b1[0], b1[1], b1[2]);
+            require(design->extras.bevel->second == b1, "dragging a bevel point did not move it");
+            require(window.m_splintView->hasOverlay(kSplintBevelOverlayKey), "bevel line not shown");
+
+            window.setSplintTool(MainWindow::SplintToolHoles);
+            require(window.m_splintTool == MainWindow::SplintToolHoles, "hole tool not active");
+            const auto c3 = toothCenter(3);
+            window.onSplintEditablePointAdded(3, c3[0], c3[1], 0.9);
+            require(design->extras.wireHoles.size() == 1 && design->extras.wireHoles[0].axis[2] > 0.9,
+                    "wire hole not placed perpendicular to the occlusal surface");
+            require(window.m_splintView->meshData(kSplintWireHolesActorKey) != nullptr, "wire hole cylinder not shown");
+
+            window.setSplintTool(MainWindow::SplintToolBrackets);
+            const auto c8 = toothCenter(8);
+            window.onSplintSurfaceBrushed(c8[0], c8[1], 1.0, Qt::NoModifier);
+            window.onSplintSurfaceBrushed(c8[0] + 0.2, c8[1], 1.0, Qt::NoModifier);
+            require(design->extras.bracketMarks.size() == 1, "brush stroke did not mark exactly once");
+            window.onSplintSurfaceBrushed(c8[0], c8[1], 1.0, Qt::ControlModifier);
+            require(design->extras.bracketMarks.empty(), "Ctrl brush did not unmark");
+            window.onSplintSurfaceBrushed(c8[0], c8[1], 1.0, Qt::NoModifier);
+            window.onSplintSurfaceBrushFinished();
+            require(window.m_splintView->meshData(kSplintBracketMarksActorKey) != nullptr, "bracket marks not shown");
+            window.setSplintTool(MainWindow::SplintToolNone);
+
+            require(waitFor([&] {
+                        return settled() && window.m_splintPreviewResult.report.contains(QStringLiteral("Bisel aplicado")) &&
+                               window.m_splintPreviewResult.report.contains(QStringLiteral("agujero")) &&
+                               window.m_splintPreviewResult.report.contains(QStringLiteral("brackets"));
+                    }, 90000),
+                    "preview did not apply the extras");
+
+            window.createHeightmapSplint();
+            require(waitFor([&] { return !window.m_splintHeightmapBuildInProgress; }, 120000), "splint with extras never finished");
+            require(isClosed(window.repositionMeshForLabel(kIntermediateSplintLabel)), "splint with extras is not closed");
+            require(window.m_splintLastReport.contains(QStringLiteral("Reparación STL")), "created splint was not validated");
+            require(!design->createdSourceKey.isEmpty() && design->createdSourceKey == window.splintSourceKey(*design),
+                    "created splint has no source signature");
+
+            const auto staleShown = [&] {
+                for (QLabel* label : window.m_splintDesignPanel->findChildren<QLabel*>())
+                    if (label->text().contains(QStringLiteral("desactualizada")) && label->isVisibleTo(window.m_splintDesignPanel))
+                        return true;
+                return false;
+            };
+            require(!staleShown(), "fresh splint marked outdated");
+            auto movedLower = vtkSmartPointer<vtkPolyData>::New();
+            movedLower->DeepCopy(scene.lower);
+            for (vtkIdType i = 0; i < movedLower->GetNumberOfPoints(); ++i) {
+                double p[3];
+                movedLower->GetPoint(i, p);
+                movedLower->GetPoints()->SetPoint(i, p[0], p[1] - 1.0, p[2]);
+            }
+            window.setSplintTestSources(scene.upper, movedLower);
+            require(staleShown(), "splint not marked outdated after the sources moved");
+            window.setSplintTestSources(scene.upper, scene.lower);
+            require(!staleShown(), "outdated warning stayed after restoring the sources");
+            require(waitFor(settled, 90000), "preview after restoring sources never arrived");
+        }
+
         // ── Named designs ─────────────────────────────────────────────────
         window.addSplintDesign();
         require(window.m_splintDesigns.size() == 3 && window.activeSplintDesign()->name == QStringLiteral("Prueba") &&
@@ -258,7 +336,11 @@ public:
             const SplintDesign& a = window.m_splintDesigns[i];
             const SplintDesign& b = reopened.m_splintDesigns[i];
             require(a.id == b.id && a.name == b.name && a.label == b.label && a.upperPoints == b.upperPoints &&
-                        a.lowerPoints == b.lowerPoints && a.params.edgeOffsetMm == b.params.edgeOffsetMm,
+                        a.lowerPoints == b.lowerPoints && a.params.edgeOffsetMm == b.params.edgeOffsetMm &&
+                        a.extras.bevel.has_value() == b.extras.bevel.has_value() &&
+                        a.extras.wireHoles.size() == b.extras.wireHoles.size() &&
+                        a.extras.bracketMarks.size() == b.extras.bracketMarks.size() &&
+                        a.createdSourceKey == b.createdSourceKey,
                     "design changed after reopening: " + a.name.toStdString());
         }
         require(reopened.objectEntryExists(kIntermediateSplintLabel) && reopened.m_intermediateSplintMesh != nullptr,

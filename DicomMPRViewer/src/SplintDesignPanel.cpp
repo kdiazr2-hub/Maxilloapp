@@ -14,6 +14,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <cmath>
 
 namespace
 {
@@ -235,7 +236,96 @@ SplintDesignPanel::SplintDesignPanel(QWidget* parent)
             emit influenceChanged(percent);
     });
 
+    // ── Extras: bevel, wire holes, bracket margins ────────────────────────
+    auto* extrasBox = new QGroupBox(tr("Bisel, agujeros y brackets"), this);
+    auto* extrasLayout = new QVBoxLayout(extrasBox);
+    const auto makeToolButton = [&](const QString& text) {
+        auto* button = new QPushButton(text, extrasBox);
+        button->setCheckable(true);
+        button->setStyleSheet(QStringLiteral("QPushButton:checked { background-color: #0a84ff; color: white; }"));
+        return button;
+    };
+
+    auto* bevelRow = new QHBoxLayout();
+    m_bevelButton = makeToolButton(tr("Editar bisel"));
+    m_removeBevelButton = new QPushButton(tr("Quitar bisel"), extrasBox);
+    bevelRow->addWidget(m_bevelButton);
+    bevelRow->addWidget(m_removeBevelButton);
+    extrasLayout->addLayout(bevelRow);
+    extrasLayout->addWidget(makeMuted(
+        tr("Dos puntos sobre los dientes (maxilar y mandíbula) definen el plano del bisel. "
+           "Arrastre para ajustarlos; Ctrl + arrastre los mueve en el aire."),
+        extrasBox));
+
+    auto* holeRow = new QHBoxLayout();
+    m_holeButton = makeToolButton(tr("Colocar agujeros"));
+    m_removeHolesButton = new QPushButton(tr("Quitar agujeros"), extrasBox);
+    holeRow->addWidget(m_holeButton);
+    holeRow->addWidget(m_removeHolesButton);
+    extrasLayout->addLayout(holeRow);
+    auto* holeForm = new QFormLayout();
+    m_holeDiameterSpin = makeSpin(extrasBox, 0.5, 4.0, 0.1, 1, tr(" mm"));
+    m_holeOrientationCombo = new QComboBox(extrasBox);
+    m_holeOrientationCombo->addItem(tr("Normal a la superficie"), static_cast<int>(SplintHoleOrientation::SurfaceNormal));
+    m_holeOrientationCombo->addItem(tr("Seguir el bisel"), static_cast<int>(SplintHoleOrientation::Bevel));
+    holeForm->addRow(tr("Diámetro:"), m_holeDiameterSpin);
+    holeForm->addRow(tr("Orientación:"), m_holeOrientationCombo);
+    extrasLayout->addLayout(holeForm);
+    extrasLayout->addWidget(makeMuted(
+        tr("Clic sobre la vista previa coloca un cilindro; clic derecho sobre su marca lo quita. "
+           "Todos los cilindros se restan al crear la férula."),
+        extrasBox));
+
+    auto* bracketRow = new QHBoxLayout();
+    m_bracketButton = makeToolButton(tr("Marcar brackets"));
+    m_clearMarksButton = new QPushButton(tr("Desmarcar todo"), extrasBox);
+    bracketRow->addWidget(m_bracketButton);
+    bracketRow->addWidget(m_clearMarksButton);
+    extrasLayout->addLayout(bracketRow);
+    auto* bracketForm = new QFormLayout();
+    m_bracketOffsetCombo = new QComboBox(extrasBox);
+    for (double value : {0.25, 0.5, 0.75, 1.0, 1.5, 2.0})
+        m_bracketOffsetCombo->addItem(tr("%1 mm").arg(value, 0, 'f', 2), value);
+    m_brushRadiusSpin = makeSpin(extrasBox, 0.5, 5.0, 0.25, 2, tr(" mm"));
+    bracketForm->addRow(tr("Margen:"), m_bracketOffsetCombo);
+    bracketForm->addRow(tr("Radio del pincel:"), m_brushRadiusSpin);
+    extrasLayout->addLayout(bracketForm);
+    extrasLayout->addWidget(makeMuted(
+        tr("Clic o arrastre sobre los dientes marca; Ctrl desmarca; Alt + arrastre vertical cambia el pincel. "
+           "Las zonas marcadas reciben el margen indicado en las huellas."),
+        extrasBox));
+    m_extrasSummary = makeMuted(QString(), extrasBox);
+    extrasLayout->addWidget(m_extrasSummary);
+    layout->addWidget(extrasBox);
+
+    for (auto [button, tool] : {std::pair{m_bevelButton, int(BevelTool)}, std::pair{m_holeButton, int(WireHoleTool)},
+                                std::pair{m_bracketButton, int(BracketTool)}}) {
+        connect(button, &QPushButton::toggled, this, [this, tool = tool](bool active) {
+            if (m_updating)
+                return;
+            if (active)
+                setExtrasTool(tool);
+            emit extrasToolToggled(tool, active);
+        });
+    }
+    connect(m_removeBevelButton, &QPushButton::clicked, this, &SplintDesignPanel::removeBevelRequested);
+    connect(m_removeHolesButton, &QPushButton::clicked, this, &SplintDesignPanel::removeWireHolesRequested);
+    connect(m_clearMarksButton, &QPushButton::clicked, this, &SplintDesignPanel::clearBracketMarksRequested);
+    const auto extrasChanged = [this] {
+        if (!m_updating)
+            emit extrasSettingsChanged();
+    };
+    connect(m_holeDiameterSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, extrasChanged);
+    connect(m_brushRadiusSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, extrasChanged);
+    connect(m_holeOrientationCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, extrasChanged);
+    connect(m_bracketOffsetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, extrasChanged);
+
     // ── Preview, creation, export ─────────────────────────────────────────
+    m_staleWarning = new QLabel(this);
+    m_staleWarning->setWordWrap(true);
+    m_staleWarning->setStyleSheet(QStringLiteral("color:#ff6b6b; font-weight:600;"));
+    m_staleWarning->setVisible(false);
+    layout->addWidget(m_staleWarning);
     m_previewStatus = makeMuted(QString(), this);
     layout->addWidget(m_previewStatus);
     m_createButton = new QPushButton(tr("Crear férula"), this);
@@ -260,6 +350,8 @@ SplintDesignPanel::SplintDesignPanel(QWidget* parent)
     layout->addStretch(1);
 
     setParams(SplintHeightmapParams{});
+    setExtrasSettings(1.0, SplintHoleOrientation::SurfaceNormal, 0.5, 1.5);
+    setExtrasSummary(false, false, 0, 0);
     setPointCounts(0, 0);
     setContourEdited(false);
     setCanCreate(false);
@@ -398,6 +490,72 @@ void SplintDesignPanel::setCanCreate(bool enabled)
 void SplintDesignPanel::setCanExport(bool enabled)
 {
     m_exportButton->setEnabled(enabled);
+}
+
+void SplintDesignPanel::setExtrasTool(int tool)
+{
+    m_updating = true;
+    m_bevelButton->setChecked(tool == BevelTool);
+    m_holeButton->setChecked(tool == WireHoleTool);
+    m_bracketButton->setChecked(tool == BracketTool);
+    m_updating = false;
+}
+
+void SplintDesignPanel::setExtrasSettings(double holeDiameterMm, SplintHoleOrientation orientation,
+                                          double bracketOffsetMm, double brushRadiusMm)
+{
+    m_updating = true;
+    setSpin(m_holeDiameterSpin, holeDiameterMm);
+    selectData(m_holeOrientationCombo, static_cast<int>(orientation));
+    int offsetIndex = -1;
+    for (int i = 0; i < m_bracketOffsetCombo->count(); ++i)
+        if (std::abs(m_bracketOffsetCombo->itemData(i).toDouble() - bracketOffsetMm) < 1e-6)
+            offsetIndex = i;
+    if (offsetIndex < 0) {
+        m_bracketOffsetCombo->addItem(tr("%1 mm").arg(bracketOffsetMm, 0, 'f', 2), bracketOffsetMm);
+        offsetIndex = m_bracketOffsetCombo->count() - 1;
+    }
+    {
+        const QSignalBlocker blocker(m_bracketOffsetCombo);
+        m_bracketOffsetCombo->setCurrentIndex(offsetIndex);
+    }
+    setSpin(m_brushRadiusSpin, brushRadiusMm);
+    m_updating = false;
+}
+
+void SplintDesignPanel::setExtrasSummary(bool bevel, bool bevelPending, int holes, int marks)
+{
+    m_removeBevelButton->setEnabled(bevel || bevelPending);
+    m_removeHolesButton->setEnabled(holes > 0);
+    m_clearMarksButton->setEnabled(marks > 0);
+    const QString bevelText = bevel ? tr("bisel activo") : bevelPending ? tr("bisel: falta 1 punto") : tr("sin bisel");
+    m_extrasSummary->setText(tr("%1 · %2 agujero(s) · %3 marca(s) de bracket").arg(bevelText).arg(holes).arg(marks));
+}
+
+double SplintDesignPanel::wireHoleDiameter() const
+{
+    return m_holeDiameterSpin->value();
+}
+
+SplintHoleOrientation SplintDesignPanel::wireHoleOrientation() const
+{
+    return static_cast<SplintHoleOrientation>(m_holeOrientationCombo->currentData().toInt());
+}
+
+double SplintDesignPanel::bracketOffset() const
+{
+    return m_bracketOffsetCombo->currentData().toDouble();
+}
+
+double SplintDesignPanel::brushRadius() const
+{
+    return m_brushRadiusSpin->value();
+}
+
+void SplintDesignPanel::setStaleWarning(const QString& text)
+{
+    m_staleWarning->setText(text);
+    m_staleWarning->setVisible(!text.isEmpty());
 }
 
 void SplintDesignPanel::updateUndercutEnabled()

@@ -352,6 +352,8 @@ bool Mesh3DView::eventFilter(QObject* watched, QEvent* event)
         return true;
     if (m_planeDragActive && handlePlaneDragEvent(event))
         return true;
+    if (m_brushActive && handleBrushEvent(event))
+        return true;
 
     if (m_pointPickActive && event->type() == QEvent::MouseButtonPress) {
         auto* me = static_cast<QMouseEvent*>(event);
@@ -1152,6 +1154,12 @@ bool Mesh3DView::pickEditablePoint(int px, int py, int& group, int& index) const
 
 bool Mesh3DView::planePointAt(int px, int py, std::array<double, 3>& world) const
 {
+    return rayPlanePoint(px, py, m_planeOrigin, m_planeNormal, world);
+}
+
+bool Mesh3DView::rayPlanePoint(int px, int py, const std::array<double, 3>& origin, const std::array<double, 3>& normal,
+                               std::array<double, 3>& world) const
+{
     if (!m_renderer) return false;
     double nearPoint[4] = {};
     double farPoint[4] = {};
@@ -1165,7 +1173,7 @@ bool Mesh3DView::planePointAt(int px, int py, std::array<double, 3>& world) cons
         return false;
     const std::array<double, 3> start{nearPoint[0] / nearPoint[3], nearPoint[1] / nearPoint[3], nearPoint[2] / nearPoint[3]};
     const std::array<double, 3> end{farPoint[0] / farPoint[3], farPoint[1] / farPoint[3], farPoint[2] / farPoint[3]};
-    return RayPlaneIntersection(start, end, m_planeOrigin, m_planeNormal, world);
+    return RayPlaneIntersection(start, end, origin, normal, world);
 }
 
 bool Mesh3DView::handlePointEditEvent(QEvent* event)
@@ -1196,13 +1204,27 @@ bool Mesh3DView::handlePointEditEvent(QEvent* event)
 
     if (type == QEvent::MouseMove && m_draggedPointIndex >= 0) {
         std::array<double, 3> hit{};
-        if (pickSurface(px, py, hit)) {
-            for (auto& p : m_editablePoints) {
-                if (p.group == m_draggedPointGroup && p.index == m_draggedPointIndex) {
-                    p.source->SetCenter(hit[0], hit[1], hit[2]);
-                    break;
-                }
+        EditablePoint* dragged = nullptr;
+        for (auto& p : m_editablePoints) {
+            if (p.group == m_draggedPointGroup && p.index == m_draggedPointIndex) {
+                dragged = &p;
+                break;
             }
+        }
+        bool found = false;
+        if (me->modifiers().testFlag(Qt::ControlModifier) && dragged && m_renderer && m_renderer->GetActiveCamera()) {
+            // Ctrl: free space, in the view plane through the marker.
+            std::array<double, 3> origin{};
+            std::array<double, 3> direction{};
+            dragged->source->GetCenter(origin.data());
+            m_renderer->GetActiveCamera()->GetDirectionOfProjection(direction.data());
+            found = rayPlanePoint(px, py, origin, direction, hit);
+        } else {
+            found = pickSurface(px, py, hit);
+        }
+        if (found) {
+            if (dragged)
+                dragged->source->SetCenter(hit[0], hit[1], hit[2]);
             render();
             emit editablePointMoved(m_draggedPointGroup, m_draggedPointIndex, hit[0], hit[1], hit[2]);
         }
@@ -1274,6 +1296,55 @@ bool Mesh3DView::handlePlaneDragEvent(QEvent* event)
         if (!planePointAt(px, py, hit))
             hit = m_planeOrigin;
         emit planeDragFinished(hit[0], hit[1], hit[2]);
+        return true;
+    }
+    return false;
+}
+
+void Mesh3DView::setSurfaceBrushMode(bool active)
+{
+    m_brushActive = active;
+    m_brushing = false;
+    m_brushResizing = false;
+    const Qt::CursorShape cursor = active ? Qt::PointingHandCursor : Qt::ArrowCursor;
+    setCursor(cursor);
+    if (m_vtkWidget) m_vtkWidget->setCursor(cursor);
+}
+
+bool Mesh3DView::handleBrushEvent(QEvent* event)
+{
+    const QEvent::Type type = event->type();
+    if (type != QEvent::MouseButtonPress && type != QEvent::MouseMove && type != QEvent::MouseButtonRelease)
+        return false;
+    auto* me = static_cast<QMouseEvent*>(event);
+    int px = 0;
+    int py = 0;
+    toDisplay(m_vtkWidget, me->position(), px, py);
+    std::array<double, 3> hit{};
+
+    if (type == QEvent::MouseButtonPress && me->button() == Qt::LeftButton) {
+        m_brushing = true;
+        m_brushResizing = me->modifiers().testFlag(Qt::AltModifier);
+        m_brushLastY = me->position().y();
+        if (!m_brushResizing && pickSurface(px, py, hit))
+            emit surfaceBrushed(hit[0], hit[1], hit[2], me->modifiers());
+        return true;
+    }
+    if (type == QEvent::MouseMove && m_brushing) {
+        if (m_brushResizing || me->modifiers().testFlag(Qt::AltModifier)) {
+            const double deltaY = me->position().y() - m_brushLastY;
+            m_brushLastY = me->position().y();
+            if (deltaY != 0.0)
+                emit brushRadiusDragged(deltaY);
+        } else if (pickSurface(px, py, hit)) {
+            emit surfaceBrushed(hit[0], hit[1], hit[2], me->modifiers());
+        }
+        return true;
+    }
+    if (type == QEvent::MouseButtonRelease && me->button() == Qt::LeftButton && m_brushing) {
+        m_brushing = false;
+        m_brushResizing = false;
+        emit surfaceBrushFinished();
         return true;
     }
     return false;

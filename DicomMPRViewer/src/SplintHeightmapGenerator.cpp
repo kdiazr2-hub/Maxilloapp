@@ -990,10 +990,18 @@ std::vector<float> diskFilter(const std::vector<float>& in, int nu, int nv,
     return out;
 }
 
+struct LocalMark
+{
+    Vec3 center;
+    double radius;
+};
+
 // Height field used for the solid: fins narrower than minFeatureMm removed
 // (opening of the upper map, closing of the lower map; both never move toward
-// the teeth) and then offset by a clearance sphere.
-std::vector<float> solidHeights(const SplintHeightMap& map, bool upperJaw, double minFeatureMm, double clearanceMm)
+// the teeth) and then offset by a clearance sphere. Surface within a bracket
+// mark is offset by clearance + markOffsetMm instead.
+std::vector<float> solidHeights(const SplintHeightMap& map, bool upperJaw, double minFeatureMm, double clearanceMm,
+                                const std::vector<LocalMark>& marks, double markOffsetMm)
 {
     const float missing = upperJaw ? std::numeric_limits<float>::infinity() : -std::numeric_limits<float>::infinity();
     std::vector<float> values(map.values.size());
@@ -1005,7 +1013,40 @@ std::vector<float> solidHeights(const SplintHeightMap& map, bool upperJaw, doubl
         const auto disk = diskOffsets(featureRadius, map.spacing, false);
         values = diskFilter(diskFilter(values, map.nu, map.nv, disk, upperJaw), map.nu, map.nv, disk, !upperJaw);
     }
-    values = diskFilter(values, map.nu, map.nv, diskOffsets(clearanceMm, map.spacing, true), upperJaw);
+    std::vector<float> filtered = diskFilter(values, map.nu, map.nv, diskOffsets(clearanceMm, map.spacing, true), upperJaw);
+
+    if (!marks.empty() && markOffsetMm > 0.0) {
+        const double sigma = upperJaw ? 1.0 : -1.0;
+        std::vector<float> marked(values.size(), missing);
+        std::atomic<bool> any{false};
+        parallelFor(map.nv, [&](int jBegin, int jEnd) {
+            for (int j = jBegin; j < jEnd; ++j)
+                for (int i = 0; i < map.nu; ++i) {
+                    const size_t idx = static_cast<size_t>(j) * map.nu + i;
+                    const float w = values[idx];
+                    if (!std::isfinite(w))
+                        continue;
+                    const Vec3 p{map.u0 + i * map.spacing + sigma * w * map.shear[0],
+                                 map.v0 + j * map.spacing + sigma * w * map.shear[1], w};
+                    for (const LocalMark& mark : marks) {
+                        const Vec3 d = sub(p, mark.center);
+                        if (dot(d, d) <= mark.radius * mark.radius) {
+                            marked[idx] = w;
+                            any.store(true, std::memory_order_relaxed);
+                            break;
+                        }
+                    }
+                }
+        });
+        if (any.load()) {
+            const std::vector<float> offsetValues = diskFilter(
+                marked, map.nu, map.nv, diskOffsets(clearanceMm + markOffsetMm, map.spacing, true), upperJaw);
+            for (size_t idx = 0; idx < filtered.size(); ++idx)
+                filtered[idx] = upperJaw ? std::min(filtered[idx], offsetValues[idx])
+                                         : std::max(filtered[idx], offsetValues[idx]);
+        }
+    }
+    values = std::move(filtered);
 
     for (float& v : values)
         if (!std::isfinite(v))
@@ -1085,6 +1126,57 @@ float SplintHeightMap::Sample(double cu, double cv) const
 double SplintHeightmapGenerator::ContourArea(const SplintContourUV& contour)
 {
     return std::abs(signedArea(contour));
+}
+
+namespace
+{
+// Horizontal direction from the frame origin toward `point` and the arch
+// tangent there (normal × radial).
+void archDirections(const SplintOcclusalFrame& frame, const Vec3& point, Vec3& radial, Vec3& tangent)
+{
+    Vec3 r = sub(point, frame.origin);
+    r = sub(r, mul(frame.normal, dot(r, frame.normal)));
+    radial = normalized(r, frame.axisV);
+    tangent = normalized(cross(frame.normal, radial), frame.axisU);
+}
+} // namespace
+
+bool SplintHeightmapGenerator::BevelPlane(const SplintBevel& bevel, const SplintOcclusalFrame& frame,
+                                          SplintPoint3& origin, SplintPoint3& normal)
+{
+    const Vec3 line = sub(bevel.second, bevel.first);
+    const double length = std::sqrt(dot(line, line));
+    if (length < 0.5)
+        return false;
+    const Vec3 mid = mul(add(bevel.first, bevel.second), 0.5);
+    Vec3 radial{}, tangent{};
+    archDirections(frame, mid, radial, tangent);
+    Vec3 n = cross(line, tangent);
+    const double nLength = std::sqrt(dot(n, n));
+    if (nLength < 0.2 * length) // the line runs along the arch: no plane
+        return false;
+    n = mul(n, 1.0 / nLength);
+    if (dot(n, radial) < 0.0)
+        n = mul(n, -1.0);
+    origin = mid;
+    normal = n;
+    return true;
+}
+
+SplintPoint3 SplintHeightmapGenerator::WireHoleAxis(SplintHoleOrientation orientation, const SplintPoint3& surfaceNormal,
+                                                    const std::optional<SplintBevel>& bevel,
+                                                    const SplintOcclusalFrame& frame)
+{
+    Vec3 axis = normalized(surfaceNormal, frame.normal);
+    Vec3 origin{}, bevelNormal{};
+    if (orientation == SplintHoleOrientation::Bevel && bevel && BevelPlane(*bevel, frame, origin, bevelNormal)) {
+        Vec3 radial{}, tangent{};
+        archDirections(frame, origin, radial, tangent);
+        axis = normalized(cross(tangent, bevelNormal), frame.normal);
+    }
+    if (dot(axis, frame.normal) < 0.0)
+        axis = mul(axis, -1.0);
+    return axis;
 }
 
 void SplintHeightmapGenerator::ApplyThicknessColors(vtkPolyData* mesh, double minMm, double maxMm)
@@ -1298,6 +1390,47 @@ SplintHeightmapResult SplintHeightmapGenerator::Build(const SplintHeightmapPrepa
     const double edgeOffset = std::clamp(params.edgeOffsetMm, 0.0, 5.0);
     const double clearance = std::clamp(params.clearanceMm, 0.0, kMaxClearanceMm);
 
+    // ── Extras in the local frame ─────────────────────────────────────────
+    const SplintExtras& extras = inputs.extras;
+    const SplintOcclusalFrame& frame = prep.frame;
+    const auto toLocalDirection = [&frame](const Vec3& d) {
+        return Vec3{dot(d, frame.axisU), dot(d, frame.axisV), dot(d, frame.normal)};
+    };
+    const double bracketOffset = std::clamp(extras.bracketOffsetMm, 0.0, MaxBracketOffsetMm);
+    std::vector<LocalMark> upperMarks, lowerMarks;
+    for (const SplintBracketMark& mark : extras.bracketMarks) {
+        if (!(mark.radiusMm > 0.0))
+            continue;
+        const Vec3 local = frame.ToLocal(mark.center);
+        (local[2] >= 0.0 ? upperMarks : lowerMarks).push_back({local, mark.radiusMm});
+    }
+    bool hasBevel = false;
+    bool bevelIgnored = false;
+    Vec3 bevelOrigin{}, bevelNormal{};
+    if (extras.bevel) {
+        Vec3 origin{}, normal{};
+        if (BevelPlane(*extras.bevel, frame, origin, normal)) {
+            bevelOrigin = frame.ToLocal(origin);
+            bevelNormal = toLocalDirection(normal);
+            hasBevel = true;
+        } else {
+            bevelIgnored = true;
+        }
+    }
+    struct LocalHole
+    {
+        Vec3 center;
+        Vec3 axis;
+        double radius;
+    };
+    std::vector<LocalHole> holes;
+    for (const SplintWireHole& hole : extras.wireHoles) {
+        if (!(hole.diameterMm > 0.0))
+            continue;
+        holes.push_back({frame.ToLocal(hole.center), normalized(toLocalDirection(hole.axis), {0.0, 0.0, 1.0}),
+                         0.5 * hole.diameterMm});
+    }
+
     std::vector<float> surfSup(cells), surfInf(cells);
     for (int j = 0; j < nv; ++j)
         for (int i = 0; i < nu; ++i) {
@@ -1425,9 +1558,9 @@ SplintHeightmapResult SplintHeightmapGenerator::Build(const SplintHeightmapPrepa
     });
 
     SplintHeightMap upperSolid = upperMap;
-    upperSolid.values = solidHeights(upperMap, true, params.minFeatureMm, clearance);
+    upperSolid.values = solidHeights(upperMap, true, params.minFeatureMm, clearance, upperMarks, bracketOffset);
     SplintHeightMap lowerSolid = lowerMap;
-    lowerSolid.values = solidHeights(lowerMap, false, params.minFeatureMm, clearance);
+    lowerSolid.values = solidHeights(lowerMap, false, params.minFeatureMm, clearance, lowerMarks, bracketOffset);
     const auto upperSolidHit = [&](double u, double v, double w) {
         return upperSolid.Sample(u - w * upperSolid.shear[0], v - w * upperSolid.shear[1]);
     };
@@ -1535,7 +1668,22 @@ SplintHeightmapResult SplintHeightmapGenerator::Build(const SplintHeightmapPrepa
                     const double u = ox + i * h;
                     const double occTop = 0.5 + (topAt(idx, u, v, w) - w) / h;
                     const double occBottom = 0.5 + (w - bottomAt(idx, u, v, w)) / h;
-                    const double occ = std::clamp(std::min({inside2d, occTop, occBottom}), 0.0, 1.0);
+                    double occ = std::min({inside2d, occTop, occBottom});
+                    if (occ > 0.0) {
+                        if (hasBevel) {
+                            const Vec3 d{u - bevelOrigin[0], v - bevelOrigin[1], w - bevelOrigin[2]};
+                            occ = std::min(occ, 0.5 - dot(d, bevelNormal) / h);
+                        }
+                        for (const LocalHole& hole : holes) {
+                            const Vec3 d{u - hole.center[0], v - hole.center[1], w - hole.center[2]};
+                            const double t = dot(d, hole.axis);
+                            if (std::abs(t) > WireHoleHalfLengthMm)
+                                continue;
+                            const double radial = std::sqrt(std::max(0.0, dot(d, d) - t * t));
+                            occ = std::min(occ, 0.5 + (radial - hole.radius) / h);
+                        }
+                    }
+                    occ = std::clamp(occ, 0.0, 1.0);
                     occupancy[static_cast<size_t>(i) + static_cast<size_t>(nx) * (static_cast<size_t>(j) + static_cast<size_t>(ny) * k)] =
                         static_cast<float>(occ);
                 }
@@ -1697,6 +1845,15 @@ SplintHeightmapResult SplintHeightmapGenerator::Build(const SplintHeightmapPrepa
         result.report += QStringLiteral(" Cara inferior plana a %1 mm sobre la superficie de los puntos.").arg(flatRiseLower, 0, 'f', 2);
     if (result.perforatedAreaMm2 > 0.0)
         result.report += QStringLiteral(" Área perforada por contacto oclusal: %1 mm².").arg(result.perforatedAreaMm2, 0, 'f', 1);
+    if (hasBevel)
+        result.report += QStringLiteral(" Bisel aplicado.");
+    if (bevelIgnored)
+        result.report += QStringLiteral(" Bisel ignorado: los dos puntos coinciden o siguen la arcada.");
+    if (!holes.empty())
+        result.report += QStringLiteral(" %1 agujero(s) para alambre.").arg(holes.size());
+    if (!upperMarks.empty() || !lowerMarks.empty())
+        result.report += QStringLiteral(" Margen de brackets %1 mm en %2 marca(s).")
+                             .arg(bracketOffset, 0, 'f', 2).arg(upperMarks.size() + lowerMarks.size());
     if (!prep.report.isEmpty())
         result.report = prep.report + QStringLiteral("\n") + result.report;
     result.ok = true;

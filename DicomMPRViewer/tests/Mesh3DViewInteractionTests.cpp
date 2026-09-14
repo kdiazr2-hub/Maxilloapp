@@ -160,6 +160,51 @@ void testInteraction()
     click(vtkWidget, QPointF(4.0, 4.0), Qt::LeftButton);
     require(added.size() == 1, "click outside the meshes added a point");
 
+    // Ctrl + drag moves a marker in free space, past the edge of the mesh.
+    lookDown();
+    view.setEditablePoints(0, {{0.0, 0.0, 5.0}}, QColor(255, 128, 0), 0.6);
+    moved.clear();
+    finished.clear();
+    const QPointF outside = center + QPointF(240.0, 0.0);
+    mouse(vtkWidget, QEvent::MouseButtonPress, center, Qt::LeftButton, Qt::LeftButton);
+    mouse(vtkWidget, QEvent::MouseMove, outside, Qt::NoButton, Qt::LeftButton);
+    require(moved.empty(), "plain drag past the mesh moved the marker");
+    mouse(vtkWidget, QEvent::MouseMove, outside, Qt::NoButton, Qt::LeftButton, Qt::ControlModifier);
+    mouse(vtkWidget, QEvent::MouseButtonRelease, outside, Qt::LeftButton, Qt::NoButton, Qt::ControlModifier);
+    require(moved.size() == 1 && moved[0].x > 30.0 && std::abs(moved[0].y) < 0.5 && std::abs(moved[0].z - 5.0) < 0.1,
+            "Ctrl drag did not move the marker in the view plane");
+    require(finished.size() == 1, "Ctrl drag end not reported");
+    require(added.size() == 1, "Ctrl drag added a point");
+
+    // Surface brush: drag reports surface points, Ctrl is passed on, Alt resizes.
+    view.setPointEditMode(false);
+    view.clearEditablePoints();
+    std::vector<PlaneEvent> brushed;
+    std::vector<double> radiusDeltas;
+    int brushFinished = 0;
+    QObject::connect(&view, &Mesh3DView::surfaceBrushed, [&](double x, double y, double z, Qt::KeyboardModifiers m) {
+        brushed.push_back({x, y, z, 0.0, m});
+    });
+    QObject::connect(&view, &Mesh3DView::brushRadiusDragged, [&](double dy) { radiusDeltas.push_back(dy); });
+    QObject::connect(&view, &Mesh3DView::surfaceBrushFinished, [&] { ++brushFinished; });
+    view.setSurfaceBrushMode(true);
+    mouse(vtkWidget, QEvent::MouseButtonPress, center, Qt::LeftButton, Qt::LeftButton);
+    mouse(vtkWidget, QEvent::MouseMove, center + QPointF(10.0, 0.0), Qt::NoButton, Qt::LeftButton);
+    mouse(vtkWidget, QEvent::MouseMove, center + QPointF(20.0, 0.0), Qt::NoButton, Qt::LeftButton);
+    mouse(vtkWidget, QEvent::MouseButtonRelease, center + QPointF(20.0, 0.0), Qt::LeftButton, Qt::NoButton);
+    require(brushed.size() == 3 && brushed.back().x > 1.0 && std::abs(brushed.back().z - 5.0) < 0.1 && brushFinished == 1,
+            "brush stroke not reported on the surface");
+    mouse(vtkWidget, QEvent::MouseButtonPress, center, Qt::LeftButton, Qt::LeftButton, Qt::ControlModifier);
+    mouse(vtkWidget, QEvent::MouseButtonRelease, center, Qt::LeftButton, Qt::NoButton, Qt::ControlModifier);
+    require(brushed.size() == 4 && (brushed.back().modifiers & Qt::ControlModifier), "Ctrl brush lost the modifier");
+    mouse(vtkWidget, QEvent::MouseButtonPress, center, Qt::LeftButton, Qt::LeftButton, Qt::AltModifier);
+    mouse(vtkWidget, QEvent::MouseMove, center + QPointF(0.0, -30.0), Qt::NoButton, Qt::LeftButton, Qt::AltModifier);
+    mouse(vtkWidget, QEvent::MouseButtonRelease, center + QPointF(0.0, -30.0), Qt::LeftButton, Qt::NoButton, Qt::AltModifier);
+    require(radiusDeltas.size() == 1 && std::abs(radiusDeltas[0] + 30.0) < 1e-9 && brushed.size() == 4,
+            "Alt brush drag did not resize without marking");
+    view.setSurfaceBrushMode(false);
+    lookDown();
+
     // Plane drag reports points on the plane and Alt + vertical movement.
     view.setPointEditMode(false);
     view.clearEditablePoints();

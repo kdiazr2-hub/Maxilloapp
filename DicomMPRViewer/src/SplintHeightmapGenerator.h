@@ -65,6 +65,47 @@ struct SplintHeightmapParams
     SplintPointUV undercutDirectionUV{0.0, 1.0}; // default: anterior
 };
 
+// ── Splint extras (ProPlan 4.11.4–4.11.6), Build stage, world coordinates ──
+// Bevel: the plane through both points that follows the arch tangent; the
+// material outside it (away from the arch centre) is removed.
+struct SplintBevel
+{
+    SplintPoint3 first{};  // usually on the maxillary teeth
+    SplintPoint3 second{}; // usually on the mandibular teeth
+};
+
+enum class SplintHoleOrientation
+{
+    SurfaceNormal, // perpendicular to the splint surface where it was placed
+    Bevel          // parallel to the bevel face
+};
+
+// Cylinder subtracted from the splint (length 2 * kWireHoleHalfLengthMm).
+struct SplintWireHole
+{
+    SplintPoint3 center{};
+    SplintPoint3 axis{0.0, 0.0, 1.0};
+    SplintPoint3 surfaceNormal{0.0, 0.0, 1.0}; // where it was placed; used to re-orient it
+    double diameterMm = 1.0;
+};
+
+// Marked tooth / bracket surface: surface within radiusMm of the centre gets
+// bracketOffsetMm of extra clearance. The jaw follows the side of the
+// occlusal plane the centre lies on.
+struct SplintBracketMark
+{
+    SplintPoint3 center{};
+    double radiusMm = 1.5;
+};
+
+struct SplintExtras
+{
+    std::optional<SplintBevel> bevel;
+    std::vector<SplintWireHole> wireHoles;
+    std::vector<SplintBracketMark> bracketMarks;
+    double bracketOffsetMm = 0.5; // 0–2
+};
+
 struct SplintHeightmapInputs
 {
     vtkPolyData* upperTeeth = nullptr;   // world coordinates, planned position
@@ -77,6 +118,7 @@ struct SplintHeightmapInputs
     SplintHeightmapParams params;
     // Closed polylines in the (u, v) occlusal frame. Empty = automatic contour.
     std::vector<SplintContourUV> contourOverrideUV;
+    SplintExtras extras;
     const std::atomic<bool>* cancel = nullptr;
 };
 
@@ -160,6 +202,8 @@ class SplintHeightmapGenerator
 public:
     static constexpr const char* ThicknessArrayName = "Grosor";
     static constexpr const char* ThicknessColorArrayName = "ColorGrosor";
+    static constexpr double WireHoleHalfLengthMm = 15.0;
+    static constexpr double MaxBracketOffsetMm = 2.0;
 
     static SplintHeightmapPrepared Prepare(const SplintHeightmapInputs& inputs);
     static SplintHeightmapResult Build(const SplintHeightmapPrepared& prepared,
@@ -169,4 +213,14 @@ public:
     // Adds RGB point scalars: red below min, yellow in range, purple above max.
     static void ApplyThicknessColors(vtkPolyData* mesh, double minMm, double maxMm);
     static double ContourArea(const SplintContourUV& contour);
+
+    // Bevel plane in world coordinates; normal points toward the removed side.
+    // False when the points coincide or the line follows the arch tangent.
+    static bool BevelPlane(const SplintBevel& bevel, const SplintOcclusalFrame& frame,
+                           SplintPoint3& origin, SplintPoint3& normal);
+    // Unit axis (toward the maxilla) of a wire hole placed on a surface with
+    // `surfaceNormal`; Bevel keeps the hole parallel to the bevel face and
+    // falls back to the surface normal without a valid bevel.
+    static SplintPoint3 WireHoleAxis(SplintHoleOrientation orientation, const SplintPoint3& surfaceNormal,
+                                     const std::optional<SplintBevel>& bevel, const SplintOcclusalFrame& frame);
 };

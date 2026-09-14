@@ -39,7 +39,26 @@ public:
         LowerGroup = 1
     };
 
+    enum ExtrasTool
+    {
+        NoExtrasTool = 0,
+        BevelTool = 1,
+        WireHoleTool = 2,
+        BracketTool = 3
+    };
+
     explicit SplintDesignPanel(QWidget* parent = nullptr);
+
+    void setExtrasTool(int tool);
+    void setExtrasSettings(double holeDiameterMm, SplintHoleOrientation orientation, double bracketOffsetMm,
+                           double brushRadiusMm);
+    void setExtrasSummary(bool bevel, bool bevelPending, int holes, int marks);
+    double wireHoleDiameter() const;
+    SplintHoleOrientation wireHoleOrientation() const;
+    double bracketOffset() const;
+    double brushRadius() const;
+    // Empty hides the warning.
+    void setStaleWarning(const QString& text);
 
     void setDesigns(const QStringList& names, int currentIndex, bool currentIsBuiltIn);
     void setSourceOptions(const std::vector<SourceOption>& upper, const std::vector<SourceOption>& lower);
@@ -82,6 +101,11 @@ signals:
     void exportRequested();
     void exportPointsRequested();
     void exportReportRequested();
+    void extrasToolToggled(int tool, bool active);
+    void removeBevelRequested();
+    void removeWireHolesRequested();
+    void clearBracketMarksRequested();
+    void extrasSettingsChanged();
 
 private:
     void updateUndercutEnabled();
@@ -114,6 +138,19 @@ private:
     QPushButton* m_resetContourButton = nullptr;
     QDoubleSpinBox* m_influenceSpin = nullptr;
     QLabel* m_contourNote = nullptr;
+
+    QPushButton* m_bevelButton = nullptr;
+    QPushButton* m_removeBevelButton = nullptr;
+    QPushButton* m_holeButton = nullptr;
+    QPushButton* m_removeHolesButton = nullptr;
+    QDoubleSpinBox* m_holeDiameterSpin = nullptr;
+    QComboBox* m_holeOrientationCombo = nullptr;
+    QPushButton* m_bracketButton = nullptr;
+    QPushButton* m_clearMarksButton = nullptr;
+    QComboBox* m_bracketOffsetCombo = nullptr;
+    QDoubleSpinBox* m_brushRadiusSpin = nullptr;
+    QLabel* m_extrasSummary = nullptr;
+    QLabel* m_staleWarning = nullptr;
 
     QLabel* m_previewStatus = nullptr;
     QLabel* m_report = nullptr;

@@ -110,6 +110,7 @@ set(SOURCES
     src/SplintDesignPanel.cpp
     src/MainWindowSplint.cpp
     src/CompositeBlockCore.cpp
+    src/MeshRepairCore.cpp
     src/SurfaceContourOverlay.cpp
     src/MainWindowComposite.cpp
     src/AppStateManager.cpp
@@ -163,6 +164,7 @@ set(HEADERS
     src/SplintDesignPanel.h
     src/ObjectLabels.h
     src/CompositeBlockCore.h
+    src/MeshRepairCore.h
     src/SurfaceContourOverlay.h
     src/AppStateManager.h
     src/LoggerCore.h
@@ -268,6 +270,7 @@ add_core_test(ProjectSerializerTests tests/ProjectSerializerTests.cpp
     src/ProjectSerializer.cpp src/NrrdVolumeExporter.cpp src/SegmentationImporter.cpp
     src/SplintDesignCore.cpp src/SplintHeightmapGenerator.cpp src/CompositeBlockCore.cpp)
 add_core_test(CompositeBlockTests tests/CompositeBlockTests.cpp src/CompositeBlockCore.cpp)
+add_core_test(MeshRepairTests tests/MeshRepairTests.cpp src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)
 target_link_libraries(ProjectSerializerTests PRIVATE Qt6::Gui)
 
 # Splint generator timing with real or synthetic STL (not a CTest by default).

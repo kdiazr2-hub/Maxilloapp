@@ -15,6 +15,7 @@
 #include "SplintContourEditCore.h"
 #include "SplintDesignPanel.h"
 #include "SplintPreviewScheduler.h"
+#include "MeshRepairCore.h"
 
 #include <QComboBox>
 #include <QDateTime>
@@ -39,14 +40,21 @@
 #include <QVBoxLayout>
 #include <QtConcurrent/QtConcurrentRun>
 
+#include <vtkAppendPolyData.h>
 #include <vtkCellArray.h>
 #include <vtkCleanPolyData.h>
+#include <vtkLineSource.h>
 #include <vtkPoints.h>
 #include <vtkPolyData.h>
 #include <vtkSTLReader.h>
 #include <vtkSTLWriter.h>
+#include <vtkSphereSource.h>
+#include <vtkStaticCellLocator.h>
+#include <vtkTubeFilter.h>
 
 #include <algorithm>
+#include <cmath>
+#include <optional>
 
 namespace
 {
@@ -62,6 +70,13 @@ const QColor kContourColor(230, 30, 30);
 const QColor kUpperSourceColor(128, 112, 210);
 const QColor kLowerSourceColor(220, 82, 78);
 const QColor kSplintColor(244, 238, 220);
+// Editable point groups in the combined splint view (0/1 are the guide points).
+constexpr int kBevelGroup = 2;
+constexpr int kHoleGroup = 3;
+constexpr double kHoleVisualHalfLengthMm = 6.0;
+const QColor kBevelColor(40, 200, 90);
+const QColor kHoleColor(0, 190, 220);
+const QColor kBracketMarkColor(230, 60, 200);
 
 vtkSmartPointer<vtkPolyData> contourPolyline(const SplintOcclusalFrame& frame, const std::vector<SplintContourUV>& contours)
 {
@@ -196,12 +211,20 @@ QWidget* MainWindow::buildSplintMethodPanel(QWidget* parent, QWidget* classicPan
     connect(panel, &SplintDesignPanel::exportRequested, this, &MainWindow::exportHeightmapSplintStl);
     connect(panel, &SplintDesignPanel::exportPointsRequested, this, &MainWindow::exportSplintDesignPoints);
     connect(panel, &SplintDesignPanel::exportReportRequested, this, &MainWindow::exportSplintReport);
+    connect(panel, &SplintDesignPanel::extrasToolToggled, this, [this](int tool, bool active) {
+        setSplintTool(active ? tool : SplintToolNone);
+    });
+    connect(panel, &SplintDesignPanel::removeBevelRequested, this, &MainWindow::removeSplintBevel);
+    connect(panel, &SplintDesignPanel::removeWireHolesRequested, this, &MainWindow::removeSplintWireHoles);
+    connect(panel, &SplintDesignPanel::clearBracketMarksRequested, this, &MainWindow::clearSplintBracketMarks);
+    connect(panel, &SplintDesignPanel::extrasSettingsChanged, this, &MainWindow::onSplintExtrasSettingsChanged);
 
     connect(m_splintMethodCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
         m_splintMethodStack->setCurrentIndex(index);
         setSplintPointCapture(SplintPointSet::None);
         setSplintPointGroup(-1);
         setSplintContourEditing(false);
+        setSplintTool(SplintToolNone);
         if (m_splintPreview)
             m_splintPreview->cancel();
         if (m_splintRefineTimer)
@@ -247,6 +270,9 @@ void MainWindow::connectSplintHeightmapViews()
         connect(view, &Mesh3DView::planeDragStarted, this, &MainWindow::onSplintPlaneDragStarted);
         connect(view, &Mesh3DView::planeDragMoved, this, &MainWindow::onSplintPlaneDragMoved);
         connect(view, &Mesh3DView::planeDragFinished, this, &MainWindow::onSplintPlaneDragFinished);
+        connect(view, &Mesh3DView::surfaceBrushed, this, &MainWindow::onSplintSurfaceBrushed);
+        connect(view, &Mesh3DView::brushRadiusDragged, this, &MainWindow::onSplintBrushRadiusDragged);
+        connect(view, &Mesh3DView::surfaceBrushFinished, this, &MainWindow::onSplintSurfaceBrushFinished);
     }
 }
 
@@ -313,6 +339,9 @@ void MainWindow::refreshSplintDesignPanel()
     m_splintDesignPanel->setActivePointGroup(m_splintPointGroup);
     m_splintDesignPanel->setContourEditing(m_splintContourEditing);
     m_splintDesignPanel->setInfluencePercent(m_splintInfluencePercent);
+    m_splintDesignPanel->setExtrasSettings(design.wireHoleDiameterMm, design.wireHoleOrientation,
+                                           design.extras.bracketOffsetMm, design.bracketBrushRadiusMm);
+    m_splintDesignPanel->setExtrasTool(m_splintTool);
     updateSplintPanelState();
 }
 
@@ -329,6 +358,15 @@ void MainWindow::updateSplintPanelState()
     m_splintDesignPanel->setCanCreate(!m_splintHeightmapBuildInProgress && enoughPoints && sources);
     const auto created = repositionMeshForLabel(design.label);
     m_splintDesignPanel->setCanExport(created && created->GetNumberOfPolys() > 0);
+    m_splintDesignPanel->setExtrasSummary(design.extras.bevel.has_value(), m_splintBevelPendingPoint.has_value(),
+                                          static_cast<int>(design.extras.wireHoles.size()),
+                                          static_cast<int>(design.extras.bracketMarks.size()));
+    const bool stale = created && created->GetNumberOfPolys() > 0 && sources && !design.createdSourceKey.isEmpty() &&
+                       design.createdSourceKey != splintSourceKey(design);
+    m_splintDesignPanel->setStaleWarning(stale
+        ? tr("La férula «%1» está desactualizada: los modelos de origen cambiaron (por ejemplo, se reposicionaron) "
+             "desde que se creó. Vuelva a crearla.").arg(design.name)
+        : QString());
 }
 
 void MainWindow::selectSplintDesign(int index)
@@ -340,7 +378,9 @@ void MainWindow::selectSplintDesign(int index)
     if (m_splintRefineTimer)
         m_splintRefineTimer->stop();
     setSplintContourEditing(false);
+    setSplintTool(SplintToolNone);
     m_activeSplintDesign = index;
+    m_splintBevelPendingPoint.reset();
     m_splintPreviewValid = false;
     clearSplintPreviewDisplay();
     refreshSplintDesignPanel();
@@ -452,6 +492,7 @@ void MainWindow::setSplintPointGroup(int group)
     m_splintPointGroup = (group == 0 || group == 1) ? group : -1;
     if (m_splintPointGroup >= 0) {
         setSplintContourEditing(false);
+        setSplintTool(SplintToolNone);
         setSplintPointCapture(SplintPointSet::None);
     }
     const bool active = m_splintPointGroup >= 0;
@@ -485,7 +526,13 @@ void MainWindow::clearSplintDesignPoints(int group)
 
 void MainWindow::onSplintEditablePointAdded(int group, double x, double y, double z)
 {
-    if (!splintHeightmapMethodActive() || (group != 0 && group != 1))
+    if (!splintHeightmapMethodActive())
+        return;
+    if (group == kBevelGroup || group == kHoleGroup) {
+        onSplintExtraPointAdded(group, {x, y, z});
+        return;
+    }
+    if (group != 0 && group != 1)
         return;
     SplintDesign* design = activeSplintDesign();
     if (!design->editedContourUV.empty()) {
@@ -501,7 +548,13 @@ void MainWindow::onSplintEditablePointAdded(int group, double x, double y, doubl
 
 void MainWindow::onSplintEditablePointMoved(int group, int index, double x, double y, double z)
 {
-    if (!splintHeightmapMethodActive() || (group != 0 && group != 1))
+    if (!splintHeightmapMethodActive())
+        return;
+    if (group == kBevelGroup || group == kHoleGroup) {
+        onSplintExtraPointMoved(group, index, {x, y, z});
+        return;
+    }
+    if (group != 0 && group != 1)
         return;
     SplintDesign* design = activeSplintDesign();
     if (!m_splintPointDragStarted) {
@@ -534,7 +587,13 @@ void MainWindow::onSplintEditablePointDragFinished(int, int)
 
 void MainWindow::onSplintEditablePointRemoved(int group, int index)
 {
-    if (!splintHeightmapMethodActive() || (group != 0 && group != 1))
+    if (!splintHeightmapMethodActive())
+        return;
+    if (group == kBevelGroup || group == kHoleGroup) {
+        onSplintExtraPointRemoved(group, index);
+        return;
+    }
+    if (group != 0 && group != 1)
         return;
     SplintDesign* design = activeSplintDesign();
     auto& points = group == 0 ? design->upperPoints : design->lowerPoints;
@@ -569,6 +628,18 @@ void MainWindow::rebuildSplintEditablePoints()
     if (m_splintView) {
         m_splintView->setEditablePoints(0, upper, kUpperPointColor, kPointRadiusMm);
         m_splintView->setEditablePoints(1, lower, kLowerPointColor, kPointRadiusMm);
+        std::vector<SplintPoint3> bevelPoints;
+        std::vector<SplintPoint3> holeCenters;
+        if (active && design) {
+            if (design->extras.bevel)
+                bevelPoints = {design->extras.bevel->first, design->extras.bevel->second};
+            else if (m_splintBevelPendingPoint)
+                bevelPoints = {*m_splintBevelPendingPoint};
+            for (const SplintWireHole& hole : design->extras.wireHoles)
+                holeCenters.push_back(hole.center);
+        }
+        m_splintView->setEditablePoints(kBevelGroup, bevelPoints, kBevelColor, kPointRadiusMm);
+        m_splintView->setEditablePoints(kHoleGroup, holeCenters, kHoleColor, kPointRadiusMm);
     }
 }
 
@@ -623,6 +694,7 @@ SplintHeightmapInputs MainWindow::splintInputsForDesign(const SplintDesign& desi
     inputs.lowerPoints = design.lowerPoints;
     inputs.params = design.params;
     inputs.contourOverrideUV = design.editedContourUV;
+    inputs.extras = design.extras;
     return inputs;
 }
 
@@ -742,7 +814,7 @@ void MainWindow::updateSplintPreviewMesh()
     m_splintView->setMeshColor(kSplintPreviewActorKey, QColor(205, 205, 205));
     m_splintView->setMeshOpacity(kSplintPreviewActorKey, thickness ? 1.0 : 0.45);
     m_splintView->setMeshScalarColoring(kSplintPreviewActorKey, thickness);
-    m_splintView->setMeshPickable(kSplintPreviewActorKey, false);
+    applySplintToolPickability();
 }
 
 void MainWindow::updateSplintContourOverlay()
@@ -787,8 +859,10 @@ void MainWindow::setSplintContourEditing(bool editing)
         return;
     }
     m_splintContourEditing = editing;
-    if (editing)
+    if (editing) {
         setSplintPointGroup(-1);
+        setSplintTool(SplintToolNone);
+    }
     for (Mesh3DView* view : {m_splintUpperView, m_splintLowerView}) {
         if (!view) continue;
         if (editing)
@@ -903,6 +977,8 @@ void MainWindow::syncSplintHeightmapView()
     rebuildSplintEditablePoints();
     updateSplintPreviewMesh();
     updateSplintContourOverlay();
+    updateSplintExtrasDisplay();
+    applySplintToolPickability();
     if (m_splintCameraFrameSet && m_splintPreviewValid) {
         applySplintOcclusalCameras(true);
     } else {
@@ -942,17 +1018,33 @@ void MainWindow::createHeightmapSplint()
     statusBar()->showMessage(tr("Creando férula «%1»…").arg(design.name));
     updateSplintPanelState();
 
+    const QString sourceKey = splintSourceKey(design);
     auto* watcher = new QFutureWatcher<SplintHeightmapResult>(this);
     connect(watcher, &QFutureWatcher<SplintHeightmapResult>::finished, this,
-            [this, watcher, label = design.label, name = design.name] {
+            [this, watcher, label = design.label, name = design.name, sourceKey] {
                 const SplintHeightmapResult result = watcher->result();
                 watcher->deleteLater();
+                if (result.ok) {
+                    const int index = SplintDesignCore::IndexOfLabel(m_splintDesigns, label);
+                    if (index >= 0)
+                        m_splintDesigns[static_cast<size_t>(index)].createdSourceKey = sourceKey;
+                }
                 onHeightmapSplintCreated(label, name, result);
             });
     watcher->setFuture(QtConcurrent::run([upper, lower, inputs]() mutable {
         inputs.upperTeeth = upper;
         inputs.lowerTeeth = lower;
-        return SplintHeightmapGenerator::Generate(inputs);
+        SplintHeightmapResult result = SplintHeightmapGenerator::Generate(inputs);
+        if (result.ok && result.mesh) {
+            // Like ProPlan, splint STLs are checked and fixed automatically.
+            const MeshRepairResult repaired = MeshRepairCore::Repair(result.mesh);
+            if (repaired.ok)
+                result.mesh = repaired.mesh;
+            result.report += QStringLiteral("\n") +
+                (repaired.ok ? repaired.report
+                             : QStringLiteral("Validación STL fallida: %1").arg(repaired.after.Summary()));
+        }
+        return result;
     }));
 }
 
@@ -990,6 +1082,25 @@ void MainWindow::exportHeightmapSplintStl()
         QMessageBox::warning(this, tr("Férula"), tr("Primero cree la férula «%1».").arg(design.name));
         return;
     }
+    vtkSmartPointer<vtkPolyData> output = mesh;
+    QString validation;
+    const MeshCheck check = MeshRepairCore::Analyze(mesh);
+    if (check.Valid()) {
+        validation = tr("STL válido: %1").arg(check.Summary());
+    } else {
+        const MeshRepairResult repaired = MeshRepairCore::Repair(mesh);
+        if (repaired.ok) {
+            output = repaired.mesh;
+            validation = repaired.report;
+        } else if (QMessageBox::question(this, tr("Férula"),
+                                         tr("La férula no pasa la validación STL y no se pudo reparar:\n%1\n\n"
+                                            "¿Exportar de todos modos?").arg(repaired.after.Summary()),
+                                         QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) {
+            return;
+        } else {
+            validation = tr("exportada sin validar: %1").arg(repaired.after.Summary());
+        }
+    }
     QString fileName = design.name;
     fileName.replace(QRegularExpression(QStringLiteral("[^\\w\\-]+")), QStringLiteral("_"));
     const QString path = QFileDialog::getSaveFileName(this, tr("Exportar férula STL"),
@@ -999,13 +1110,13 @@ void MainWindow::exportHeightmapSplintStl()
         return;
     auto writer = vtkSmartPointer<vtkSTLWriter>::New();
     writer->SetFileName(QFile::encodeName(path).constData());
-    writer->SetInputData(mesh);
+    writer->SetInputData(output);
     writer->SetFileTypeToBinary();
     if (writer->Write() == 0) {
         QMessageBox::warning(this, tr("Férula"), tr("No se pudo escribir %1.").arg(path));
         return;
     }
-    statusBar()->showMessage(tr("Férula exportada: %1").arg(path));
+    statusBar()->showMessage(tr("Férula exportada: %1 · %2").arg(path, validation));
 }
 
 void MainWindow::loadSplintTestStl()
@@ -1083,7 +1194,382 @@ void MainWindow::exportSplintReport()
     statusBar()->showMessage(tr("Informe exportado: %1").arg(path));
 }
 
-// ── Project ───────────────────────────────────────────────────────────────────
+// ── Extras: bevel, wire holes, bracket margins ────────────────────────────────
+
+void MainWindow::setSplintTool(int tool)
+{
+    if (tool != SplintToolBevel && tool != SplintToolHoles && tool != SplintToolBrackets)
+        tool = SplintToolNone;
+    if (tool != SplintToolNone && !splintHeightmapMethodActive())
+        tool = SplintToolNone;
+    if (tool == SplintToolHoles && !m_splintPreviewValid) {
+        statusBar()->showMessage(tr("Férula: los agujeros se colocan sobre la vista previa; marque primero los puntos guía."));
+        tool = SplintToolNone;
+    }
+    if (tool != SplintToolNone) {
+        setSplintPointGroup(-1);
+        setSplintContourEditing(false);
+    }
+    m_splintTool = tool;
+    const int group = tool == SplintToolBevel ? kBevelGroup : tool == SplintToolHoles ? kHoleGroup : -1;
+    if (m_splintView) {
+        if (group >= 0)
+            m_splintView->setPointEditMode(true, group);
+        else if (m_splintPointGroup < 0)
+            m_splintView->setPointEditMode(false);
+    }
+    for (Mesh3DView* view : {m_splintUpperView, m_splintLowerView, m_splintView})
+        if (view) view->setSurfaceBrushMode(tool == SplintToolBrackets);
+    applySplintToolPickability();
+    if (m_splintDesignPanel)
+        m_splintDesignPanel->setExtrasTool(tool);
+    if (tool == SplintToolBevel)
+        statusBar()->showMessage(tr("Bisel: marque un punto en los dientes superiores y otro en los inferiores. "
+                                    "Ctrl + arrastre los mueve en el aire."));
+    else if (tool == SplintToolHoles)
+        statusBar()->showMessage(tr("Agujeros: clic sobre la vista previa de la férula para colocar un cilindro."));
+    else if (tool == SplintToolBrackets)
+        statusBar()->showMessage(tr("Brackets: marque con clic o arrastre; Ctrl desmarca; Alt + arrastre cambia el pincel."));
+}
+
+void MainWindow::applySplintToolPickability()
+{
+    if (!m_splintView || !splintHeightmapMethodActive())
+        return;
+    const SplintDesign& design = *activeSplintDesign();
+    const bool holes = m_splintTool == SplintToolHoles;
+    // Holes go on the splint preview; everything else on the teeth.
+    for (int source : {design.upperSource, design.lowerSource}) {
+        const int key = objectActorKey(source);
+        if (m_splintView->meshData(key))
+            m_splintView->setMeshPickable(key, !holes);
+    }
+    if (m_splintView->meshData(kSplintPreviewActorKey))
+        m_splintView->setMeshPickable(kSplintPreviewActorKey, holes);
+}
+
+bool MainWindow::splintSurfaceNormalAt(const SplintPoint3& point, SplintPoint3& normal) const
+{
+    vtkPolyData* mesh = m_splintPreviewResult.mesh;
+    if (!m_splintPreviewValid || !mesh || mesh->GetNumberOfPolys() == 0)
+        return false;
+    auto locator = vtkSmartPointer<vtkStaticCellLocator>::New();
+    locator->SetDataSet(mesh);
+    locator->BuildLocator();
+    double closest[3] = {};
+    vtkIdType cellId = -1;
+    int subId = 0;
+    double dist2 = 0.0;
+    locator->FindClosestPoint(point.data(), closest, cellId, subId, dist2);
+    if (cellId < 0)
+        return false;
+    vtkIdType npts = 0;
+    const vtkIdType* ids = nullptr;
+    mesh->GetCellPoints(cellId, npts, ids);
+    if (npts < 3)
+        return false;
+    double a[3], b[3], c[3];
+    mesh->GetPoint(ids[0], a);
+    mesh->GetPoint(ids[1], b);
+    mesh->GetPoint(ids[2], c);
+    const double u[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+    const double v[3] = {c[0] - a[0], c[1] - a[1], c[2] - a[2]};
+    const SplintPoint3 n{u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]};
+    const double length = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+    if (length < 1e-12)
+        return false;
+    normal = {n[0] / length, n[1] / length, n[2] / length};
+    return true;
+}
+
+QString MainWindow::splintSourceKey(const SplintDesign& design) const
+{
+    const auto upper = splintSourceMesh(design.upperSource);
+    const auto lower = splintSourceMesh(design.lowerSource);
+    if (!upper || !lower)
+        return {};
+    return meshFingerprint(upper) + QLatin1Char('|') + meshFingerprint(lower);
+}
+
+void MainWindow::onSplintExtraPointAdded(int group, const SplintPoint3& point)
+{
+    SplintDesign* design = activeSplintDesign();
+    if (group == kBevelGroup) {
+        if (m_splintTool != SplintToolBevel)
+            return;
+        if (design->extras.bevel) {
+            statusBar()->showMessage(tr("El bisel ya tiene dos puntos: arrástrelos para ajustarlo o quítelo."));
+            return;
+        }
+        if (!m_splintBevelPendingPoint) {
+            m_splintBevelPendingPoint = point;
+            rebuildSplintEditablePoints();
+            updateSplintPanelState();
+            statusBar()->showMessage(tr("Bisel: marque el segundo punto."));
+            return;
+        }
+        design->extras.bevel = SplintBevel{*m_splintBevelPendingPoint, point};
+        m_splintBevelPendingPoint.reset();
+    } else {
+        if (m_splintTool != SplintToolHoles || !m_splintPreviewValid)
+            return;
+        SplintWireHole hole;
+        hole.center = point;
+        hole.surfaceNormal = m_splintPreviewResult.frame.normal;
+        splintSurfaceNormalAt(point, hole.surfaceNormal);
+        hole.diameterMm = design->wireHoleDiameterMm;
+        design->extras.wireHoles.push_back(hole);
+    }
+    if (m_splintPreviewValid)
+        SplintDesignCore::ReorientWireHoles(*design, m_splintPreviewResult.frame);
+    rebuildSplintEditablePoints();
+    updateSplintExtrasDisplay();
+    updateSplintPanelState();
+    requestSplintPreview();
+}
+
+void MainWindow::onSplintExtraPointMoved(int group, int index, const SplintPoint3& point)
+{
+    SplintDesign* design = activeSplintDesign();
+    if (group == kBevelGroup) {
+        if (design->extras.bevel && (index == 0 || index == 1)) {
+            (index == 0 ? design->extras.bevel->first : design->extras.bevel->second) = point;
+        } else if (!design->extras.bevel && m_splintBevelPendingPoint && index == 0) {
+            m_splintBevelPendingPoint = point;
+            return;
+        } else {
+            return;
+        }
+    } else {
+        auto& holes = design->extras.wireHoles;
+        if (index < 0 || index >= static_cast<int>(holes.size()))
+            return;
+        SplintWireHole& hole = holes[static_cast<size_t>(index)];
+        hole.center = point;
+        splintSurfaceNormalAt(point, hole.surfaceNormal);
+    }
+    if (m_splintPreviewValid)
+        SplintDesignCore::ReorientWireHoles(*design, m_splintPreviewResult.frame);
+    updateSplintExtrasDisplay();
+    requestSplintPreview();
+}
+
+void MainWindow::onSplintExtraPointRemoved(int group, int index)
+{
+    SplintDesign* design = activeSplintDesign();
+    if (group == kBevelGroup) {
+        if (design->extras.bevel && (index == 0 || index == 1)) {
+            m_splintBevelPendingPoint = index == 0 ? design->extras.bevel->second : design->extras.bevel->first;
+            design->extras.bevel.reset();
+        } else if (!design->extras.bevel && index == 0 && m_splintBevelPendingPoint) {
+            m_splintBevelPendingPoint.reset();
+        } else {
+            return;
+        }
+    } else {
+        auto& holes = design->extras.wireHoles;
+        if (index < 0 || index >= static_cast<int>(holes.size()))
+            return;
+        holes.erase(holes.begin() + index);
+    }
+    if (m_splintPreviewValid)
+        SplintDesignCore::ReorientWireHoles(*design, m_splintPreviewResult.frame);
+    rebuildSplintEditablePoints();
+    updateSplintExtrasDisplay();
+    updateSplintPanelState();
+    requestSplintPreview();
+}
+
+void MainWindow::removeSplintBevel()
+{
+    SplintDesign* design = activeSplintDesign();
+    if (!design->extras.bevel && !m_splintBevelPendingPoint)
+        return;
+    design->extras.bevel.reset();
+    m_splintBevelPendingPoint.reset();
+    if (m_splintPreviewValid)
+        SplintDesignCore::ReorientWireHoles(*design, m_splintPreviewResult.frame);
+    rebuildSplintEditablePoints();
+    updateSplintExtrasDisplay();
+    updateSplintPanelState();
+    requestSplintPreview();
+}
+
+void MainWindow::removeSplintWireHoles()
+{
+    SplintDesign* design = activeSplintDesign();
+    if (design->extras.wireHoles.empty())
+        return;
+    design->extras.wireHoles.clear();
+    rebuildSplintEditablePoints();
+    updateSplintExtrasDisplay();
+    updateSplintPanelState();
+    requestSplintPreview();
+}
+
+void MainWindow::clearSplintBracketMarks()
+{
+    SplintDesign* design = activeSplintDesign();
+    if (design->extras.bracketMarks.empty())
+        return;
+    design->extras.bracketMarks.clear();
+    updateSplintExtrasDisplay();
+    updateSplintPanelState();
+    requestSplintPreview();
+}
+
+void MainWindow::onSplintExtrasSettingsChanged()
+{
+    if (!m_splintDesignPanel)
+        return;
+    SplintDesign* design = activeSplintDesign();
+    const double offsetBefore = design->extras.bracketOffsetMm;
+    const SplintHoleOrientation orientationBefore = design->wireHoleOrientation;
+    design->wireHoleDiameterMm = m_splintDesignPanel->wireHoleDiameter();
+    design->wireHoleOrientation = m_splintDesignPanel->wireHoleOrientation();
+    design->extras.bracketOffsetMm = m_splintDesignPanel->bracketOffset();
+    design->bracketBrushRadiusMm = m_splintDesignPanel->brushRadius();
+
+    bool changed = false;
+    for (SplintWireHole& hole : design->extras.wireHoles) {
+        if (std::abs(hole.diameterMm - design->wireHoleDiameterMm) > 1e-9) {
+            hole.diameterMm = design->wireHoleDiameterMm;
+            changed = true;
+        }
+    }
+    if (orientationBefore != design->wireHoleOrientation && !design->extras.wireHoles.empty() && m_splintPreviewValid) {
+        SplintDesignCore::ReorientWireHoles(*design, m_splintPreviewResult.frame);
+        changed = true;
+    }
+    if (std::abs(offsetBefore - design->extras.bracketOffsetMm) > 1e-9 && !design->extras.bracketMarks.empty())
+        changed = true;
+    if (!changed)
+        return;
+    updateSplintExtrasDisplay();
+    requestSplintPreview();
+}
+
+void MainWindow::onSplintSurfaceBrushed(double x, double y, double z, Qt::KeyboardModifiers modifiers)
+{
+    if (m_splintTool != SplintToolBrackets || !splintHeightmapMethodActive())
+        return;
+    SplintDesign* design = activeSplintDesign();
+    const SplintPoint3 point{x, y, z};
+    const bool changed = modifiers.testFlag(Qt::ControlModifier)
+        ? SplintDesignCore::RemoveBracketMarks(design->extras, point, design->bracketBrushRadiusMm) > 0
+        : SplintDesignCore::AddBracketMark(design->extras, point, design->bracketBrushRadiusMm);
+    if (!changed)
+        return;
+    m_splintBrushChanged = true;
+    updateSplintExtrasDisplay();
+    updateSplintPanelState();
+}
+
+void MainWindow::onSplintBrushRadiusDragged(double deltaY)
+{
+    if (m_splintTool != SplintToolBrackets)
+        return;
+    SplintDesign* design = activeSplintDesign();
+    // Dragging up grows the brush.
+    design->bracketBrushRadiusMm = std::clamp(design->bracketBrushRadiusMm - 0.02 * deltaY, 0.5, 5.0);
+    if (m_splintDesignPanel)
+        m_splintDesignPanel->setExtrasSettings(design->wireHoleDiameterMm, design->wireHoleOrientation,
+                                               design->extras.bracketOffsetMm, design->bracketBrushRadiusMm);
+    statusBar()->showMessage(tr("Radio del pincel: %1 mm").arg(design->bracketBrushRadiusMm, 0, 'f', 2));
+}
+
+void MainWindow::onSplintSurfaceBrushFinished()
+{
+    if (!m_splintBrushChanged)
+        return;
+    m_splintBrushChanged = false;
+    requestSplintPreview();
+}
+
+void MainWindow::updateSplintExtrasDisplay()
+{
+    const bool active = splintHeightmapMethodActive();
+    const SplintDesign* design = activeSplintDesign();
+    const SplintExtras none;
+    const SplintExtras& extras = active && design ? design->extras : none;
+
+    if (m_splintView) {
+        if (extras.wireHoles.empty()) {
+            m_splintView->removeMesh(kSplintWireHolesActorKey);
+        } else {
+            auto append = vtkSmartPointer<vtkAppendPolyData>::New();
+            for (const SplintWireHole& hole : extras.wireHoles) {
+                auto line = vtkSmartPointer<vtkLineSource>::New();
+                const SplintPoint3& c = hole.center;
+                const SplintPoint3& a = hole.axis;
+                line->SetPoint1(c[0] - a[0] * kHoleVisualHalfLengthMm, c[1] - a[1] * kHoleVisualHalfLengthMm,
+                                c[2] - a[2] * kHoleVisualHalfLengthMm);
+                line->SetPoint2(c[0] + a[0] * kHoleVisualHalfLengthMm, c[1] + a[1] * kHoleVisualHalfLengthMm,
+                                c[2] + a[2] * kHoleVisualHalfLengthMm);
+                auto tube = vtkSmartPointer<vtkTubeFilter>::New();
+                tube->SetInputConnection(line->GetOutputPort());
+                tube->SetRadius(0.5 * hole.diameterMm);
+                tube->SetNumberOfSides(20);
+                tube->CappingOn();
+                tube->Update();
+                append->AddInputData(tube->GetOutput());
+            }
+            append->Update();
+            auto mesh = vtkSmartPointer<vtkPolyData>::New();
+            mesh->DeepCopy(append->GetOutput());
+            m_splintView->addMesh(kSplintWireHolesActorKey, mesh, tr("Agujeros para alambre"));
+            m_splintView->setMeshColor(kSplintWireHolesActorKey, kHoleColor);
+            m_splintView->setMeshOpacity(kSplintWireHolesActorKey, 0.7);
+            m_splintView->setMeshPickable(kSplintWireHolesActorKey, false);
+        }
+        if (extras.bevel) {
+            auto points = vtkSmartPointer<vtkPoints>::New();
+            points->InsertNextPoint(extras.bevel->first.data());
+            points->InsertNextPoint(extras.bevel->second.data());
+            auto lines = vtkSmartPointer<vtkCellArray>::New();
+            const vtkIdType ids[2] = {0, 1};
+            lines->InsertNextCell(2, ids);
+            auto polyline = vtkSmartPointer<vtkPolyData>::New();
+            polyline->SetPoints(points);
+            polyline->SetLines(lines);
+            m_splintView->setOverlayPolyline(kSplintBevelOverlayKey, polyline, kBevelColor, 3.0);
+        } else {
+            m_splintView->removeOverlay(kSplintBevelOverlayKey);
+        }
+    }
+
+    vtkSmartPointer<vtkPolyData> marks;
+    if (!extras.bracketMarks.empty()) {
+        auto append = vtkSmartPointer<vtkAppendPolyData>::New();
+        for (const SplintBracketMark& mark : extras.bracketMarks) {
+            auto sphere = vtkSmartPointer<vtkSphereSource>::New();
+            sphere->SetCenter(mark.center[0], mark.center[1], mark.center[2]);
+            sphere->SetRadius(mark.radiusMm);
+            sphere->SetThetaResolution(12);
+            sphere->SetPhiResolution(12);
+            sphere->Update();
+            append->AddInputData(sphere->GetOutput());
+        }
+        append->Update();
+        marks = vtkSmartPointer<vtkPolyData>::New();
+        marks->DeepCopy(append->GetOutput());
+    }
+    for (Mesh3DView* view : {m_splintUpperView, m_splintLowerView, m_splintView}) {
+        if (!view) continue;
+        if (!marks) {
+            view->removeMesh(kSplintBracketMarksActorKey);
+            continue;
+        }
+        view->addMesh(kSplintBracketMarksActorKey, marks, tr("Marcas de brackets"));
+        view->setMeshColor(kSplintBracketMarksActorKey, kBracketMarkColor);
+        view->setMeshOpacity(kSplintBracketMarksActorKey, 0.45);
+        view->setMeshPickable(kSplintBracketMarksActorKey, false);
+    }
+    for (Mesh3DView* view : {m_splintUpperView, m_splintLowerView, m_splintView})
+        if (view) view->render();
+}
+
+// ── Project───────────────────────────────────────────────────────────────────
 
 void MainWindow::restoreSplintDesigns(const ProjectState& state)
 {

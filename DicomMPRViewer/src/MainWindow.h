@@ -823,6 +823,29 @@ private:
     void exportSplintDesignPoints();
     void exportSplintReport();
     void restoreSplintDesigns(const ProjectState& state);
+    // Extras (bevel, wire holes, bracket margins)
+    enum SplintTool
+    {
+        SplintToolNone = 0,
+        SplintToolBevel = 1,
+        SplintToolHoles = 2,
+        SplintToolBrackets = 3
+    };
+    void setSplintTool(int tool);
+    void onSplintExtrasSettingsChanged();
+    void removeSplintBevel();
+    void removeSplintWireHoles();
+    void clearSplintBracketMarks();
+    void onSplintExtraPointAdded(int group, const SplintPoint3& point);
+    void onSplintExtraPointMoved(int group, int index, const SplintPoint3& point);
+    void onSplintExtraPointRemoved(int group, int index);
+    void onSplintSurfaceBrushed(double x, double y, double z, Qt::KeyboardModifiers modifiers);
+    void onSplintBrushRadiusDragged(double deltaY);
+    void onSplintSurfaceBrushFinished();
+    void updateSplintExtrasDisplay();
+    void applySplintToolPickability();
+    bool splintSurfaceNormalAt(const SplintPoint3& point, SplintPoint3& normal) const;
+    QString splintSourceKey(const SplintDesign& design) const;
 
     QComboBox*              m_splintMethodCombo = nullptr;
     QStackedWidget*         m_splintMethodStack = nullptr;
@@ -848,6 +871,9 @@ private:
     SplintDesign            m_splintPointDragSnapshot;
     bool                    m_splintHeightmapBuildInProgress = false;
     QString                 m_splintLastReport;
+    int                     m_splintTool = 0;            // SplintTool
+    bool                    m_splintBrushChanged = false;
+    std::optional<SplintPoint3> m_splintBevelPendingPoint; // first bevel point before the second
     vtkSmartPointer<vtkPolyData> m_splintTestUpperMesh;
     vtkSmartPointer<vtkPolyData> m_splintTestLowerMesh;
     struct SplintSourceCacheEntry

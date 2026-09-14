@@ -34,6 +34,12 @@ inline constexpr int kSplintContourOverlayKey = 1;   // red contour in the occlu
 inline constexpr int kCompositeBlockActorKey = -520; // blue cutting block in MODELOS
 inline constexpr int kCompositeReviewActorKey = -521; // composite under review
 
+// Splint extras in the splint views: wire-hole cylinders, bracket marks and
+// the bevel line (overlay key).
+inline constexpr int kSplintWireHolesActorKey = -511;
+inline constexpr int kSplintBracketMarksActorKey = -512;
+inline constexpr int kSplintBevelOverlayKey = 2;
+
 inline int objectActorKey(int label)
 {
     return label > 0 ? 1000 + label : label;

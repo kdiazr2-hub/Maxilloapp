@@ -13065,6 +13065,10 @@ void MainWindow::alignUpperArchToMaxilla()
         statusBar()->showMessage(tr("ICP superior omitido: %1").arg(icpError));
     }
 
+    // Restored when the user rejects this registration.
+    const auto previousUpperMatrix = m_upperArchRegistrationMatrix;
+    const bool previousUpperCalculated = m_upperRegistrationCalculated;
+    const QString previousUpperReport = m_upperRegistrationReport;
     auto priorMatrix = m_upperArchRegistrationMatrix
         ? TransformCore::CloneMatrix(m_upperArchRegistrationMatrix)
         : TransformCore::IdentityMatrix();
@@ -13122,7 +13126,10 @@ void MainWindow::alignUpperArchToMaxilla()
             QMessageBox::Yes);
 
         if (ret != QMessageBox::Yes) {
-            statusBar()->showMessage(tr("Registro superior rechazado."));
+            m_upperArchRegistrationMatrix = previousUpperMatrix;
+            m_upperRegistrationCalculated = previousUpperCalculated;
+            m_upperRegistrationReport = previousUpperReport;
+            statusBar()->showMessage(tr("Registro superior rechazado: se mantiene el registro anterior."));
             LoggerCore::instance().logRegistration(
                 QStringLiteral("upper"), landmarkRms, meanDist, p95Dist, false);
             return;
@@ -13206,6 +13213,10 @@ void MainWindow::alignLowerArchToMandible()
         statusBar()->showMessage(tr("ICP inferior omitido: %1").arg(icpError));
     }
 
+    // Restored when the user rejects this registration.
+    const auto previousLowerMatrix = m_lowerArchRegistrationMatrix;
+    const bool previousLowerCalculated = m_lowerRegistrationCalculated;
+    const QString previousLowerReport = m_lowerRegistrationReport;
     auto priorMatrix = m_lowerArchRegistrationMatrix
         ? TransformCore::CloneMatrix(m_lowerArchRegistrationMatrix)
         : TransformCore::IdentityMatrix();
@@ -13263,7 +13274,10 @@ void MainWindow::alignLowerArchToMandible()
             QMessageBox::Yes);
 
         if (ret != QMessageBox::Yes) {
-            statusBar()->showMessage(tr("Registro inferior rechazado."));
+            m_lowerArchRegistrationMatrix = previousLowerMatrix;
+            m_lowerRegistrationCalculated = previousLowerCalculated;
+            m_lowerRegistrationReport = previousLowerReport;
+            statusBar()->showMessage(tr("Registro inferior rechazado: se mantiene el registro anterior."));
             LoggerCore::instance().logRegistration(
                 QStringLiteral("lower"), landmarkRms, meanDist, p95Dist, false);
             return;

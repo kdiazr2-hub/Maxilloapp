@@ -32,6 +32,15 @@ struct SplintDesign
     // it was edited in.
     std::vector<SplintContourUV> editedContourUV;
     SplintOcclusalFrame editedContourFrame;
+
+    // Extras (bevel, wire holes, bracket margins) and the settings for new ones.
+    SplintExtras extras;
+    double wireHoleDiameterMm = 1.0;
+    SplintHoleOrientation wireHoleOrientation = SplintHoleOrientation::SurfaceNormal;
+    double bracketBrushRadiusMm = 1.5;
+    // Signature of the source meshes the created splint was built from
+    // (empty = unknown); a different current signature marks it outdated.
+    QString createdSourceKey;
 };
 
 namespace SplintDesignCore
@@ -57,6 +66,15 @@ bool RemoveDesign(std::vector<SplintDesign>& designs, int index, QString* error)
 bool SameFrame(const SplintOcclusalFrame& a, const SplintOcclusalFrame& b,
                double originToleranceMm = 0.05, double axisToleranceCos = 0.99995);
 
+// Bracket marks: a new mark is skipped when one lies within half the brush
+// radius; unmarking removes the marks whose centre is within the radius.
+bool AddBracketMark(SplintExtras& extras, const SplintPoint3& center, double radiusMm);
+int RemoveBracketMarks(SplintExtras& extras, const SplintPoint3& center, double radiusMm);
+// Recomputes every wire-hole axis for the design's orientation setting.
+void ReorientWireHoles(SplintDesign& design, const SplintOcclusalFrame& frame);
+
+QJsonObject ExtrasToJson(const SplintExtras& extras);
+SplintExtras ExtrasFromJson(const QJsonObject& object);
 QJsonObject ParamsToJson(const SplintHeightmapParams& params);
 SplintHeightmapParams ParamsFromJson(const QJsonObject& object); // missing keys keep defaults
 QJsonObject DesignToJson(const SplintDesign& design);

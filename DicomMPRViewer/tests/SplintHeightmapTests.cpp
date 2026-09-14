@@ -408,6 +408,97 @@ void testCropKeepsResult()
     require(std::abs(ratio - 1.0) < 0.005, "cropping changed the splint");
 }
 
+std::array<double, 2> radialOf(int tooth)
+{
+    const auto c = toothCenter(tooth);
+    const double len = std::hypot(c[0], c[1]);
+    return {c[0] / len, c[1] / len};
+}
+
+void testBevel()
+{
+    Scene scene = makeScene();
+    const auto plain = generateOk(scene.inputs, "no bevel");
+    const auto c5 = toothCenter(5);
+    const auto r5 = radialOf(5);
+    const auto c0 = toothCenter(0);
+    const auto r0 = radialOf(0);
+    const auto at = [](const std::array<double, 2>& c, const std::array<double, 2>& r, double offset, double z) {
+        return SplintPoint3{c[0] + r[0] * offset, c[1] + r[1] * offset, z};
+    };
+    const SplintPoint3 anteriorOuter = at(c5, r5, 2.8, 0.0);
+    const SplintPoint3 posteriorOuter = at(c0, r0, 2.8, 0.0);
+    require(insideMesh(plain.mesh, anteriorOuter[0], anteriorOuter[1], 0.0), "probe outside the splint without bevel");
+
+    // Slanted plane from 0.5 mm (upper) to 2.5 mm (lower) outside the tooth centre.
+    SplintBevel bevel{at(c5, r5, 0.5, 5.0), at(c5, r5, 2.5, -5.0)};
+    SplintPoint3 origin{}, normal{};
+    require(SplintHeightmapGenerator::BevelPlane(bevel, plain.frame, origin, normal), "bevel plane rejected");
+    require(normal[1] > 0.5, "bevel normal does not point anteriorly");
+    SplintBevel alongArch{at(toothCenter(4), radialOf(4), 3.0, 0.0), at(toothCenter(7), radialOf(7), 3.0, 0.0)};
+    require(!SplintHeightmapGenerator::BevelPlane(alongArch, plain.frame, origin, normal),
+            "a line along the arch must not define a bevel");
+
+    scene.inputs.extras.bevel = bevel;
+    const auto beveled = generateOk(scene.inputs, "bevel");
+    require(openEdges(beveled.mesh) == 0, "beveled splint is not closed");
+    require(!insideMesh(beveled.mesh, anteriorOuter[0], anteriorOuter[1], 0.0), "bevel did not remove the anterior rim");
+    require(insideMesh(beveled.mesh, c5[0], c5[1], 0.0), "bevel removed occlusal material under the tooth");
+    require(insideMesh(beveled.mesh, posteriorOuter[0], posteriorOuter[1], 0.0), "bevel removed posterior material");
+    require(volumeOf(beveled.mesh) < volumeOf(plain.mesh), "bevel did not reduce the volume");
+    require(beveled.report.contains(QStringLiteral("Bisel aplicado")), "report does not mention the bevel");
+}
+
+void testWireHoles()
+{
+    Scene scene = makeScene();
+    const auto plain = generateOk(scene.inputs, "no holes");
+    const auto c3 = toothCenter(3);
+    const SplintPoint3 axis =
+        SplintHeightmapGenerator::WireHoleAxis(SplintHoleOrientation::SurfaceNormal, {0.0, 0.0, -1.0}, std::nullopt, plain.frame);
+    require(axis[2] > 0.99, "surface-normal hole axis should point to the maxilla");
+
+    scene.inputs.extras.wireHoles.push_back({{c3[0], c3[1], 0.0}, axis, 1.5});
+    const auto holed = generateOk(scene.inputs, "holes");
+    require(openEdges(holed.mesh) == 0, "splint with a hole is not closed");
+    require(insideMesh(plain.mesh, c3[0], c3[1], 0.0), "probe not in the splint");
+    require(!insideMesh(holed.mesh, c3[0], c3[1], 0.0), "wire hole not subtracted");
+    require(insideMesh(holed.mesh, c3[0] + 1.6, c3[1], 0.0), "wire hole removed too much");
+
+    const auto c5 = toothCenter(5);
+    const auto r5 = radialOf(5);
+    const std::optional<SplintBevel> bevel = SplintBevel{
+        {c5[0] + r5[0] * 0.5, c5[1] + r5[1] * 0.5, 5.0}, {c5[0] + r5[0] * 2.5, c5[1] + r5[1] * 2.5, -5.0}};
+    SplintPoint3 origin{}, normal{};
+    require(SplintHeightmapGenerator::BevelPlane(*bevel, plain.frame, origin, normal), "bevel plane rejected");
+    const SplintPoint3 bevelAxis =
+        SplintHeightmapGenerator::WireHoleAxis(SplintHoleOrientation::Bevel, {0.0, 0.0, 1.0}, bevel, plain.frame);
+    require(std::abs(bevelAxis[0] * normal[0] + bevelAxis[1] * normal[1] + bevelAxis[2] * normal[2]) < 1e-6,
+            "bevel-oriented hole is not parallel to the bevel face");
+    require(bevelAxis[2] > 0.5, "bevel-oriented hole does not point to the maxilla");
+}
+
+void testBracketMarks()
+{
+    Scene scene = makeScene();
+    const auto plain = generateOk(scene.inputs, "no marks");
+    const auto c3 = toothCenter(3);
+    const auto c8 = toothCenter(8);
+    require(insideMesh(plain.mesh, c3[0], c3[1], 0.55), "upper probe not in the splint");
+    require(insideMesh(plain.mesh, c8[0], c8[1], -0.55), "lower probe not in the splint");
+
+    scene.inputs.extras.bracketOffsetMm = 0.8;
+    scene.inputs.extras.bracketMarks.push_back({{c3[0], c3[1], 1.0}, 1.5});
+    scene.inputs.extras.bracketMarks.push_back({{c8[0], c8[1], -1.0}, 1.5});
+    const auto marked = generateOk(scene.inputs, "marks");
+    require(openEdges(marked.mesh) == 0, "splint with bracket margins is not closed");
+    require(!insideMesh(marked.mesh, c3[0], c3[1], 0.55), "upper bracket margin not applied");
+    require(!insideMesh(marked.mesh, c8[0], c8[1], -0.55), "lower bracket margin not applied");
+    require(insideMesh(marked.mesh, c8[0], c8[1], 0.55), "upper margin leaked to an unmarked tooth");
+    require(insideMesh(marked.mesh, c3[0], c3[1], -0.55), "lower margin leaked to an unmarked tooth");
+    require(marked.report.contains(QStringLiteral("brackets")), "report does not mention bracket margins");
+}
+
 // Optional visual check: writes the default-resolution splint as STL and a PNG
 // (thickness colours over the teeth) into outputDir.
 void writeArtifacts(const std::string& outputDir)
@@ -492,6 +583,9 @@ int main(int argc, char** argv)
         {"undercut direction", testUndercutDirection},
         {"contour override and errors", testContourOverrideAndErrors},
         {"crop keeps result", testCropKeepsResult},
+        {"bevel", testBevel},
+        {"wire holes", testWireHoles},
+        {"bracket marks", testBracketMarks},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {

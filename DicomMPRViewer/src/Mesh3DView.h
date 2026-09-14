@@ -89,7 +89,8 @@ public:
     // While point editing is active: left click on a mesh adds a point to the
     // active group, left drag on a marker moves it over the surface, and a
     // right click without drag on a marker removes it (right drag still
-    // rotates). Positions are owned by the caller: markers only follow the
+    // rotates). Ctrl + drag moves a marker in free space (view plane through
+    // it). Positions are owned by the caller: markers only follow the
     // mouse during a drag, so callers re-set the group from the signals.
     void setEditablePoints(int group, const std::vector<std::array<double, 3>>& points,
                            const QColor& color, double radius = 0.6);
@@ -113,6 +114,12 @@ public:
     void setPlaneDragMode(bool active, const std::array<double, 3>& origin = {0.0, 0.0, 0.0},
                           const std::array<double, 3>& normal = {0.0, 0.0, 1.0});
 
+    // ── Surface brush (bracket marking) ───────────────────────────────────
+    // Left press / drag reports the surface point under the mouse with the
+    // keyboard modifiers (Ctrl = unmark); Alt + vertical drag reports pixel
+    // deltas to resize the brush. Right drag still rotates.
+    void setSurfaceBrushMode(bool active);
+
     static bool RayPlaneIntersection(const std::array<double, 3>& rayStart, const std::array<double, 3>& rayEnd,
                                      const std::array<double, 3>& planeOrigin, const std::array<double, 3>& planeNormal,
                                      std::array<double, 3>& hit);
@@ -130,6 +137,9 @@ signals:
     void planeDragStarted(double x, double y, double z, Qt::KeyboardModifiers modifiers);
     void planeDragMoved(double x, double y, double z, double deltaYPixels, Qt::KeyboardModifiers modifiers);
     void planeDragFinished(double x, double y, double z);
+    void surfaceBrushed(double x, double y, double z, Qt::KeyboardModifiers modifiers);
+    void brushRadiusDragged(double deltaYPixels);
+    void surfaceBrushFinished();
 
 private:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -214,6 +224,9 @@ private:
     bool pickSurface(int px, int py, std::array<double, 3>& world) const;
     bool pickEditablePoint(int px, int py, int& group, int& index) const;
     bool planePointAt(int px, int py, std::array<double, 3>& world) const;
+    bool rayPlanePoint(int px, int py, const std::array<double, 3>& origin, const std::array<double, 3>& normal,
+                       std::array<double, 3>& world) const;
+    bool handleBrushEvent(QEvent* event);
 
     struct EditablePoint
     {
@@ -238,4 +251,9 @@ private:
     std::array<double, 3> m_planeOrigin{0.0, 0.0, 0.0};
     std::array<double, 3> m_planeNormal{0.0, 0.0, 1.0};
     double m_planeDragLastY = 0.0;
+
+    bool m_brushActive = false;
+    bool m_brushing = false;
+    bool m_brushResizing = false;
+    double m_brushLastY = 0.0;
 };

@@ -221,6 +221,71 @@ void testSameFrame()
 }
 } // namespace
 
+void testExtras()
+{
+    const auto absd = [](double v) { return v < 0.0 ? -v : v; };
+    SplintDesign design = SplintDesignCore::DefaultDesigns(1, 2, 3).front();
+    SplintExtras& e = design.extras;
+    require(SplintDesignCore::AddBracketMark(e, {0.0, 0.0, 1.0}, 2.0), "first bracket mark rejected");
+    require(!SplintDesignCore::AddBracketMark(e, {0.5, 0.0, 1.0}, 2.0), "mark within half the brush was added");
+    require(SplintDesignCore::AddBracketMark(e, {1.5, 0.0, 1.0}, 2.0), "separate bracket mark rejected");
+    require(SplintDesignCore::RemoveBracketMarks(e, {1.4, 0.0, 1.0}, 0.5) == 1 && e.bracketMarks.size() == 1,
+            "unmarking removed the wrong marks");
+
+    SplintOcclusalFrame frame;
+    e.bevel = SplintBevel{{0.0, 20.0, 5.0}, {0.0, 22.0, -5.0}};
+    SplintWireHole hole;
+    hole.center = {0.0, 18.0, 0.0};
+    hole.surfaceNormal = {0.0, 0.0, -1.0};
+    hole.diameterMm = 1.2;
+    e.wireHoles.push_back(hole);
+    design.wireHoleOrientation = SplintHoleOrientation::Bevel;
+    SplintDesignCore::ReorientWireHoles(design, frame);
+    SplintPoint3 origin{}, normal{};
+    require(SplintHeightmapGenerator::BevelPlane(*e.bevel, frame, origin, normal), "bevel plane rejected");
+    const SplintPoint3& axis = e.wireHoles[0].axis;
+    require(absd(axis[0] * normal[0] + axis[1] * normal[1] + axis[2] * normal[2]) < 1e-9 && axis[2] > 0.5,
+            "holes were not re-oriented along the bevel");
+    design.wireHoleOrientation = SplintHoleOrientation::SurfaceNormal;
+    SplintDesignCore::ReorientWireHoles(design, frame);
+    require(axis[2] > 0.999, "surface-normal hole must point to the maxilla");
+    design.wireHoleOrientation = SplintHoleOrientation::Bevel;
+    SplintDesignCore::ReorientWireHoles(design, frame);
+
+    e.bracketOffsetMm = 0.75;
+    design.wireHoleDiameterMm = 1.2;
+    design.bracketBrushRadiusMm = 2.0;
+    design.createdSourceKey = QStringLiteral("abc");
+    SplintDesign loaded;
+    QString error;
+    require(SplintDesignCore::DesignFromJson(SplintDesignCore::DesignToJson(design), loaded, &error),
+            "extras round trip failed: " + error.toStdString());
+    require(loaded.extras.bevel && loaded.extras.bevel->first == e.bevel->first && loaded.extras.bevel->second == e.bevel->second,
+            "bevel lost in JSON");
+    require(loaded.extras.wireHoles.size() == 1 && loaded.extras.wireHoles[0].center == e.wireHoles[0].center &&
+                loaded.extras.wireHoles[0].axis == e.wireHoles[0].axis &&
+                loaded.extras.wireHoles[0].surfaceNormal == e.wireHoles[0].surfaceNormal &&
+                loaded.extras.wireHoles[0].diameterMm == 1.2,
+            "wire hole lost in JSON");
+    require(loaded.extras.bracketMarks.size() == 1 && loaded.extras.bracketMarks[0].center == e.bracketMarks[0].center &&
+                loaded.extras.bracketMarks[0].radiusMm == 2.0 && loaded.extras.bracketOffsetMm == 0.75,
+            "bracket marks lost in JSON");
+    require(loaded.wireHoleOrientation == SplintHoleOrientation::Bevel && loaded.wireHoleDiameterMm == 1.2 &&
+                loaded.bracketBrushRadiusMm == 2.0 && loaded.createdSourceKey == QStringLiteral("abc"),
+            "extras settings lost in JSON");
+
+    // Designs saved before the extras existed load with defaults.
+    QJsonObject legacy = SplintDesignCore::DesignToJson(SplintDesignCore::DefaultDesigns(1, 2, 3).front());
+    for (const char* key : {"extras", "wireHoleDiameterMm", "wireHoleOrientation", "bracketBrushRadiusMm", "createdSourceKey"})
+        legacy.remove(QString::fromLatin1(key));
+    SplintDesign old;
+    require(SplintDesignCore::DesignFromJson(legacy, old, &error), "legacy design rejected");
+    require(!old.extras.bevel && old.extras.wireHoles.empty() && old.extras.bracketMarks.empty() &&
+                old.wireHoleOrientation == SplintHoleOrientation::SurfaceNormal && old.wireHoleDiameterMm == 1.0 &&
+                old.createdSourceKey.isEmpty(),
+            "legacy design got unexpected extras");
+}
+
 int main()
 {
     const std::vector<std::pair<const char*, std::function<void()>>> tests = {
@@ -230,6 +295,7 @@ int main()
         {"json round trip", testJsonRoundTrip},
         {"legacy and invalid json", testLegacyAndInvalidJson},
         {"same frame", testSameFrame},
+        {"extras", testExtras},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {
