@@ -282,6 +282,17 @@ if(BUILD_WORKSPACE_TESTS)
     endif()
     vtk_module_autoinit(TARGETS RepositionWorkspaceTests MODULES ${VTK_LIBRARIES})
     add_test(NAME RepositionWorkspaceTests COMMAND RepositionWorkspaceTests)
+
+    add_executable(Mesh3DViewInteractionTests
+        tests/Mesh3DViewInteractionTests.cpp src/Mesh3DView.cpp src/Mesh3DView.h)
+    target_include_directories(Mesh3DViewInteractionTests PRIVATE src)
+    target_link_libraries(Mesh3DViewInteractionTests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets ${VTK_LIBRARIES})
+    if(MSVC)
+        target_compile_options(Mesh3DViewInteractionTests PRIVATE /utf-8)
+    endif()
+    vtk_module_autoinit(TARGETS Mesh3DViewInteractionTests MODULES ${VTK_LIBRARIES})
+    add_test(NAME Mesh3DViewInteractionTests COMMAND Mesh3DViewInteractionTests)
 endif()
 
 add_custom_command(TARGET DicomMPRViewer POST_BUILD

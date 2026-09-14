@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <map>
 #include <vector>
 
@@ -8,6 +9,7 @@
 #include <QStack>
 #include <QVector>
 #include <QWidget>
+#include <vtkPolyData.h> // complete type: signals pass vtkSmartPointer<vtkPolyData> by value
 #include <vtkSmartPointer.h>
 
 class vtkActor;
@@ -19,6 +21,7 @@ class vtkMatrix4x4;
 class vtkObject;
 class vtkPolyData;
 class vtkRenderer;
+class vtkSphereSource;
 class vtkTransform;
 class QVTKOpenGLNativeWidget;
 
@@ -78,12 +81,50 @@ public:
 
     void setFullScreenActive(bool active);
 
+    // ── Editable guide points ─────────────────────────────────────────────
+    // While point editing is active: left click on a mesh adds a point to the
+    // active group, left drag on a marker moves it over the surface, and a
+    // right click without drag on a marker removes it (right drag still
+    // rotates). Positions are owned by the caller: markers only follow the
+    // mouse during a drag, so callers re-set the group from the signals.
+    void setEditablePoints(int group, const std::vector<std::array<double, 3>>& points,
+                           const QColor& color, double radius = 0.6);
+    void clearEditablePoints();
+    void setPointEditMode(bool active, int activeGroup = -1);
+
+    // ── Overlays (e.g. the splint contour), drawn on top of the scene ─────
+    void setOverlayPolyline(int key, vtkSmartPointer<vtkPolyData> lines, const QColor& color,
+                            double lineWidth = 2.5);
+    void removeOverlay(int key);
+    void clearOverlays();
+
+    // Parallel-projection camera looking along `direction` at `focal`;
+    // parallelScale <= 0 fits the scene.
+    void setViewAlongDirection(const std::array<double, 3>& focal, const std::array<double, 3>& direction,
+                               const std::array<double, 3>& viewUp, double parallelScale = -1.0);
+
+    // ── Plane drag (contour editing) ──────────────────────────────────────
+    // Left drag reports the mouse ray intersected with the plane.
+    void setPlaneDragMode(bool active, const std::array<double, 3>& origin = {0.0, 0.0, 0.0},
+                          const std::array<double, 3>& normal = {0.0, 0.0, 1.0});
+
+    static bool RayPlaneIntersection(const std::array<double, 3>& rayStart, const std::array<double, 3>& rayEnd,
+                                     const std::array<double, 3>& planeOrigin, const std::array<double, 3>& planeNormal,
+                                     std::array<double, 3>& hit);
+
 signals:
     void fullScreenToggleRequested(Mesh3DView* source);
     void pointPicked(int actorLabel, double x, double y, double z);
     void meshEdited(int meshLabel, vtkSmartPointer<vtkPolyData> newMesh);
     // Fired by stopGizmo() with the freshly-baked polydata
     void gizmoMeshUpdated(int meshLabel, vtkSmartPointer<vtkPolyData> newMesh);
+    void editablePointAdded(int group, double x, double y, double z);
+    void editablePointMoved(int group, int index, double x, double y, double z);
+    void editablePointDragFinished(int group, int index);
+    void editablePointRemoved(int group, int index);
+    void planeDragStarted(double x, double y, double z, Qt::KeyboardModifiers modifiers);
+    void planeDragMoved(double x, double y, double z, double deltaYPixels, Qt::KeyboardModifiers modifiers);
+    void planeDragFinished(double x, double y, double z);
 
 private:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -161,4 +202,35 @@ private:
     int       m_gizmoDragLastY  = 0;
     double    m_gizmoCenterWorld[3] = {0.0, 0.0, 0.0};
     int       m_gizmoLabel      = -1;
+
+    // ── Editable points, overlays and plane drag ──────────────────────────
+    bool handlePointEditEvent(QEvent* event);
+    bool handlePlaneDragEvent(QEvent* event);
+    bool pickSurface(int px, int py, std::array<double, 3>& world) const;
+    bool pickEditablePoint(int px, int py, int& group, int& index) const;
+    bool planePointAt(int px, int py, std::array<double, 3>& world) const;
+
+    struct EditablePoint
+    {
+        int group = -1;
+        int index = -1;
+        vtkSmartPointer<vtkSphereSource> source;
+        vtkSmartPointer<vtkActor> actor;
+    };
+    std::vector<EditablePoint> m_editablePoints;
+    bool m_pointEditActive = false;
+    int m_pointEditGroup = -1;
+    int m_draggedPointGroup = -1;
+    int m_draggedPointIndex = -1;
+    int m_rightPressGroup = -1;
+    int m_rightPressIndex = -1;
+    QPointF m_rightPressPosition;
+
+    std::map<int, vtkSmartPointer<vtkActor>> m_overlayActors;
+
+    bool m_planeDragActive = false;
+    bool m_planeDragging = false;
+    std::array<double, 3> m_planeOrigin{0.0, 0.0, 0.0};
+    std::array<double, 3> m_planeNormal{0.0, 0.0, 1.0};
+    double m_planeDragLastY = 0.0;
 };

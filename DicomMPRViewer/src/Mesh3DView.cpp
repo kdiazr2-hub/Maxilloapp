@@ -348,6 +348,11 @@ bool Mesh3DView::eventFilter(QObject* watched, QEvent* event)
         }
     }
 
+    if (m_pointEditActive && handlePointEditEvent(event))
+        return true;
+    if (m_planeDragActive && handlePlaneDragEvent(event))
+        return true;
+
     if (m_pointPickActive && event->type() == QEvent::MouseButtonPress) {
         auto* me = static_cast<QMouseEvent*>(event);
         if (me->button() == Qt::LeftButton && m_renderer) {
@@ -916,6 +921,343 @@ void Mesh3DView::applyStandardView(int viewIndex)
 void Mesh3DView::render()
 {
     if (m_renderWindow) m_renderWindow->Render();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Editable points, overlays, plane drag
+// ─────────────────────────────────────────────────────────────────────────────
+namespace
+{
+constexpr double kClickTolerancePixels = 4.0;
+
+// Qt widget position (logical, y down) → VTK display position (physical, y up).
+void toDisplay(const QVTKOpenGLNativeWidget* widget, const QPointF& position, int& px, int& py)
+{
+    const double dpr = widget->devicePixelRatioF();
+    px = static_cast<int>(std::lround(position.x() * dpr));
+    py = static_cast<int>(std::lround((widget->height() - position.y()) * dpr));
+}
+} // namespace
+
+bool Mesh3DView::RayPlaneIntersection(const std::array<double, 3>& rayStart, const std::array<double, 3>& rayEnd,
+                                      const std::array<double, 3>& planeOrigin, const std::array<double, 3>& planeNormal,
+                                      std::array<double, 3>& hit)
+{
+    const std::array<double, 3> d{rayEnd[0] - rayStart[0], rayEnd[1] - rayStart[1], rayEnd[2] - rayStart[2]};
+    const double denom = planeNormal[0] * d[0] + planeNormal[1] * d[1] + planeNormal[2] * d[2];
+    if (std::abs(denom) < 1e-12)
+        return false;
+    const double t = (planeNormal[0] * (planeOrigin[0] - rayStart[0]) +
+                      planeNormal[1] * (planeOrigin[1] - rayStart[1]) +
+                      planeNormal[2] * (planeOrigin[2] - rayStart[2])) / denom;
+    hit = {rayStart[0] + t * d[0], rayStart[1] + t * d[1], rayStart[2] + t * d[2]};
+    return true;
+}
+
+void Mesh3DView::setEditablePoints(int group, const std::vector<std::array<double, 3>>& points,
+                                   const QColor& color, double radius)
+{
+    if (!m_annotationRenderer) return;
+    m_editablePoints.erase(std::remove_if(m_editablePoints.begin(), m_editablePoints.end(),
+                                          [this, group](const EditablePoint& p) {
+                                              if (p.group != group) return false;
+                                              m_annotationRenderer->RemoveActor(p.actor);
+                                              return true;
+                                          }),
+                           m_editablePoints.end());
+    for (size_t i = 0; i < points.size(); ++i) {
+        auto source = vtkSmartPointer<vtkSphereSource>::New();
+        source->SetCenter(points[i][0], points[i][1], points[i][2]);
+        source->SetRadius(radius);
+        source->SetThetaResolution(20);
+        source->SetPhiResolution(20);
+        auto mapper = vtkSmartPointer<vtkPolyDataMapper>::New();
+        mapper->SetInputConnection(source->GetOutputPort());
+        auto actor = vtkSmartPointer<vtkActor>::New();
+        actor->SetMapper(mapper);
+        actor->GetProperty()->SetColor(color.redF(), color.greenF(), color.blueF());
+        actor->GetProperty()->SetAmbient(0.35);
+        actor->GetProperty()->SetDiffuse(0.9);
+        actor->GetProperty()->SetSpecular(0.3);
+        m_annotationRenderer->AddActor(actor);
+        m_editablePoints.push_back({group, static_cast<int>(i), source, actor});
+    }
+    render();
+}
+
+void Mesh3DView::clearEditablePoints()
+{
+    if (m_annotationRenderer)
+        for (const auto& p : m_editablePoints)
+            m_annotationRenderer->RemoveActor(p.actor);
+    m_editablePoints.clear();
+    m_draggedPointGroup = m_draggedPointIndex = -1;
+    render();
+}
+
+void Mesh3DView::setPointEditMode(bool active, int activeGroup)
+{
+    m_pointEditActive = active;
+    m_pointEditGroup = active ? activeGroup : -1;
+    m_draggedPointGroup = m_draggedPointIndex = -1;
+    m_rightPressGroup = m_rightPressIndex = -1;
+    const Qt::CursorShape cursor = active ? Qt::CrossCursor : Qt::ArrowCursor;
+    setCursor(cursor);
+    if (m_vtkWidget) m_vtkWidget->setCursor(cursor);
+}
+
+void Mesh3DView::setOverlayPolyline(int key, vtkSmartPointer<vtkPolyData> lines, const QColor& color, double lineWidth)
+{
+    if (!m_annotationRenderer) return;
+    if (const auto it = m_overlayActors.find(key); it != m_overlayActors.end()) {
+        m_annotationRenderer->RemoveActor(it->second);
+        m_overlayActors.erase(it);
+    }
+    if (lines && lines->GetNumberOfPoints() > 0) {
+        auto mapper = vtkSmartPointer<vtkPolyDataMapper>::New();
+        mapper->SetInputData(lines);
+        mapper->ScalarVisibilityOff();
+        auto actor = vtkSmartPointer<vtkActor>::New();
+        actor->SetMapper(mapper);
+        actor->GetProperty()->SetColor(color.redF(), color.greenF(), color.blueF());
+        actor->GetProperty()->SetLineWidth(static_cast<float>(lineWidth));
+        actor->GetProperty()->LightingOff();
+        actor->SetPickable(0);
+        m_annotationRenderer->AddActor(actor);
+        m_overlayActors[key] = actor;
+    }
+    render();
+}
+
+void Mesh3DView::removeOverlay(int key)
+{
+    if (const auto it = m_overlayActors.find(key); it != m_overlayActors.end()) {
+        if (m_annotationRenderer) m_annotationRenderer->RemoveActor(it->second);
+        m_overlayActors.erase(it);
+        render();
+    }
+}
+
+void Mesh3DView::clearOverlays()
+{
+    if (m_annotationRenderer)
+        for (const auto& entry : m_overlayActors)
+            m_annotationRenderer->RemoveActor(entry.second);
+    m_overlayActors.clear();
+    render();
+}
+
+void Mesh3DView::setViewAlongDirection(const std::array<double, 3>& focal, const std::array<double, 3>& direction,
+                                       const std::array<double, 3>& viewUp, double parallelScale)
+{
+    if (!m_renderer) return;
+    auto* camera = m_renderer->GetActiveCamera();
+    const double length = std::sqrt(direction[0] * direction[0] + direction[1] * direction[1] + direction[2] * direction[2]);
+    if (!camera || length < 1e-9) return;
+
+    double bounds[6];
+    sceneBounds(bounds);
+    const bool validBounds = vtkBoundingBox::IsValid(bounds);
+    double diagonal = 100.0;
+    double fitScale = 50.0;
+    if (validBounds) {
+        const double dx = std::max(1.0, bounds[1] - bounds[0]);
+        const double dy = std::max(1.0, bounds[3] - bounds[2]);
+        const double dz = std::max(1.0, bounds[5] - bounds[4]);
+        diagonal = std::sqrt(dx * dx + dy * dy + dz * dz);
+        fitScale = std::max({dx, dy, dz}) * 0.62;
+    }
+    const double distance = std::max(200.0, diagonal * 1.8);
+    camera->SetFocalPoint(focal[0], focal[1], focal[2]);
+    camera->SetPosition(focal[0] - direction[0] / length * distance,
+                        focal[1] - direction[1] / length * distance,
+                        focal[2] - direction[2] / length * distance);
+    camera->SetViewUp(viewUp[0], viewUp[1], viewUp[2]);
+    camera->OrthogonalizeViewUp();
+    camera->ParallelProjectionOn();
+    camera->SetParallelScale(parallelScale > 0.0 ? parallelScale : fitScale);
+    m_standardViewIndex = -1;
+    if (validBounds)
+        m_renderer->ResetCameraClippingRange(bounds);
+    else
+        m_renderer->ResetCameraClippingRange();
+    render();
+}
+
+void Mesh3DView::setPlaneDragMode(bool active, const std::array<double, 3>& origin, const std::array<double, 3>& normal)
+{
+    m_planeDragActive = active;
+    m_planeDragging = false;
+    m_planeOrigin = origin;
+    const double length = std::sqrt(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]);
+    m_planeNormal = length > 1e-9 ? std::array<double, 3>{normal[0] / length, normal[1] / length, normal[2] / length}
+                                  : std::array<double, 3>{0.0, 0.0, 1.0};
+    const Qt::CursorShape cursor = active ? Qt::SizeAllCursor : Qt::ArrowCursor;
+    setCursor(cursor);
+    if (m_vtkWidget) m_vtkWidget->setCursor(cursor);
+}
+
+bool Mesh3DView::pickSurface(int px, int py, std::array<double, 3>& world) const
+{
+    if (!m_renderer) return false;
+    auto picker = vtkSmartPointer<vtkCellPicker>::New();
+    picker->SetTolerance(0.0025);
+    // Markers and overlays live in the annotation layer and are never picked here.
+    if (!picker->Pick(px, py, 0.0, m_foregroundRenderer) && !picker->Pick(px, py, 0.0, m_renderer))
+        return false;
+    if (m_actorLabels.find(picker->GetActor()) == m_actorLabels.end())
+        return false;
+    picker->GetPickPosition(world.data());
+    return true;
+}
+
+bool Mesh3DView::pickEditablePoint(int px, int py, int& group, int& index) const
+{
+    if (m_editablePoints.empty() || !m_annotationRenderer) return false;
+    auto picker = vtkSmartPointer<vtkCellPicker>::New();
+    picker->SetTolerance(0.004);
+    picker->PickFromListOn();
+    for (const auto& p : m_editablePoints)
+        picker->AddPickList(p.actor);
+    if (!picker->Pick(px, py, 0.0, m_annotationRenderer))
+        return false;
+    for (const auto& p : m_editablePoints) {
+        if (p.actor.GetPointer() == picker->GetActor()) {
+            group = p.group;
+            index = p.index;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool Mesh3DView::planePointAt(int px, int py, std::array<double, 3>& world) const
+{
+    if (!m_renderer) return false;
+    double nearPoint[4] = {};
+    double farPoint[4] = {};
+    m_renderer->SetDisplayPoint(px, py, 0.0);
+    m_renderer->DisplayToWorld();
+    m_renderer->GetWorldPoint(nearPoint);
+    m_renderer->SetDisplayPoint(px, py, 1.0);
+    m_renderer->DisplayToWorld();
+    m_renderer->GetWorldPoint(farPoint);
+    if (std::abs(nearPoint[3]) < 1e-12 || std::abs(farPoint[3]) < 1e-12)
+        return false;
+    const std::array<double, 3> start{nearPoint[0] / nearPoint[3], nearPoint[1] / nearPoint[3], nearPoint[2] / nearPoint[3]};
+    const std::array<double, 3> end{farPoint[0] / farPoint[3], farPoint[1] / farPoint[3], farPoint[2] / farPoint[3]};
+    return RayPlaneIntersection(start, end, m_planeOrigin, m_planeNormal, world);
+}
+
+bool Mesh3DView::handlePointEditEvent(QEvent* event)
+{
+    const QEvent::Type type = event->type();
+    if (type != QEvent::MouseButtonPress && type != QEvent::MouseMove && type != QEvent::MouseButtonRelease)
+        return false;
+    auto* me = static_cast<QMouseEvent*>(event);
+    int px = 0;
+    int py = 0;
+    toDisplay(m_vtkWidget, me->position(), px, py);
+
+    if (type == QEvent::MouseButtonPress && me->button() == Qt::LeftButton) {
+        int group = -1;
+        int index = -1;
+        if (pickEditablePoint(px, py, group, index)) {
+            m_draggedPointGroup = group;
+            m_draggedPointIndex = index;
+            return true;
+        }
+        std::array<double, 3> hit{};
+        if (m_pointEditGroup >= 0 && pickSurface(px, py, hit)) {
+            emit editablePointAdded(m_pointEditGroup, hit[0], hit[1], hit[2]);
+            return true;
+        }
+        return false; // empty space: the camera still rotates
+    }
+
+    if (type == QEvent::MouseMove && m_draggedPointIndex >= 0) {
+        std::array<double, 3> hit{};
+        if (pickSurface(px, py, hit)) {
+            for (auto& p : m_editablePoints) {
+                if (p.group == m_draggedPointGroup && p.index == m_draggedPointIndex) {
+                    p.source->SetCenter(hit[0], hit[1], hit[2]);
+                    break;
+                }
+            }
+            render();
+            emit editablePointMoved(m_draggedPointGroup, m_draggedPointIndex, hit[0], hit[1], hit[2]);
+        }
+        return true;
+    }
+
+    if (type == QEvent::MouseButtonRelease && me->button() == Qt::LeftButton && m_draggedPointIndex >= 0) {
+        const int group = m_draggedPointGroup;
+        const int index = m_draggedPointIndex;
+        m_draggedPointGroup = m_draggedPointIndex = -1;
+        emit editablePointDragFinished(group, index);
+        return true;
+    }
+
+    if (type == QEvent::MouseButtonPress && me->button() == Qt::RightButton) {
+        m_rightPressGroup = m_rightPressIndex = -1;
+        int group = -1;
+        int index = -1;
+        if (pickEditablePoint(px, py, group, index)) {
+            m_rightPressGroup = group;
+            m_rightPressIndex = index;
+        }
+        m_rightPressPosition = me->position();
+        return false; // a right drag keeps rotating the camera
+    }
+
+    if (type == QEvent::MouseButtonRelease && me->button() == Qt::RightButton) {
+        const QPointF delta = me->position() - m_rightPressPosition;
+        const bool click = std::abs(delta.x()) + std::abs(delta.y()) <= kClickTolerancePixels;
+        const int group = m_rightPressGroup;
+        const int index = m_rightPressIndex;
+        m_rightPressGroup = m_rightPressIndex = -1;
+        if (click && index >= 0)
+            emit editablePointRemoved(group, index);
+        return false;
+    }
+    return false;
+}
+
+bool Mesh3DView::handlePlaneDragEvent(QEvent* event)
+{
+    const QEvent::Type type = event->type();
+    if (type != QEvent::MouseButtonPress && type != QEvent::MouseMove && type != QEvent::MouseButtonRelease)
+        return false;
+    auto* me = static_cast<QMouseEvent*>(event);
+    int px = 0;
+    int py = 0;
+    toDisplay(m_vtkWidget, me->position(), px, py);
+    std::array<double, 3> hit{};
+
+    if (type == QEvent::MouseButtonPress && me->button() == Qt::LeftButton) {
+        if (!planePointAt(px, py, hit))
+            return false;
+        m_planeDragging = true;
+        m_planeDragLastY = me->position().y();
+        emit planeDragStarted(hit[0], hit[1], hit[2], me->modifiers());
+        return true;
+    }
+    if (type == QEvent::MouseMove && m_planeDragging) {
+        if (planePointAt(px, py, hit)) {
+            const double deltaY = me->position().y() - m_planeDragLastY;
+            m_planeDragLastY = me->position().y();
+            emit planeDragMoved(hit[0], hit[1], hit[2], deltaY, me->modifiers());
+        }
+        return true;
+    }
+    if (type == QEvent::MouseButtonRelease && me->button() == Qt::LeftButton && m_planeDragging) {
+        m_planeDragging = false;
+        if (!planePointAt(px, py, hit))
+            hit = m_planeOrigin;
+        emit planeDragFinished(hit[0], hit[1], hit[2]);
+        return true;
+    }
+    return false;
 }
 
 void Mesh3DView::sceneBounds(double bounds[6]) const
