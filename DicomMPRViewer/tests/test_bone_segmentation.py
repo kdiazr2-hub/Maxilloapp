@@ -1,6 +1,8 @@
 import importlib.util
+import json
 import os
 import sys
+import time
 from pathlib import Path
 import tempfile
 import unittest
@@ -233,6 +235,56 @@ class OfflineWeightsTests(unittest.TestCase):
         with patch("socket.socket", side_effect=AssertionError("network used")):
             with self.assertRaisesRegex(RuntimeError, "no los descarga"):
                 segmentator.ensure_weights(app, [app])
+
+
+def process_alive(pid):
+    import ctypes
+    kernel32 = ctypes.WinDLL("kernel32")
+    handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return False
+    code = ctypes.c_ulong()
+    try:
+        return kernel32.GetExitCodeProcess(handle, ctypes.byref(code)) and code.value == 259  # STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+class ProgressAndCleanupTests(unittest.TestCase):
+    def test_tqdm_bar_becomes_app_progress(self):
+        child = (
+            "import sys; "
+            "sys.stdout.write('  1%|| 4/448 [00:01<02:55,  2.53it/s]\\r 50%|| 224/448 [01:30<01:30,  2.5it/s]\\r"
+            "100%|| 448/448 [03:00<00:00,  2.5it/s]\\ndone with case\\n'); sys.stdout.flush()"
+        )
+        lines = []
+        with patch.object(segmentator, "log", side_effect=lines.append):
+            segmentator.run_logged([sys.executable, "-c", child], progress_range=(45, 88), stage="Prediciendo")
+        updates = [json.loads(line[len("MAXILLO_PROGRESS "):]) for line in lines if line.startswith("MAXILLO_PROGRESS ")]
+        self.assertEqual([u["percent"] for u in updates], [45, 66, 88])
+        self.assertEqual(updates[1]["stage"], "Prediciendo: 224/448, faltan 01:30")
+        self.assertIn("done with case", lines)
+        self.assertFalse(any("it/s" in line for line in lines[1:]))  # lines[0] echoes the command
+
+    @unittest.skipUnless(os.name == "nt", "Windows job object")
+    def test_failed_run_leaves_no_worker_processes(self):
+        child = (
+            "import subprocess, sys, time; "
+            "worker = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+            "print(worker.pid, flush=True); time.sleep(0.5); sys.exit(3)"
+        )
+        lines = []
+        started = time.time()
+        with patch.object(segmentator, "log", side_effect=lines.append):
+            with self.assertRaisesRegex(RuntimeError, "codigo 3"):
+                segmentator.run_logged([sys.executable, "-c", child])
+        # The worker keeps the output pipe open: the failed run must not wait for it to finish.
+        self.assertLess(time.time() - started, 20.0)
+        worker = int(next(line for line in lines if line.strip().isdigit()))
+        deadline = time.time() + 5.0
+        while process_alive(worker) and time.time() < deadline:
+            time.sleep(0.1)
+        self.assertFalse(process_alive(worker), "the nnU-Net worker outlived a failed run")
 
 
 class ProcessOutputTests(unittest.TestCase):

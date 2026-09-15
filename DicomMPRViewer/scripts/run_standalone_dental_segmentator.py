@@ -1,10 +1,13 @@
 import argparse
+import json
 import os
+import re
 import shutil
 import shlex
 import subprocess
 import sys
 import tempfile
+import threading
 import traceback
 import zipfile
 from pathlib import Path
@@ -189,13 +192,125 @@ def open_logged_process(command, env=None):
     )
 
 
-def run_logged(command, env=None):
+# tqdm bar: " 12%|█▏  | 54/448 [00:21<02:35,  2.53it/s]"
+TQDM_PROGRESS = re.compile(r"(\d+)/(\d+)\s*\[(?:[^<\]]*<([0-9:]+))?")
+
+
+def progress(percent, stage):
+    """Progress line parsed by the app (SegmentationProgressCore)."""
+    log("MAXILLO_PROGRESS " + json.dumps({"percent": int(percent), "stage": stage}, ensure_ascii=False))
+
+
+def attach_kill_on_close_job(process):
+    """Windows: nnU-Net and its worker processes die with this script, even if it is killed."""
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class IoCounters(ctypes.Structure):
+            _fields_ = [(name, ctypes.c_ulonglong) for name in (
+                "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
+                "ReadTransferCount", "WriteTransferCount", "OtherTransferCount")]
+
+        class BasicLimits(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_int64),
+                ("PerJobUserTimeLimit", ctypes.c_int64),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            ]
+
+        class ExtendedLimits(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", BasicLimits),
+                ("IoInfo", IoCounters),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p]
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+        kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            return None
+        limits = ExtendedLimits()
+        limits.BasicLimitInformation.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not kernel32.SetInformationJobObject(job, 9, ctypes.byref(limits), ctypes.sizeof(limits)) or \
+                not kernel32.AssignProcessToJobObject(job, wintypes.HANDLE(int(process._handle))):
+            kernel32.CloseHandle(job)
+            return None
+        return (kernel32, job)
+    except Exception:
+        return None
+
+
+def close_job(job):
+    if job:
+        kernel32, handle = job
+        kernel32.CloseHandle(handle)
+
+
+def kill_process_tree(process):
+    if process.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    else:
+        process.kill()
+    process.wait()
+
+
+def run_logged(command, env=None, progress_range=None, stage="Procesando"):
     log(" ".join([str(p) for p in command]))
     process = open_logged_process(command, env)
-    with process.stdout:
-        for line in process.stdout:
-            log(line.rstrip())
-    code = process.wait()
+    job = attach_kill_on_close_job(process)
+    last_percent = None
+
+    def handle(text):
+        nonlocal last_percent
+        bar = TQDM_PROGRESS.search(text) if progress_range else None
+        if bar and int(bar.group(2)) > 0:
+            done, total = min(int(bar.group(1)), int(bar.group(2))), int(bar.group(2))
+            start, end = progress_range
+            percent = int(start + (end - start) * done / total)
+            if percent != last_percent or done == total:
+                last_percent = percent
+                remaining = f", faltan {bar.group(3)}" if bar.group(3) and done < total else ""
+                progress(percent, f"{stage}: {done}/{total}{remaining}")
+            return  # bar refreshes would flood the log
+        log(text)
+
+    def read_output():
+        with process.stdout:
+            for line in process.stdout:
+                handle(line.rstrip())
+
+    reader = threading.Thread(target=read_output, daemon=True)
+    reader.start()
+    try:
+        code = process.wait()
+        # Worker processes inherit the pipe and keep it open after a crash: drain briefly, then stop them.
+        reader.join(timeout=5.0)
+    finally:
+        # A failure or exception here must not leave nnU-Net running on the GPU.
+        kill_process_tree(process)
+        close_job(job)
+    reader.join(timeout=5.0)
     if code != 0:
         raise RuntimeError(f"Comando fallo con codigo {code}: {command[0]}")
 
@@ -665,10 +780,20 @@ def run_dentalsegmentator_nnunet(input_path, output_path, target, seed=None, see
         "-c", env.get("DENTALSEGMENTATOR_CONFIGURATION", CONFIGURATION),
         "-f", env.get("DENTALSEGMENTATOR_FOLDS", FOLDS),
         "-device", device,
+        # One case: extra preprocessing/export workers only add process start-up (torch import) and RAM.
+        "-npp", env.get("DENTALSEGMENTATOR_NPP", "1"),
+        "-nps", env.get("DENTALSEGMENTATOR_NPS", "1"),
     ]
+    # Optional faster, slightly less accurate inference (nnU-Net defaults otherwise).
+    step_size = env.get("DENTALSEGMENTATOR_STEP_SIZE", "").strip()
+    if step_size:
+        cmd += ["-step_size", step_size]
+    if env.get("DENTALSEGMENTATOR_DISABLE_TTA", "").strip() == "1":
+        cmd.append("--disable_tta")
 
     log("45% Ejecutando DentalSegmentator nnU-Net...")
-    run_logged(cmd, env=env)
+    run_logged(cmd, env=env, progress_range=(45, 88), stage="Prediciendo con nnU-Net")
+    log("88% Exportando la prediccion de nnU-Net...")
 
     prediction_path = pred_dir / "case.nii.gz"
     if not prediction_path.exists():
