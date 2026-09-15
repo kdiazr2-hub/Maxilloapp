@@ -54,6 +54,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <optional>
 
 namespace
@@ -322,8 +323,8 @@ void MainWindow::refreshSplintDesignPanel()
         {tr("Maxilar"), 5},
     };
     std::vector<SplintDesignPanel::SourceOption> lower = {
-        {tr("Mandíbula inicial"), kSplintInitialMandibleChoice},
-        {tr("Mandíbula final"), kSplintFinalMandibleChoice},
+        {tr("Mandíbula inicial (sin reposicionar)"), kSplintInitialMandibleChoice},
+        {tr("Mandíbula final (reposicionada)"), kSplintFinalMandibleChoice},
         {tr("Post-mentón"), kGenioBodyLabel},
         {tr("Distal BSSO"), kBssoDistalLabel},
         {tr("Compuesto mandibular"), kLowerCompositeLabel},
@@ -674,6 +675,7 @@ vtkSmartPointer<vtkPolyData> MainWindow::splintSourceMesh(int choice) const
     const QString fingerprint = meshFingerprint(mesh);
     SplintSourceCacheEntry& entry = m_splintSourceCache[choice];
     if (!entry.mesh || entry.fingerprint != fingerprint) {
+        const vtkSmartPointer<vtkPolyData> previous = entry.mesh;
         entry.fingerprint = fingerprint;
         // Composite sources (and their osteotomy segments) carry the linked
         // high-resolution scan: the splint is built on that dental part.
@@ -683,8 +685,107 @@ vtkSmartPointer<vtkPolyData> MainWindow::splintSourceMesh(int choice) const
             entry.mesh = vtkSmartPointer<vtkPolyData>::New();
             entry.mesh->DeepCopy(mesh);
         }
+        if (previous) {
+            entry.motions.push_back(SplintDesignCore::RigidMotion(previous, entry.mesh));
+            ++entry.revision;
+        }
     }
     return entry.mesh;
+}
+
+void MainWindow::followSplintSourceMotion()
+{
+    if (!splintHeightmapMethodActive() || m_splintDesigns.empty())
+        return;
+    SplintDesign* design = activeSplintDesign();
+    auto& states = m_splintDesignSourceState[design->id];
+    const auto centroid = [](const std::vector<SplintPoint3>& points) -> std::optional<SplintPoint3> {
+        if (points.empty())
+            return std::nullopt;
+        SplintPoint3 c{0.0, 0.0, 0.0};
+        for (const SplintPoint3& p : points)
+            for (size_t a = 0; a < 3; ++a)
+                c[a] += p[a] / static_cast<double>(points.size());
+        return c;
+    };
+    // Extras belong to the jaw whose guide points are nearer (taken before any move).
+    const std::array<std::optional<SplintPoint3>, 2> jawCenters{centroid(design->upperPoints), centroid(design->lowerPoints)};
+    const auto jawOf = [&jawCenters](const SplintPoint3& p) {
+        const auto dist2 = [&p](const std::optional<SplintPoint3>& c) {
+            if (!c)
+                return std::numeric_limits<double>::max();
+            return (p[0] - (*c)[0]) * (p[0] - (*c)[0]) + (p[1] - (*c)[1]) * (p[1] - (*c)[1]) + (p[2] - (*c)[2]) * (p[2] - (*c)[2]);
+        };
+        return dist2(jawCenters[0]) <= dist2(jawCenters[1]) ? 0 : 1;
+    };
+    std::vector<int> holeJaw, markJaw;
+    for (const SplintWireHole& hole : design->extras.wireHoles)
+        holeJaw.push_back(jawOf(hole.center));
+    for (const SplintBracketMark& mark : design->extras.bracketMarks)
+        markJaw.push_back(jawOf(mark.center));
+
+    bool moved = false;
+    bool deformed = false;
+    for (int jaw = 0; jaw < 2; ++jaw) {
+        const int choice = jaw == 0 ? design->upperSource : design->lowerSource;
+        if (!splintSourceMesh(choice) || choice == kSplintTestUpperChoice || choice == kSplintTestLowerChoice)
+            continue;
+        const SplintSourceCacheEntry& entry = m_splintSourceCache[choice];
+        SplintDesignSourceState& state = states[static_cast<size_t>(jaw)];
+        if (!state.valid || state.choice != choice || state.revision > entry.revision) {
+            state = {choice, entry.revision, true};
+            continue;
+        }
+        if (state.revision == entry.revision)
+            continue;
+        std::optional<SplintDesignCore::SplintMatrix> total = SplintDesignCore::IdentityMatrix();
+        for (quint64 r = state.revision; r < entry.revision && r < entry.motions.size(); ++r) {
+            const auto& motion = entry.motions[static_cast<size_t>(r)];
+            if (!motion) {
+                total.reset();
+                break;
+            }
+            total = SplintDesignCore::Compose(*motion, *total);
+        }
+        state.revision = entry.revision;
+        if (!total) {
+            deformed = true;
+            continue;
+        }
+        auto& points = jaw == 0 ? design->upperPoints : design->lowerPoints;
+        for (SplintPoint3& p : points)
+            p = SplintDesignCore::TransformPoint(*total, p);
+        if (design->extras.bevel) {
+            SplintPoint3& end = jaw == 0 ? design->extras.bevel->first : design->extras.bevel->second;
+            end = SplintDesignCore::TransformPoint(*total, end);
+        }
+        for (size_t i = 0; i < design->extras.wireHoles.size(); ++i) {
+            if (holeJaw[i] != jaw)
+                continue;
+            SplintWireHole& hole = design->extras.wireHoles[i];
+            hole.center = SplintDesignCore::TransformPoint(*total, hole.center);
+            hole.axis = SplintDesignCore::TransformDirection(*total, hole.axis);
+            hole.surfaceNormal = SplintDesignCore::TransformDirection(*total, hole.surfaceNormal);
+        }
+        for (size_t i = 0; i < design->extras.bracketMarks.size(); ++i)
+            if (markJaw[i] == jaw)
+                design->extras.bracketMarks[i].center = SplintDesignCore::TransformPoint(*total, design->extras.bracketMarks[i].center);
+        moved = true;
+    }
+    if (moved) {
+        if (!design->editedContourUV.empty()) {
+            design->editedContourUV.clear();
+            setSplintContourEditing(false);
+        }
+        m_splintPreviewValid = false;
+        rebuildSplintEditablePoints();
+        updateSplintExtrasDisplay();
+        statusBar()->showMessage(tr("Férula «%1»: los puntos guía siguieron el movimiento de sus modelos (REPOSICIÓN).")
+                                     .arg(design->name));
+    } else if (deformed) {
+        statusBar()->showMessage(tr("Férula «%1»: un modelo de origen cambió de forma; revise los puntos guía.")
+                                     .arg(design->name));
+    }
 }
 
 SplintHeightmapInputs MainWindow::splintInputsForDesign(const SplintDesign& design) const
@@ -703,6 +804,7 @@ void MainWindow::requestSplintPreview()
     if (!splintHeightmapMethodActive() || !m_splintPreview || !m_splintDesignPanel)
         return;
     m_splintRefineTimer->stop();
+    followSplintSourceMotion();
     const SplintDesign& design = *activeSplintDesign();
     const auto upper = splintSourceMesh(design.upperSource);
     const auto lower = splintSourceMesh(design.lowerSource);
@@ -952,6 +1054,7 @@ void MainWindow::syncSplintHeightmapView()
     for (Mesh3DView* view : {m_splintUpperView, m_splintLowerView, m_splintView})
         if (view) view->clearMeshes();
 
+    followSplintSourceMotion();
     const SplintDesign& design = *activeSplintDesign();
     const auto addTo = [](Mesh3DView* view, int key, vtkPolyData* mesh, const QString& name, const QColor& color) {
         if (!view || !mesh) return;

@@ -52,7 +52,7 @@ private:
                                            SegmentationTarget target) const;
     QString resolveScriptPath() const;
     void startExternalProcess(const QString& inputPath, const QString& outputPath);
-    void appendProcessText(const QByteArray& data);
+    void appendProcessText(const QByteArray& data, bool stderrChannel);
 
     QString m_outputDirectory;
     QString m_outputSegmentationPath;

@@ -35,6 +35,8 @@
 #include <vtkAppendPolyData.h>
 #include <vtkClipPolyData.h>
 #include <vtkPlaneSource.h>
+#include <vtkTransform.h>
+#include <vtkTransformPolyDataFilter.h>
 #include <vtkTriangleFilter.h>
 #include <vtkFeatureEdges.h>
 #include <vtkImageData.h>
@@ -618,6 +620,49 @@ public:
         std::cout << "Composite workspace: block, mandatory review, link, splint source, union and project OK\n";
     }
 
+    // FÉRULA follows REPOSICIÓN: the moved Le Fort segment is the source and its guide points follow it.
+    static void runSplintFollowsReposition()
+    {
+        MainWindow window;
+        window.setAttribute(Qt::WA_DontShowOnScreen);
+        window.resize(1400, 900);
+        window.show();
+        settle();
+        window.m_leFortSegmentMesh = CompositeBlockCore::TagPart(upperTeeth({}), CompositeBlockCore::DentalPart);
+        window.m_lowerCompositeMesh = lowerTeeth({});
+        window.setSplintWorkspace(true);
+        settle();
+        require(window.activeSplintDesign()->upperSource == kLeFortSegLabel, "Intermedia does not use the Le Fort segment");
+        for (const SplintPoint3& p : guidePoints(5.0))
+            window.onSplintEditablePointAdded(0, p[0], p[1], p[2]);
+        for (const SplintPoint3& p : guidePoints(-5.0))
+            window.onSplintEditablePointAdded(1, p[0], p[1], p[2]);
+        const auto upperBefore = window.activeSplintDesign()->upperPoints;
+        const auto lowerBefore = window.activeSplintDesign()->lowerPoints;
+        require(upperBefore.size() == 3 && lowerBefore.size() == 3, "guide points not placed");
+
+        auto transform = vtkSmartPointer<vtkTransform>::New();
+        transform->Translate(0.0, 3.0, 1.0);
+        auto filter = vtkSmartPointer<vtkTransformPolyDataFilter>::New();
+        filter->SetInputData(window.m_leFortSegmentMesh);
+        filter->SetTransform(transform);
+        filter->Update();
+        window.setRepositionMeshForLabel(kLeFortSegLabel, filter->GetOutput()); // as REPOSICIÓN does
+        window.syncSplintView();
+
+        const auto& upper = window.activeSplintDesign()->upperPoints;
+        for (size_t i = 0; i < upper.size(); ++i)
+            require(std::abs(upper[i][0] - upperBefore[i][0]) < 1e-6 && std::abs(upper[i][1] - upperBefore[i][1] - 3.0) < 1e-6 &&
+                        std::abs(upper[i][2] - upperBefore[i][2] - 1.0) < 1e-6,
+                    "upper guide points did not follow the repositioned Le Fort segment");
+        require(window.activeSplintDesign()->lowerPoints == lowerBefore, "lower guide points moved with the maxilla");
+        double bounds[6];
+        window.splintSourceMesh(kLeFortSegLabel)->GetBounds(bounds);
+        require(std::abs(bounds[4] - 2.0) < 1e-6, "the splint source is not the repositioned segment");
+        waitFor([&] { return !window.m_splintPreview->isBusy(); }, 60000);
+        std::cout << "Splint follows reposition OK\n";
+    }
+
     // ORIENTACION with segmented bones only: the bones are oriented (as «Continuar sin match»).
     static void runOrientationWithBonesOnly()
     {
@@ -768,6 +813,15 @@ public:
                 "BSSO objects not created");
         window.osteotomyWizardNext();
 
+        // REPOSICIÓN only shows structures that can be hidden: not the combined proximal mesh.
+        window.setRepositionWorkspace(true);
+        settle();
+        require(window.m_repositionView->meshData(objectActorKey(kBssoProximalRightLabel)) != nullptr &&
+                    window.m_repositionView->meshData(objectActorKey(kBssoProximalLabel)) == nullptr,
+                "REPOSICIÓN shows the combined BSSO proximal mesh that no object entry can hide");
+        window.setOsteotomyWorkspace(true);
+        settle();
+
         // ── Genioplasty on the distal segment ─────────────────────────────
         window.selectOsteotomyType(static_cast<int>(OsteotomyType::Genioplasty));
         window.osteotomyWizardNext();
@@ -869,6 +923,7 @@ int main(int argc, char** argv)
         SplintWorkspaceTests::runModelGuide(artifacts);
         SplintWorkspaceTests::runCompositeWorkflow(artifacts);
         SplintWorkspaceTests::runOrientationWithBonesOnly();
+        SplintWorkspaceTests::runSplintFollowsReposition();
         SplintWorkspaceTests::runOsteotomyWorkflow(artifacts);
         if (!unexpectedDialogs.isEmpty()) {
             std::cerr << "FAIL unexpected dialogs: " << unexpectedDialogs.join(QStringLiteral(" | ")).toStdString() << '\n';

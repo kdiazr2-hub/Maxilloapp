@@ -66,6 +66,16 @@ bool RemoveDesign(std::vector<SplintDesign>& designs, int index, QString* error)
 bool SameFrame(const SplintOcclusalFrame& a, const SplintOcclusalFrame& b,
                double originToleranceMm = 0.05, double axisToleranceCos = 0.99995);
 
+// Rigid motion (row-major 4x4) that maps `from` onto `to` when both have the
+// same points in the same order (a repositioned copy); nullopt when the point
+// counts differ or the change is not rigid within toleranceMm.
+using SplintMatrix = std::array<double, 16>;
+std::optional<SplintMatrix> RigidMotion(vtkPolyData* from, vtkPolyData* to, double toleranceMm = 0.05);
+SplintMatrix IdentityMatrix();
+SplintMatrix Compose(const SplintMatrix& second, const SplintMatrix& first); // second ∘ first
+SplintPoint3 TransformPoint(const SplintMatrix& matrix, const SplintPoint3& point);
+SplintPoint3 TransformDirection(const SplintMatrix& matrix, const SplintPoint3& direction);
+
 // Bracket marks: a new mark is skipped when one lies within half the brush
 // radius; unmarking removes the marks whose centre is within the radius.
 bool AddBracketMark(SplintExtras& extras, const SplintPoint3& center, double radiusMm);

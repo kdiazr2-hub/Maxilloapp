@@ -3,6 +3,9 @@
 #include <QJsonValue>
 #include <QUuid>
 
+#include <vtkMath.h>
+#include <vtkPolyData.h>
+
 #include <algorithm>
 #include <cmath>
 
@@ -238,6 +241,103 @@ bool SameFrame(const SplintOcclusalFrame& a, const SplintOcclusalFrame& b,
            dot(a.normal, b.normal) >= axisToleranceCos &&
            dot(a.axisU, b.axisU) >= axisToleranceCos &&
            dot(a.axisV, b.axisV) >= axisToleranceCos;
+}
+
+SplintMatrix IdentityMatrix()
+{
+    return {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+}
+
+SplintMatrix Compose(const SplintMatrix& second, const SplintMatrix& first)
+{
+    SplintMatrix out{};
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c) {
+            double sum = 0.0;
+            for (int k = 0; k < 4; ++k)
+                sum += second[static_cast<size_t>(r * 4 + k)] * first[static_cast<size_t>(k * 4 + c)];
+            out[static_cast<size_t>(r * 4 + c)] = sum;
+        }
+    return out;
+}
+
+SplintPoint3 TransformPoint(const SplintMatrix& m, const SplintPoint3& p)
+{
+    return {m[0] * p[0] + m[1] * p[1] + m[2] * p[2] + m[3],
+            m[4] * p[0] + m[5] * p[1] + m[6] * p[2] + m[7],
+            m[8] * p[0] + m[9] * p[1] + m[10] * p[2] + m[11]};
+}
+
+SplintPoint3 TransformDirection(const SplintMatrix& m, const SplintPoint3& d)
+{
+    return {m[0] * d[0] + m[1] * d[1] + m[2] * d[2],
+            m[4] * d[0] + m[5] * d[1] + m[6] * d[2],
+            m[8] * d[0] + m[9] * d[1] + m[10] * d[2]};
+}
+
+std::optional<SplintMatrix> RigidMotion(vtkPolyData* from, vtkPolyData* to, double toleranceMm)
+{
+    if (!from || !to || from->GetNumberOfPoints() < 3 || from->GetNumberOfPoints() != to->GetNumberOfPoints())
+        return std::nullopt;
+    const vtkIdType n = from->GetNumberOfPoints();
+    const vtkIdType step = std::max<vtkIdType>(1, n / 500);
+    std::vector<std::array<double, 3>> ps, qs;
+    double cp[3] = {0, 0, 0}, cq[3] = {0, 0, 0};
+    for (vtkIdType i = 0; i < n; i += step) {
+        std::array<double, 3> p{}, q{};
+        from->GetPoint(i, p.data());
+        to->GetPoint(i, q.data());
+        ps.push_back(p);
+        qs.push_back(q);
+        for (int a = 0; a < 3; ++a) {
+            cp[a] += p[static_cast<size_t>(a)];
+            cq[a] += q[static_cast<size_t>(a)];
+        }
+    }
+    const double count = static_cast<double>(ps.size());
+    for (int a = 0; a < 3; ++a) {
+        cp[a] /= count;
+        cq[a] /= count;
+    }
+    double h[3][3] = {};
+    for (size_t i = 0; i < ps.size(); ++i)
+        for (int r = 0; r < 3; ++r)
+            for (int c = 0; c < 3; ++c)
+                h[r][c] += (ps[i][static_cast<size_t>(r)] - cp[r]) * (qs[i][static_cast<size_t>(c)] - cq[c]);
+    double u[3][3] = {}, w[3] = {}, vt[3][3] = {};
+    vtkMath::SingularValueDecomposition3x3(h, u, w, vt);
+    // R = V Uᵀ (Kabsch), with a reflection fix.
+    const auto rotation = [&u, &vt](double sign) {
+        std::array<std::array<double, 3>, 3> r{};
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j) {
+                double sum = 0.0;
+                for (int k = 0; k < 3; ++k)
+                    sum += vt[k][i] * (k == 2 ? sign : 1.0) * u[j][k];
+                r[static_cast<size_t>(i)][static_cast<size_t>(j)] = sum;
+            }
+        return r;
+    };
+    auto r = rotation(1.0);
+    const double det = r[0][0] * (r[1][1] * r[2][2] - r[1][2] * r[2][1]) -
+                       r[0][1] * (r[1][0] * r[2][2] - r[1][2] * r[2][0]) +
+                       r[0][2] * (r[1][0] * r[2][1] - r[1][1] * r[2][0]);
+    if (det < 0.0)
+        r = rotation(-1.0);
+    SplintMatrix m = IdentityMatrix();
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j)
+            m[static_cast<size_t>(i * 4 + j)] = r[static_cast<size_t>(i)][static_cast<size_t>(j)];
+        m[static_cast<size_t>(i * 4 + 3)] = cq[i] - (r[static_cast<size_t>(i)][0] * cp[0] + r[static_cast<size_t>(i)][1] * cp[1] +
+                                                     r[static_cast<size_t>(i)][2] * cp[2]);
+    }
+    for (size_t i = 0; i < ps.size(); ++i) {
+        const SplintPoint3 mapped = TransformPoint(m, ps[i]);
+        const double dx = mapped[0] - qs[i][0], dy = mapped[1] - qs[i][1], dz = mapped[2] - qs[i][2];
+        if (std::sqrt(dx * dx + dy * dy + dz * dz) > toleranceMm)
+            return std::nullopt;
+    }
+    return m;
 }
 
 bool AddBracketMark(SplintExtras& extras, const SplintPoint3& center, double radiusMm)

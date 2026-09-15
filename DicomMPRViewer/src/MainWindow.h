@@ -11,6 +11,7 @@
 #include "AppStateManager.h"
 #include "SplintDesignCore.h"
 #include "OsteotomyCore.h"
+#include <QPointer>
 #include "CompositeBlockCore.h"
 #include "RegistrationResult.h"
 
@@ -41,6 +42,7 @@ class Mesh3DView;
 class MeasurementTool;
 class SplintDesignPanel;
 class OsteotomyWizardPanel;
+class SegmentationProgressDialog;
 class SplintPreviewScheduler;
 
 QT_BEGIN_NAMESPACE
@@ -954,7 +956,20 @@ private:
     {
         QString fingerprint;
         vtkSmartPointer<vtkPolyData> mesh;
+        quint64 revision = 0; // increments whenever the source mesh changes
+        // Rigid motion from revision i to i + 1; nullopt when the change was not rigid.
+        std::vector<std::optional<SplintDesignCore::SplintMatrix>> motions;
     };
+    // Revision of each jaw source the active design's points were last aligned with.
+    struct SplintDesignSourceState
+    {
+        int choice = 0;
+        quint64 revision = 0;
+        bool valid = false;
+    };
+    std::map<QString, std::array<SplintDesignSourceState, 2>> m_splintDesignSourceState;
+    // Guide points and extras follow rigid moves of their source (e.g. REPOSICIÓN).
+    void followSplintSourceMotion();
     // Private copies of the source meshes, stable while unchanged so the
     // preview cache is reused and the worker never sees in-place edits.
     mutable std::map<int, SplintSourceCacheEntry> m_splintSourceCache;
@@ -993,6 +1008,11 @@ private:
     void restoreCompositeBlocks(const ProjectState& state);
     // Composites copied from the segmented bones (no intraoral scan); false without bones.
     bool createBoneOnlyComposites();
+    QVector<int> repositionStructureLabels() const;
+    // Automatic segmentation progress dialog.
+    void closeSegmentationProgress();
+    void onSegmentationCancelled();
+    QPointer<SegmentationProgressDialog> m_segmentationProgressDialog;
     // Composite region drawn with points around the scan (default method).
     bool compositePointsMethodActive() const;
     void onCompositeContourPointAdded(int group, double x, double y, double z);

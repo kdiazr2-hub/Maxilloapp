@@ -3,8 +3,11 @@
 #include <QObject>
 #include <QString>
 #include <vtkSmartPointer.h>
+#include "SegmentationProgressCore.h"
+#include <array>
 
 class vtkImageData;
+class QProcess;
 
 enum class SegmentationTarget
 {
@@ -27,6 +30,7 @@ public:
                          const QString& outputDirectory,
                          SegmentationTarget target) = 0;
     virtual void cancel() = 0;
+    bool runActive() const { return m_runActive; }
 
     void setAirwaySeed(double x, double y, double z) {
         m_airwaySeed[0] = x;
@@ -64,8 +68,18 @@ signals:
     void statusChanged(const QString& status);
     void segmentationFinished(const QString& outputSegmentationPath);
     void errorOccurred(const QString& error);
+    void cancelled();
 
 protected:
+    void beginRun();
+    void failRun(const QString& error);
+    void succeedRun(const QString& path);
+    void finishCancelled();
+    void publishProcessProgress(const QByteArray& data, bool stderrChannel = false, bool flush = false);
+    void stopProcessTree(QProcess* process);
+    bool m_runActive = false;
+    bool m_cancelRequested = false;
+    SegmentationProgressCore m_stdoutProgress, m_stderrProgress;
     std::array<double, 3> m_airwaySeed = {0.0, 0.0, 0.0};
     bool m_hasAirwaySeed = false;
     std::array<double, 3> m_airwaySeed1 = {0.0, 0.0, 0.0};

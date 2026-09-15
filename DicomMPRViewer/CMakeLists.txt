@@ -87,6 +87,8 @@ set(SOURCES
     src/MeasurementOverlay.cpp
     src/MeasurementSerialization.cpp
     src/AISegmentationService.cpp
+    src/SegmentationProgressCore.cpp
+    src/SegmentationProgressDialog.cpp
     src/StandaloneDentalSegmentatorService.cpp
     src/SlicerDentalSegmentatorService.cpp
     src/NrrdVolumeExporter.cpp
@@ -147,6 +149,8 @@ set(HEADERS
     src/MeasurementOverlay.h
     src/MeasurementSerialization.h
     src/AISegmentationService.h
+    src/SegmentationProgressCore.h
+    src/SegmentationProgressDialog.h
     src/StandaloneDentalSegmentatorService.h
     src/SlicerDentalSegmentatorService.h
     src/NrrdVolumeExporter.h
@@ -280,6 +284,8 @@ add_core_test(ProjectSerializerTests tests/ProjectSerializerTests.cpp
     src/SplintDesignCore.cpp src/SplintHeightmapGenerator.cpp src/CompositeBlockCore.cpp)
 add_core_test(CompositeBlockTests tests/CompositeBlockTests.cpp src/CompositeBlockCore.cpp)
 add_core_test(MeshRepairTests tests/MeshRepairTests.cpp src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)
+add_core_test(SegmentationProgressTests tests/SegmentationProgressTests.cpp src/SegmentationProgressCore.cpp
+    src/AISegmentationService.cpp src/AISegmentationService.h)
 add_core_test(MaskToObjectTests tests/MaskToObjectTests.cpp src/MaskToObjectCore.cpp
     src/MeshGenerator.cpp src/BoneCavityFill.cpp)
 add_core_test(ModelWorkflowTests tests/ModelWorkflowTests.cpp src/ModelWorkflowCore.cpp)

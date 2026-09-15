@@ -306,6 +306,8 @@ StandaloneDentalSegmentatorService::StandaloneDentalSegmentatorService(QObject* 
     connect(m_process, &QProcess::readyReadStandardError,
             this, &StandaloneDentalSegmentatorService::onReadyReadStderr);
     connect(m_process, &QProcess::started, this, [this] {
+        if (!m_runActive || m_cancelRequested)
+            return;
         emit progressChanged(35);
         emit statusChanged("DentalSegmentator standalone iniciado.");
     });
@@ -317,7 +319,11 @@ StandaloneDentalSegmentatorService::StandaloneDentalSegmentatorService(QObject* 
 
 StandaloneDentalSegmentatorService::~StandaloneDentalSegmentatorService()
 {
-    cancel();
+    if (m_process && m_process->state() != QProcess::NotRunning) {
+        m_process->disconnect(this);
+        m_process->kill();
+        m_process->waitForFinished(2000);
+    }
 }
 
 bool StandaloneDentalSegmentatorService::isRunning() const
@@ -335,7 +341,7 @@ void StandaloneDentalSegmentatorService::segment(
         emit errorOccurred("No hay volumen cargado para segmentar.");
         return;
     }
-    if (isRunning()) {
+    if (isRunning() || runActive()) {
         emit errorOccurred("Ya hay una segmentacion en progreso.");
         return;
     }
@@ -349,10 +355,12 @@ void StandaloneDentalSegmentatorService::segment(
     m_externalCommand = resolveExternalCommand(inputPath, outputPath, target);
 
     if (m_externalCommand.isValid()) {
+        beginRun();
         emit statusChanged(QString("Exportando TAC para DentalSegmentator %1...")
                                .arg(targetName(target)));
         emit progressChanged(5);
     } else if (canUseLocalFallback(target)) {
+        beginRun();
         emit statusChanged(QString("Segmentando %1 localmente por HU, sin Slicer.exe.")
                                .arg(targetName(target)));
         emit progressChanged(10);
@@ -402,17 +410,27 @@ void StandaloneDentalSegmentatorService::segment(
 
 void StandaloneDentalSegmentatorService::cancel()
 {
+    if (!m_runActive || m_cancelRequested)
+        return;
+    m_cancelRequested = true;
     if (m_process && m_process->state() != QProcess::NotRunning) {
-        m_process->kill();
-        m_process->waitForFinished(2000);
+        stopProcessTree(m_process); // finished → onProcessFinished → cancelled
+        return;
     }
+    if (m_workerWatcher && m_workerWatcher->isRunning())
+        return; // export in progress → onWorkerFinished → cancelled
+    finishCancelled();
 }
 
 void StandaloneDentalSegmentatorService::onWorkerFinished()
 {
     const StandaloneSegmentationResult result = m_workerWatcher->result();
+    if (m_cancelRequested) {
+        finishCancelled();
+        return;
+    }
     if (!result.ok) {
-        emit errorOccurred("Error preparando segmentacion: " + result.error);
+        failRun("Error preparando segmentacion: " + result.error);
         return;
     }
 
@@ -425,7 +443,7 @@ void StandaloneDentalSegmentatorService::onWorkerFinished()
     emit progressChanged(100);
     emit statusChanged(QString("Segmentacion local finalizada: %1.")
                            .arg(targetName(result.target)));
-    emit segmentationFinished(result.outputPath);
+    succeedRun(result.outputPath);
 }
 
 void StandaloneDentalSegmentatorService::startExternalProcess(const QString&,
@@ -435,7 +453,7 @@ void StandaloneDentalSegmentatorService::startExternalProcess(const QString&,
     m_processLog.clear();
     const QString program = resolveExecutable(m_externalCommand.program);
     if (program.isEmpty()) {
-        emit errorOccurred(
+        failRun(
             "No se encontro el ejecutable para DentalSegmentator standalone:\n" +
             m_externalCommand.program +
             "\n\nConfigure DENTALSEGMENTATOR_PYTHON con la ruta completa de python.exe.");
@@ -446,43 +464,47 @@ void StandaloneDentalSegmentatorService::startExternalProcess(const QString&,
     m_process->setWorkingDirectory(m_outputDirectory);
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     env.insert("KMP_DUPLICATE_LIB_OK", "TRUE");
+    // Progress lines are parsed as UTF-8 and must arrive as soon as they are printed.
+    env.insert("PYTHONIOENCODING", "utf-8");
+    env.insert("PYTHONUNBUFFERED", "1");
     m_process->setProcessEnvironment(env);
     m_process->start();
 }
 
 void StandaloneDentalSegmentatorService::onReadyReadStdout()
 {
-    appendProcessText(m_process->readAllStandardOutput());
+    appendProcessText(m_process->readAllStandardOutput(), false);
 }
 
 void StandaloneDentalSegmentatorService::onReadyReadStderr()
 {
-    appendProcessText(m_process->readAllStandardError());
+    appendProcessText(m_process->readAllStandardError(), true);
 }
 
-void StandaloneDentalSegmentatorService::appendProcessText(const QByteArray& data)
+void StandaloneDentalSegmentatorService::appendProcessText(const QByteArray& data, bool stderrChannel)
 {
-    const QString text = QString::fromLocal8Bit(data).trimmed();
-    if (text.isEmpty()) return;
-
-    m_processLog += text + "\n";
-    emit statusChanged(text);
-    if (text.contains('%')) {
-        const QRegularExpression re("(\\d{1,3})\\s*%");
-        const auto match = re.match(text);
-        if (match.hasMatch()) {
-            const int p = std::clamp(match.captured(1).toInt(), 35, 95);
-            emit progressChanged(p);
-        }
-    }
+    if (data.isEmpty())
+        return;
+    m_processLog += QString::fromUtf8(data);
+    if (m_processLog.size() > 200000)
+        m_processLog = m_processLog.right(100000);
+    // Only explicit milestones ("45% Ejecutando…" or MAXILLO_PROGRESS) reach the
+    // progress dialog; nnU-Net progress bars and logs stay in the error log.
+    publishProcessProgress(data, stderrChannel);
 }
 
 void StandaloneDentalSegmentatorService::onProcessFinished(
     int exitCode,
     QProcess::ExitStatus status)
 {
+    publishProcessProgress(QByteArray(), false, true);
+    publishProcessProgress(QByteArray(), true, true);
+    if (m_cancelRequested) {
+        finishCancelled();
+        return;
+    }
     if (status != QProcess::NormalExit || exitCode != 0) {
-        emit errorOccurred(
+        failRun(
             QString("DentalSegmentator standalone fallo. Codigo: %1\n\n%2")
                 .arg(exitCode)
                 .arg(m_processLog.right(6000)));
@@ -490,19 +512,23 @@ void StandaloneDentalSegmentatorService::onProcessFinished(
     }
 
     if (!QFileInfo::exists(m_outputSegmentationPath)) {
-        emit errorOccurred("DentalSegmentator termino, pero no genero output_segmentation.nrrd.");
+        failRun("DentalSegmentator termino, pero no genero output_segmentation.nrrd.");
         return;
     }
 
     emit progressChanged(100);
     emit statusChanged("Segmentacion DentalSegmentator finalizada.");
-    emit segmentationFinished(m_outputSegmentationPath);
+    succeedRun(m_outputSegmentationPath);
 }
 
 void StandaloneDentalSegmentatorService::onProcessError(QProcess::ProcessError)
 {
     if (m_process->state() == QProcess::NotRunning) {
-        emit errorOccurred(
+        if (m_cancelRequested) {
+            finishCancelled();
+            return;
+        }
+        failRun(
             "Error en DentalSegmentator standalone: " + m_process->errorString() +
             "\n\nEjecutable: " + m_process->program() +
             "\n\nLog:\n" + m_processLog.right(4000) +

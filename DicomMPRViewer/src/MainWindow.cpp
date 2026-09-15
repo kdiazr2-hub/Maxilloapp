@@ -22,6 +22,7 @@
 #include "SeriesSelectionDialog.h"
 #include "SegmentationImporter.h"
 #include "StandaloneDentalSegmentatorService.h"
+#include "SegmentationProgressDialog.h"
 #include "SplintGenerator.h"
 #include "TransformCore.h"
 #include "GeometryValidation.h"
@@ -620,6 +621,8 @@ MainWindow::MainWindow(QWidget* parent)
             this, &MainWindow::onSegmentationFinished);
     connect(m_aiSegmentationService, &AISegmentationService::errorOccurred,
             this, &MainWindow::onSegmentationError);
+    connect(m_aiSegmentationService, &AISegmentationService::cancelled,
+            this, &MainWindow::onSegmentationCancelled);
 
     // ── Bone splitter (Max/Mand) ───────────────────────────────────────────
     m_boneSplitter = new BoneSplitterService(this);
@@ -4735,13 +4738,17 @@ QList<int> MainWindow::selectedRepositionTargetLabels() const
     return labels;
 }
 
-static QVector<int> repositionStructureLabels()
+QVector<int> MainWindow::repositionStructureLabels() const
 {
-    return {kLeFortSegLabel, kBssoDistalLabel, kBssoProximalRightLabel,
-            kBssoProximalLeftLabel, kBssoProximalLabel, kGenioSegmentLabel,
-            kGenioBodyLabel, kBiteScanLabel, kUpperCompositeLabel,
-            kLowerCompositeLabel, kLeFortCranialLabel,
-            kIntermediateSplintLabel, kFinalSplintLabel};
+    QVector<int> labels{kLeFortSegLabel, kBssoDistalLabel, kBssoProximalRightLabel, kBssoProximalLeftLabel};
+    // The combined proximal mesh has no object entry, so it could never be hidden:
+    // once the right/left rami exist it is not a structure of its own.
+    const auto has = [](const vtkSmartPointer<vtkPolyData>& mesh) { return mesh && mesh->GetNumberOfPoints() > 0; };
+    if (!has(m_bssoRightProximalMesh) && !has(m_bssoLeftProximalMesh))
+        labels << kBssoProximalLabel;
+    labels << kGenioSegmentLabel << kGenioBodyLabel << kBiteScanLabel << kUpperCompositeLabel << kLowerCompositeLabel
+           << kLeFortCranialLabel << kIntermediateSplintLabel << kFinalSplintLabel;
+    return labels;
 }
 
 void MainWindow::updateRepositionTargetList()
@@ -7642,6 +7649,17 @@ void MainWindow::startAISegmentation(SegmentationTarget target)
     }
 
     statusBar()->showMessage(tr("Segmentando el TAC cargado sin Slicer.exe..."));
+    // Progress dialog: stage, percentage (or busy bar), elapsed time and Cancelar.
+    closeSegmentationProgress();
+    auto* dialog = new SegmentationProgressDialog(this);
+    m_segmentationProgressDialog = dialog;
+    connect(m_aiSegmentationService, &AISegmentationService::statusChanged, dialog, &SegmentationProgressDialog::setStage);
+    connect(m_aiSegmentationService, &AISegmentationService::progressChanged, dialog, &SegmentationProgressDialog::setProgress);
+    connect(dialog, &SegmentationProgressDialog::cancelRequested, this, [this] {
+        if (m_aiSegmentationService)
+            m_aiSegmentationService->cancel();
+    });
+    dialog->show();
     m_aiSegmentationService->segment(m_volume, m_segmentationOutputDir, target);
 }
 
@@ -7690,8 +7708,27 @@ static bool mergeIntoLabelmap(vtkSmartPointer<vtkImageData>& dst,
     return true;
 }
 
+void MainWindow::closeSegmentationProgress()
+{
+    if (!m_segmentationProgressDialog)
+        return;
+    m_segmentationProgressDialog->hide();
+    m_segmentationProgressDialog->deleteLater();
+    m_segmentationProgressDialog = nullptr;
+}
+
+void MainWindow::onSegmentationCancelled()
+{
+    closeSegmentationProgress();
+    if (m_progressBar) m_progressBar->setVisible(false);
+    if (m_aiSegmentationService)
+        m_aiSegmentationService->clearAirwaySeed();
+    statusBar()->showMessage(tr("Segmentación cancelada. La segmentación actual no cambió."));
+}
+
 void MainWindow::onSegmentationFinished(const QString& outputSegmentationPath)
 {
+    closeSegmentationProgress();
     QString error;
     auto newLabelmap = SegmentationImporter::importLabelmap(outputSegmentationPath, &error);
     if (!newLabelmap) {
@@ -7765,6 +7802,7 @@ void MainWindow::onSegmentationFinished(const QString& outputSegmentationPath)
 
 void MainWindow::onSegmentationError(const QString& error)
 {
+    closeSegmentationProgress();
     if (m_progressBar) m_progressBar->setVisible(false);
     if (m_aiSegmentationService) {
         m_aiSegmentationService->clearAirwaySeed();

@@ -1,5 +1,12 @@
 #include "SplintDesignCore.h"
 
+#include <vtkPolyData.h>
+#include <vtkSphereSource.h>
+#include <vtkTransform.h>
+#include <vtkTransformPolyDataFilter.h>
+
+#include <cmath>
+
 #include <QJsonDocument>
 
 #include <functional>
@@ -221,6 +228,48 @@ void testSameFrame()
 }
 } // namespace
 
+void testRigidMotion()
+{
+    auto sphere = vtkSmartPointer<vtkSphereSource>::New();
+    sphere->SetRadius(10.0);
+    sphere->SetThetaResolution(24);
+    sphere->SetPhiResolution(24);
+    sphere->Update();
+    auto transform = vtkSmartPointer<vtkTransform>::New();
+    transform->Translate(1.0, 2.0, 3.0);
+    transform->RotateZ(12.0);
+    transform->RotateX(-7.0);
+    auto moved = vtkSmartPointer<vtkTransformPolyDataFilter>::New();
+    moved->SetInputConnection(sphere->GetOutputPort());
+    moved->SetTransform(transform);
+    moved->Update();
+
+    const auto motion = SplintDesignCore::RigidMotion(sphere->GetOutput(), moved->GetOutput());
+    require(motion.has_value(), "rigid motion not recovered");
+    const SplintPoint3 probe{3.0, -4.0, 5.0};
+    double expected[3] = {};
+    transform->TransformPoint(probe.data(), expected);
+    const SplintPoint3 mapped = SplintDesignCore::TransformPoint(*motion, probe);
+    require(std::abs(mapped[0] - expected[0]) < 1e-6 && std::abs(mapped[1] - expected[1]) < 1e-6 &&
+                std::abs(mapped[2] - expected[2]) < 1e-6,
+            "rigid motion maps a point incorrectly");
+
+    auto scale = vtkSmartPointer<vtkTransform>::New();
+    scale->Scale(1.1, 1.1, 1.1);
+    auto scaled = vtkSmartPointer<vtkTransformPolyDataFilter>::New();
+    scaled->SetInputConnection(sphere->GetOutputPort());
+    scaled->SetTransform(scale);
+    scaled->Update();
+    require(!SplintDesignCore::RigidMotion(sphere->GetOutput(), scaled->GetOutput()).has_value(), "scaling accepted as rigid");
+
+    const auto twice = SplintDesignCore::Compose(*motion, *motion);
+    const SplintPoint3 once = SplintDesignCore::TransformPoint(*motion, SplintDesignCore::TransformPoint(*motion, probe));
+    const SplintPoint3 composed = SplintDesignCore::TransformPoint(twice, probe);
+    require(std::abs(once[0] - composed[0]) < 1e-9 && std::abs(once[1] - composed[1]) < 1e-9 &&
+                std::abs(once[2] - composed[2]) < 1e-9,
+            "composed motion differs from applying it twice");
+}
+
 void testExtras()
 {
     const auto absd = [](double v) { return v < 0.0 ? -v : v; };
@@ -296,6 +345,7 @@ int main()
         {"legacy and invalid json", testLegacyAndInvalidJson},
         {"same frame", testSameFrame},
         {"extras", testExtras},
+        {"rigid motion", testRigidMotion},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {
