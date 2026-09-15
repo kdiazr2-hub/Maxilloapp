@@ -47,6 +47,7 @@ class SplintPreviewScheduler;
 
 QT_BEGIN_NAMESPACE
 class QLabel;
+class QVBoxLayout;
 class QDialog;
 class QGroupBox;
 class QAction;
@@ -200,6 +201,11 @@ private:
     void updateModelWorkflowUi();
     void updateModelWorkflowActions();
     QWidget* buildModelGuide(QWidget* parent);
+    // MODELOS guided panel on the left (MainWindowModels.cpp).
+    QWidget* buildModelControlPanel(QWidget* parent);
+    void populateModelControlPanel();
+    QVBoxLayout* m_modelControlButtons = nullptr;
+    bool m_modelControlPopulated = false;
     QWidget* m_modelGuide = nullptr;
     QVector<QLabel*> m_modelGuideSteps;
     QLabel* m_modelGuideMessage = nullptr;

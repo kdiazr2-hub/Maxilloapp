@@ -218,6 +218,14 @@ void testContourComposite()
     const auto vestibuleBounds = dentalBounds(ExtractPart(vestibuleResult.composite, DentalPart));
     require(vestibuleBounds[5] <= gingiva + 1e-6, "scan above the line of the points was kept");
 
+    // An open scan border on the line gets a short curtain toward the bone, closing the gap to the CT.
+    ArchOptions openOptions;
+    openOptions.openScan = true;
+    const CompositeBlockResult openResult = CreateContourComposite(bone(), upperTeeth(openOptions), block, contour);
+    require(openResult.ok, "open-scan contour composite failed: " + openResult.error.toStdString());
+    const auto openBounds = dentalBounds(ExtractPart(openResult.composite, DentalPart));
+    require(openBounds[5] > gingiva + 1.5 && openBounds[5] < gingiva + 2.8, "the scan border has no curtain toward the bone");
+
     // Proclined incisors (and brackets) reach several millimetres labial to the gingival points in the
     // occlusal view: that scan is kept and the CT crowns there are replaced.
     const Box proclined{-6.0, 6.0, kArchRy + 8.0, kArchRy + 12.0, gingiva - 5.0, gingiva - 1.0};

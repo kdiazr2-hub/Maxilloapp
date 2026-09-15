@@ -14,6 +14,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QListWidget>
+#include <QToolButton>
 #include <QDialog>
 #include <QDir>
 #include <QElapsedTimer>
@@ -384,6 +385,18 @@ public:
         require(window.m_modelGuideSteps[2]->property("current").toBool(), "guide did not advance to registration");
         window.onDentalPointPicked(objectActorKey(kUpperArchLabel), 0, 10, 0);
         require(!window.m_matchUpperAct->isEnabled(), "unpaired extra point allowed registration");
+        // Guided panel on the left: the step actions are buttons there, not in the ribbon.
+        settle();
+        bool panelButton = false;
+        for (auto* button : window.findChildren<QToolButton*>())
+            panelButton = panelButton || (button->defaultAction() == window.m_upperPtsAct && button->isVisibleTo(&window));
+        require(window.m_modelControlPopulated && panelButton, "point actions are not in the MODELOS side panel");
+        // Atrás undoes the last step of the jaw: first the capture, then the points; the STL stays.
+        window.goBackModelWorkflow();
+        window.goBackModelWorkflow();
+        require(window.m_maxillaBonePoints.isEmpty() && window.m_upperArchPoints.isEmpty() && window.m_upperArchMesh,
+                "Atrás did not reset the points of the current step");
+        require(window.m_modelGuideSteps[1]->property("current").toBool(), "guide did not return to the points step");
         for (QSize size : {QSize(1366, 768), QSize(1700, 950)}) {
             window.resize(size);
             settle();

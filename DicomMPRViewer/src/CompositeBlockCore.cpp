@@ -29,6 +29,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <functional>
 #include <limits>
 #include <thread>
@@ -507,6 +508,68 @@ double contourFieldLocal(const ContourFrame& frame, const Vec3& d, const Composi
     return belowLineField(frame, d, block, kContourBoneMarginMm);
 }
 
+// Short curtain from the scan's cut border toward the bone: the gingiva lies in front of the bone
+// surface, so without it a dark slit shows between the scan and the CT.
+constexpr double kContourSkirtMm = 2.0;
+
+vtkSmartPointer<vtkPolyData> contourSkirt(vtkPolyData* dental, const ContourFrame& frame, const CompositeCutBlock& block)
+{
+    struct Edge
+    {
+        int count = 0;
+        vtkIdType a = 0;
+        vtkIdType b = 0;
+    };
+    std::unordered_map<std::uint64_t, Edge> edges;
+    for (vtkIdType c = 0; c < dental->GetNumberOfCells(); ++c) {
+        vtkIdType count = 0;
+        const vtkIdType* ids = nullptr;
+        dental->GetCellPoints(c, count, ids);
+        for (vtkIdType i = 0; i < count; ++i) {
+            const vtkIdType a = ids[i];
+            const vtkIdType b = ids[(i + 1) % count];
+            const std::uint64_t key =
+                (static_cast<std::uint64_t>(std::min(a, b)) << 32) | static_cast<std::uint64_t>(std::max(a, b));
+            Edge& edge = edges[key];
+            if (edge.count++ == 0) {
+                edge.a = a;
+                edge.b = b;
+            }
+        }
+    }
+    auto points = vtkSmartPointer<vtkPoints>::New();
+    auto polys = vtkSmartPointer<vtkCellArray>::New();
+    const Vec3 lift = mul(block.axisZ, kContourSkirtMm);
+    for (const auto& entry : edges) {
+        const Edge& edge = entry.second;
+        if (edge.count != 1)
+            continue;
+        double pa[3], pb[3];
+        dental->GetPoint(edge.a, pa);
+        dental->GetPoint(edge.b, pb);
+        bool onLine = true;
+        for (const double* p : {pa, pb}) {
+            const Vec3 d = sub({p[0], p[1], p[2]}, block.center);
+            onLine = onLine && std::abs(dot(d, block.axisZ) - lineHeight(frame, dot(d, block.axisX), dot(d, block.axisY))) < 1.0;
+        }
+        if (!onLine)
+            continue; // other open borders of the scan keep their shape
+        // Reversed border edge, so the curtain continues the scan surface orientation.
+        const vtkIdType b0 = points->InsertNextPoint(pb);
+        const vtkIdType a0 = points->InsertNextPoint(pa);
+        const vtkIdType a1 = points->InsertNextPoint(pa[0] + lift[0], pa[1] + lift[1], pa[2] + lift[2]);
+        const vtkIdType b1 = points->InsertNextPoint(pb[0] + lift[0], pb[1] + lift[1], pb[2] + lift[2]);
+        const vtkIdType first[3] = {b0, a0, a1};
+        const vtkIdType second[3] = {b0, a1, b1};
+        polys->InsertNextCell(3, first);
+        polys->InsertNextCell(3, second);
+    }
+    auto skirt = vtkSmartPointer<vtkPolyData>::New();
+    skirt->SetPoints(points);
+    skirt->SetPolys(polys);
+    return skirt;
+}
+
 // Conforming midpoint refinement of triangle edges longer than maxEdgeMm that
 // touch the box [lo, hi]: clipping by a curved field only interpolates along
 // edges, so long edges crossing the contour must be split first.
@@ -788,7 +851,17 @@ CompositeBlockResult CreateContourComposite(vtkPolyData* bone, vtkPolyData* dent
         scanHi[k] = std::max(scanHi[k], scanBounds[2 * k + 1] + 2.0);
     }
     constexpr double kMaxEdgeMm = 1.0;
-    const auto dentalPart = TagPart(clipByField(refineNear(dentalScan, scanLo, scanHi, kMaxEdgeMm), scanField, true), DentalPart);
+    const auto dentalCut = clipByField(refineNear(dentalScan, scanLo, scanHi, kMaxEdgeMm), scanField, true);
+    vtkSmartPointer<vtkPolyData> dentalWithSkirt = dentalCut;
+    const auto skirt = contourSkirt(dentalCut, frame, block);
+    if (skirt->GetNumberOfPolys() > 0) {
+        auto append = vtkSmartPointer<vtkAppendPolyData>::New();
+        append->AddInputData(dentalCut);
+        append->AddInputData(skirt);
+        append->Update();
+        dentalWithSkirt = append->GetOutput();
+    }
+    const auto dentalPart = TagPart(dentalWithSkirt, DentalPart);
     const auto bonePart = TagPart(clipByField(refineNear(bone, lo, hi, kMaxEdgeMm), boneField, false), BonePart);
     result.boneCells = bonePart->GetNumberOfPolys();
     result.dentalCells = dentalPart->GetNumberOfPolys();

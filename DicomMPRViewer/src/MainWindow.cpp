@@ -1121,29 +1121,37 @@ void MainWindow::buildToolBar()
     {
         auto  mod  = addModule(tr("MODELOS"));
         auto* page = mod.first;
-        auto* row  = mod.second;
+        // The MODELOS actions live in the guided panel on the left of the workspace (MainWindowModels.cpp);
+        // the ribbon only points to it and the buttons created below stay in a hidden row.
+        auto* modelHint = new QLabel(tr("Siga los pasos en el panel izquierdo de Modelos."), page);
+        modelHint->setStyleSheet("color:#98989d; font-size:11px; padding-left:8px;");
+        mod.second->addWidget(modelHint);
+        mod.second->addStretch(1);
+        auto* hiddenRibbon = new QWidget(page);
+        hiddenRibbon->setVisible(false);
+        auto* row = new QHBoxLayout(hiddenRibbon);
 
-        m_modelBackAct = new QAction(tr("Volver"), this);
+        m_modelBackAct = new QAction(tr("Atrás: rehacer el paso"), this);
         m_modelBackAct->setEnabled(false);
         m_modelBackAct->setToolTip(tr("Volver al paso anterior del flujo de modelos."));
         connect(m_modelBackAct, &QAction::triggered, this, &MainWindow::goBackModelWorkflow);
         row->addWidget(makeActBtn(m_modelBackAct, page));
         addSep(row, page);
 
-        m_importUpperAct = new QAction(tr("STL\nSup"), this);
+        m_importUpperAct = new QAction(tr("Cargar STL superior"), this);
         m_importUpperAct->setEnabled(false);
         m_importUpperAct->setToolTip(tr("Importar escaneo intraoral superior."));
         connect(m_importUpperAct, &QAction::triggered, this, &MainWindow::importUpperArchStl);
         row->addWidget(makeActBtn(m_importUpperAct, page));
 
-        m_importLowerAct = new QAction(tr("STL\nInf"), this);
+        m_importLowerAct = new QAction(tr("Cargar STL inferior"), this);
         m_importLowerAct->setEnabled(false);
         m_importLowerAct->setToolTip(tr("Importar escaneo intraoral inferior."));
         connect(m_importLowerAct, &QAction::triggered, this, &MainWindow::importLowerArchStl);
         row->addWidget(makeActBtn(m_importLowerAct, page));
         addSep(row, page);
 
-        m_maxPtsAct = new QAction(tr("Pts\nMax"), this);
+        m_maxPtsAct = new QAction(tr("Puntos en el maxilar (TAC)"), this);
         m_maxPtsAct->setCheckable(true);
         m_maxPtsAct->setEnabled(false);
         m_maxPtsAct->setToolTip(tr("Seleccionar puntos homologos en el maxilar segmentado."));
@@ -1153,7 +1161,7 @@ void MainWindow::buildToolBar()
                 });
         row->addWidget(makeActBtn(m_maxPtsAct, page));
 
-        m_upperPtsAct = new QAction(tr("Pts\nSup"), this);
+        m_upperPtsAct = new QAction(tr("Puntos en el STL superior"), this);
         m_upperPtsAct->setCheckable(true);
         m_upperPtsAct->setEnabled(false);
         m_upperPtsAct->setToolTip(tr("Seleccionar puntos homologos en el STL superior."));
@@ -1163,14 +1171,14 @@ void MainWindow::buildToolBar()
                 });
         row->addWidget(makeActBtn(m_upperPtsAct, page));
 
-        m_matchUpperAct = new QAction(tr("Reg\nMax"), this);
+        m_matchUpperAct = new QAction(tr("Registrar STL superior"), this);
         m_matchUpperAct->setEnabled(false);
         m_matchUpperAct->setToolTip(tr("Registrar STL superior contra maxilar segmentado."));
         connect(m_matchUpperAct, &QAction::triggered, this, &MainWindow::alignUpperArchToMaxilla);
         row->addWidget(makeActBtn(m_matchUpperAct, page));
         addSep(row, page);
 
-        m_mandPtsAct = new QAction(tr("Pts\nMand"), this);
+        m_mandPtsAct = new QAction(tr("Puntos en la mandíbula (TAC)"), this);
         m_mandPtsAct->setCheckable(true);
         m_mandPtsAct->setEnabled(false);
         m_mandPtsAct->setToolTip(tr("Seleccionar puntos homologos en la mandibula segmentada."));
@@ -1180,7 +1188,7 @@ void MainWindow::buildToolBar()
                 });
         row->addWidget(makeActBtn(m_mandPtsAct, page));
 
-        m_lowerPtsAct = new QAction(tr("Pts\nInf"), this);
+        m_lowerPtsAct = new QAction(tr("Puntos en el STL inferior"), this);
         m_lowerPtsAct->setCheckable(true);
         m_lowerPtsAct->setEnabled(false);
         m_lowerPtsAct->setToolTip(tr("Seleccionar puntos homologos en el STL inferior."));
@@ -1190,21 +1198,21 @@ void MainWindow::buildToolBar()
                 });
         row->addWidget(makeActBtn(m_lowerPtsAct, page));
 
-        m_matchLowerAct = new QAction(tr("Reg\nMand"), this);
+        m_matchLowerAct = new QAction(tr("Registrar STL inferior"), this);
         m_matchLowerAct->setEnabled(false);
         m_matchLowerAct->setToolTip(tr("Registrar STL inferior contra mandibula segmentada."));
         connect(m_matchLowerAct, &QAction::triggered, this, &MainWindow::alignLowerArchToMandible);
         row->addWidget(makeActBtn(m_matchLowerAct, page));
         addSep(row, page);
 
-        m_matchBothAct = new QAction(tr("Reg\nAmbos"), this);
+        m_matchBothAct = new QAction(tr("Registrar ambos STL"), this);
         m_matchBothAct->setEnabled(false);
         m_matchBothAct->setToolTip(tr("Registrar STL superior e inferior cuando ambas arcadas tienen puntos suficientes."));
         connect(m_matchBothAct, &QAction::triggered, this, &MainWindow::alignBothDentalArches);
         row->addWidget(makeActBtn(m_matchBothAct, page));
         addSep(row, page);
 
-        m_adjustArchAct = new QAction(tr("Ajustar\nSTL"), this);
+        m_adjustArchAct = new QAction(tr("Ajustar escaneo (gizmo)"), this);
         m_adjustArchAct->setEnabled(false);
         m_adjustArchAct->setToolTip(tr("Activar gizmo para ajustar manualmente el STL registrado antes de crear el compuesto."));
         connect(m_adjustArchAct, &QAction::triggered, this, [this] {
@@ -1219,20 +1227,20 @@ void MainWindow::buildToolBar()
         });
         row->addWidget(makeActBtn(m_adjustArchAct, page));
 
-        m_acceptGizmoAct = new QAction(tr("Aceptar\nAjuste"), this);
+        m_acceptGizmoAct = new QAction(tr("Aceptar ajuste"), this);
         m_acceptGizmoAct->setEnabled(false);
         m_acceptGizmoAct->setToolTip(tr("Confirmar el ajuste manual del gizmo y actualizar el STL registrado."));
         connect(m_acceptGizmoAct, &QAction::triggered, this,
                 [this] { commitActiveDentalGizmos(true); });
         row->addWidget(makeActBtn(m_acceptGizmoAct, page));
 
-        m_compositeAct = new QAction(tr("Crear\nComp."), this);
+        m_compositeAct = new QAction(tr("Crear modelo compuesto"), this);
         m_compositeAct->setEnabled(false);
         m_compositeAct->setToolTip(tr("Crear modelo compuesto usando registros aceptados."));
         connect(m_compositeAct, &QAction::triggered, this, &MainWindow::createDentalCompositeModels);
         row->addWidget(makeActBtn(m_compositeAct, page));
 
-        m_continueNoMatchAct = new QAction(tr("Continuar\nsin match"), this);
+        m_continueNoMatchAct = new QAction(tr("Continuar sin escaneo"), this);
         m_continueNoMatchAct->setEnabled(false);
         m_continueNoMatchAct->setToolTip(
             tr("Pasar a orientacion usando solo las mallas TAC disponibles, sin STL intraoral."));
@@ -1240,19 +1248,19 @@ void MainWindow::buildToolBar()
                 this, &MainWindow::continueToOrientationWithoutMatch);
         row->addWidget(makeActBtn(m_continueNoMatchAct, page));
 
-        m_exportAct = new QAction(tr("Export\nSTL"), this);
+        m_exportAct = new QAction(tr("Exportar STL"), this);
         m_exportAct->setEnabled(false);
         m_exportAct->setToolTip(tr("Exportar el objeto seleccionado en coordenadas fisicas."));
         connect(m_exportAct, &QAction::triggered, this, &MainWindow::exportDentalCompositeStl);
         row->addWidget(makeActBtn(m_exportAct, page));
 
-        m_exportPackAct = new QAction(tr("Export\nReg"), this);
+        m_exportPackAct = new QAction(tr("Exportar registro"), this);
         m_exportPackAct->setEnabled(false);
         m_exportPackAct->setToolTip(tr("Exportar matrices y metricas del registro."));
         connect(m_exportPackAct, &QAction::triggered, this, &MainWindow::exportDentalRegistrationPackage);
         row->addWidget(makeActBtn(m_exportPackAct, page));
 
-        m_clearPtsAct = new QAction(tr("Limpiar\nPts"), this);
+        m_clearPtsAct = new QAction(tr("Borrar todos los puntos"), this);
         m_clearPtsAct->setEnabled(false);
         m_clearPtsAct->setToolTip(tr("Eliminar todos los puntos de registro."));
         connect(m_clearPtsAct, &QAction::triggered, this, [this] {
@@ -1265,7 +1273,7 @@ void MainWindow::buildToolBar()
         });
         row->addWidget(makeActBtn(m_clearPtsAct, page));
 
-        m_resetArchAct = new QAction(tr("Reset\nSTL"), this);
+        m_resetArchAct = new QAction(tr("Restaurar STL originales"), this);
         m_resetArchAct->setEnabled(false);
         m_resetArchAct->setToolTip(tr("Restaurar STL importados y descartar registros aceptados."));
         connect(m_resetArchAct, &QAction::triggered, this, [this] {
@@ -2334,10 +2342,15 @@ void MainWindow::buildCentralWidget()
     //         [ Crear Modelo Compuesto ]
     //
     auto* modelPanel = new QWidget(m_viewModeStack);
-    auto* modelPanelLayout = new QVBoxLayout(modelPanel);
+    auto* modelRow = new QHBoxLayout(modelPanel);
+    modelRow->setContentsMargins(0, 0, 0, 0);
+    modelRow->setSpacing(0);
+    modelRow->addWidget(buildModelControlPanel(modelPanel));
+    auto* modelContent = new QWidget(modelPanel);
+    modelRow->addWidget(modelContent, 1);
+    auto* modelPanelLayout = new QVBoxLayout(modelContent);
     modelPanelLayout->setContentsMargins(0, 0, 0, 0);
     modelPanelLayout->setSpacing(0);
-    modelPanelLayout->addWidget(buildModelGuide(modelPanel));
 
     // ── Vertical splitter: top pair | match preview ────────────────────
     m_modelSplitter = new QSplitter(Qt::Vertical, modelPanel);
@@ -6552,7 +6565,8 @@ void MainWindow::updateModelWorkflowActions()
     showOnly(m_resetArchAct, false, false);
 
     if (m_compositeStage != CompositeStage::None) {
-        // The block / review panel drives the workflow until the composite is accepted.
+        // The block / review panel drives the workflow until the composite is accepted; Atrás stays available.
+        showOnly(m_modelBackAct, true, !m_compositeInProgress);
         if (m_compositeButton) m_compositeButton->setVisible(false);
         return;
     }
@@ -6681,22 +6695,124 @@ void MainWindow::goBackModelWorkflow()
         return;
     }
 
+    if (m_compositeStage == CompositeStage::Review) {
+        backToCompositeBlockStage();
+        updateButtonStates();
+        return;
+    }
+    if (m_compositeStage == CompositeStage::Block) {
+        cancelCompositeStage();
+        updateButtonStates();
+        statusBar()->showMessage(tr("Volvió al registro: ajuste el escaneo o vuelva a crear el compuesto."));
+        return;
+    }
+
     if (m_dentalGizmoActive) {
         commitActiveDentalGizmos(false);
         statusBar()->showMessage(tr("Ajuste manual aceptado antes de volver."));
         return;
     }
 
+    // Undo the last completed step of the current jaw, so it can be done again.
     const int step = m_modelStepStack ? m_modelStepStack->currentIndex() : 0;
-    if (step == 1 && m_modelStepStack) {
-        m_modelStepStack->setCurrentIndex(0);
+    const bool upper = step == 0;
+    const QString jaw = upper ? tr("superior") : tr("inferior");
+    const int archLabel = upper ? kUpperArchLabel : kLowerArchLabel;
+    const int compositeLabel = upper ? kUpperCompositeLabel : kLowerCompositeLabel;
+    auto& composite = upper ? m_upperCompositeMesh : m_lowerCompositeMesh;
+    auto& arch = upper ? m_upperArchMesh : m_lowerArchMesh;
+    auto& original = upper ? m_upperArchOriginalMesh : m_lowerArchOriginalMesh;
+    bool& registered = upper ? m_upperRegistrationCalculated : m_lowerRegistrationCalculated;
+    auto& bonePoints = upper ? m_maxillaBonePoints : m_mandibleBonePoints;
+    auto& archPoints = upper ? m_upperArchPoints : m_lowerArchPoints;
+    const auto confirm = [this](const QString& text) {
+        return QMessageBox::question(this, tr("Atrás"), text, QMessageBox::Yes | QMessageBox::No, QMessageBox::No)
+            == QMessageBox::Yes;
+    };
+    const auto removeFromViews = [this](int label) {
+        removeObjectEntry(label);
+        for (Mesh3DView* view : {m_mesh3DView, m_modelMaxillaView, m_modelUpperArchView, m_modelMandibleView,
+                                 m_modelLowerArchView, m_modelMatchView, m_orientationView, m_osteotomyView,
+                                 m_repositionView, m_splintUpperView, m_splintLowerView, m_splintView})
+            if (view) view->removeMesh(objectActorKey(label));
+    };
+    const auto finish = [this](const QString& message) {
+        rebuildDentalPointMarkers();
         syncModelViews();
         updateButtonStates();
-        statusBar()->showMessage(tr("Volviste al paso del maxilar."));
+        statusBar()->showMessage(message);
+    };
+
+    if (composite) {
+        if (!confirm(tr("¿Descartar el compuesto %1 para crearlo de nuevo? El contorno marcado se conserva.").arg(jaw)))
+            return;
+        composite = nullptr;
+        removeFromViews(compositeLabel);
+        if (upper) m_appState.setUpperCompositeReady(false);
+        else m_appState.setLowerCompositeReady(false);
+        if (m_modelStepStack) m_modelStepStack->setVisible(true);
+        if (m_modelMatchView) m_modelMatchView->setTitle(tr("MATCH PREVIEW"));
+        if (m_compositeButton) {
+            disconnect(m_compositeButton, &QPushButton::clicked, this, &MainWindow::exportDentalCompositeStl);
+            connect(m_compositeButton, &QPushButton::clicked, this, &MainWindow::createDentalCompositeModels,
+                    Qt::UniqueConnection);
+        }
+        finish(tr("Compuesto %1 descartado: vuelva a crearlo.").arg(jaw));
         return;
     }
-
-    statusBar()->showMessage(tr("Ya estas en el primer paso. Use Ctrl+Z para retirar el ultimo punto."));
+    if (registered) {
+        if (!confirm(tr("¿Deshacer el registro del STL %1? Volverá a marcar los puntos homólogos.").arg(jaw)))
+            return;
+        if (original) {
+            arch = vtkSmartPointer<vtkPolyData>::New();
+            arch->DeepCopy(original);
+            const int key = objectActorKey(archLabel);
+            for (Mesh3DView* view : {m_mesh3DView, upper ? m_modelUpperArchView : m_modelLowerArchView}) {
+                if (!view) continue;
+                view->addMesh(key, arch, meshLabelName(archLabel));
+                view->setMeshColor(key, objectColorForLabel(archLabel));
+            }
+        }
+        registered = false;
+        if (upper) {
+            m_upperArchRegistrationMatrix = identityMatrix();
+            m_upperRegistrationReport.clear();
+            m_upperRegResult = {};
+            m_appState.setUpperRegistered(false);
+        } else {
+            m_lowerArchRegistrationMatrix = identityMatrix();
+            m_lowerRegistrationReport.clear();
+            m_lowerRegResult = {};
+            m_appState.setLowerRegistered(false);
+        }
+        bonePoints.clear();
+        archPoints.clear();
+        finish(tr("Registro %1 deshecho: marque de nuevo los puntos homólogos.").arg(jaw));
+        return;
+    }
+    if (!bonePoints.isEmpty() || !archPoints.isEmpty()) {
+        bonePoints.clear();
+        archPoints.clear();
+        finish(tr("Puntos %1 borrados: márquelos de nuevo.").arg(jaw));
+        return;
+    }
+    if (arch) {
+        if (!confirm(tr("¿Quitar el STL %1 para cargarlo de nuevo?").arg(jaw)))
+            return;
+        arch = nullptr;
+        original = nullptr;
+        removeFromViews(archLabel);
+        if (upper) m_appState.setUpperArchImported(false);
+        else m_appState.setLowerArchImported(false);
+        finish(tr("STL %1 quitado: cárguelo de nuevo.").arg(jaw));
+        return;
+    }
+    if (!upper && m_modelStepStack) {
+        m_modelStepStack->setCurrentIndex(0);
+        finish(tr("Volvió a la arcada superior."));
+        return;
+    }
+    statusBar()->showMessage(tr("Ya está en el primer paso."));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
