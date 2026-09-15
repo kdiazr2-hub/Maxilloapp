@@ -56,6 +56,18 @@ bool normalize(Vec3& v)
 // Component of v perpendicular to unit axis.
 Vec3 reject(const Vec3& v, const Vec3& axis) { return sub(v, mul(axis, dot(v, axis))); }
 
+// ProPlan frontal view: the cutting path is drawn in the patient's lateral–vertical plane and swept
+// antero-posteriorly, so it passes through every landmark at its own height. Oriented models have +Z
+// superior; the depth axis is horizontal and perpendicular to the right → left direction.
+Vec3 frontalDepth(const Vec3& rightToLeft)
+{
+    const Vec3 up{0.0, 0.0, 1.0};
+    Vec3 depth = cross(up, reject(rightToLeft, up));
+    if (!normalize(depth))
+        depth = {0.0, 1.0, 0.0};
+    return depth;
+}
+
 constexpr double kMinPathSpanMm = 5.0;
 constexpr int kMaxGuideCells = 180;
 
@@ -505,10 +517,10 @@ std::vector<OsteotomyLandmark> Landmarks(OsteotomyType type)
         };
     case OsteotomyType::Genioplasty:
         return {
-            {QStringLiteral("Apical derecho"), QStringLiteral("Bajo los ápices del canino derecho, en la cortical anterior.")},
-            {QStringLiteral("Basal derecho"), QStringLiteral("Salida del corte en el borde basal derecho.")},
-            {QStringLiteral("Apical izquierdo"), QStringLiteral("Bajo los ápices del canino izquierdo, en la cortical anterior.")},
-            {QStringLiteral("Basal izquierdo"), QStringLiteral("Salida del corte en el borde basal izquierdo.")},
+            {QStringLiteral("Borde basal derecho"), QStringLiteral("Salida del corte en el borde inferior derecho, por detrás del agujero mentoniano.")},
+            {QStringLiteral("Bajo el canino derecho"), QStringLiteral("Punto del corte bajo el ápice del canino derecho y el agujero mentoniano.")},
+            {QStringLiteral("Bajo el canino izquierdo"), QStringLiteral("Punto del corte bajo el ápice del canino izquierdo y el agujero mentoniano.")},
+            {QStringLiteral("Borde basal izquierdo"), QStringLiteral("Salida del corte en el borde inferior izquierdo, por detrás del agujero mentoniano.")},
         };
     }
     return {};
@@ -526,26 +538,11 @@ OsteotomyPath LeFortPath(const std::array<OstPoint3, 4>& l, double widthMm, doub
                          double extensionRightMm, double extensionLeftMm)
 {
     OsteotomyPath path;
-    // Frontal view: the maxillary plane through the four landmarks (Newell).
-    const std::array<Vec3, 4> ring = {l[0], l[2], l[3], l[1]};
-    Vec3 normal{};
-    for (size_t i = 0; i < 4; ++i) {
-        const Vec3& c = ring[i];
-        const Vec3& n = ring[(i + 1) % 4];
-        normal = add(normal, {(c[1] - n[1]) * (c[2] + n[2]), (c[2] - n[2]) * (c[0] + n[0]), (c[0] - n[0]) * (c[1] + n[1])});
-    }
-    if (!normalize(normal))
-        normal = {0.0, 0.0, 1.0};
-    if (normal[2] < 0.0)
-        normal = mul(normal, -1.0);
-    Vec3 lateral = reject(sub(add(l[1], l[3]), add(l[0], l[2])), normal);
-    Vec3 depth = cross(normal, lateral);
-    if (!normalize(depth))
-        depth = {0.0, 1.0, 0.0};
+    // Frontal view: the path keeps each landmark's height (a chevron or stepped Le Fort I stays so).
     // Right side first: pilar R, piriform R, piriform L, pilar L (sorted again by the frame).
     path.points = {l[2], l[0], l[1], l[3]};
-    path.depthAxis = depth;
-    path.upAxis = normal;
+    path.depthAxis = frontalDepth(sub(add(l[1], l[3]), add(l[0], l[2])));
+    path.upAxis = {0.0, 0.0, 1.0};
     path.widthMm = widthMm;
     path.thicknessMm = thicknessMm;
     path.extensionStartMm = extensionRightMm;
@@ -557,16 +554,10 @@ OsteotomyPath GenioPath(const std::array<OstPoint3, 4>& l, double widthMm, doubl
                         double extensionRightMm, double extensionLeftMm)
 {
     OsteotomyPath path;
-    const Vec3 rightMid = mul(add(l[0], l[1]), 0.5);
-    const Vec3 leftMid = mul(add(l[2], l[3]), 0.5);
-    Vec3 lateral = sub(leftMid, rightMid);
-    Vec3 depth = sub(mul(add(l[1], l[3]), 0.5), mul(add(l[0], l[2]), 0.5)); // apical → basal
-    if (normalize(lateral))
-        depth = reject(depth, lateral);
-    if (!normalize(depth))
-        depth = {0.0, -1.0, 0.0};
-    path.points = {rightMid, leftMid};
-    path.depthAxis = depth;
+    // Frontal-view path like Le Fort I: basal exit R, under canine R, under canine L, basal exit L.
+    // The chin is below the path; the body lateral to the descending ends is not cut.
+    path.points = {l[0], l[1], l[2], l[3]};
+    path.depthAxis = frontalDepth(sub(add(l[2], l[3]), add(l[0], l[1])));
     path.upAxis = {0.0, 0.0, 1.0};
     path.widthMm = widthMm;
     path.thicknessMm = thicknessMm;

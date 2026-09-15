@@ -910,7 +910,7 @@ public:
         window.osteotomyWizardNext();
         require(window.m_ostWizard.boneLabel == kBssoDistalLabel, "genioplasty did not default to the distal segment");
         window.osteotomyWizardNext();
-        place({{-15.0, 40.0, -65.0}, {-15.0, 30.0, -80.0}, {15.0, 40.0, -65.0}, {15.0, 30.0, -80.0}});
+        place({{-18.0, 40.0, -82.0}, {-12.0, 40.0, -66.0}, {12.0, 40.0, -66.0}, {18.0, 40.0, -82.0}});
         require(window.m_ostWizard.planReady, "genioplasty plan not ready");
         require(std::abs(window.m_osteotomyWizard->pathProperties().widthMm - 50.0) < 1e-9, "genioplasty width is not 50 mm");
         window.osteotomyWizardNext();

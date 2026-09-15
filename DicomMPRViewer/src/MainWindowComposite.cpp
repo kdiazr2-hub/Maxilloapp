@@ -265,7 +265,8 @@ void MainWindow::updateCompositeStagePanel()
     const bool pointsMethod = compositePointsMethodActive();
     for (QWidget* w : {static_cast<QWidget*>(m_compositeWidthSpin), static_cast<QWidget*>(m_compositeLengthSpin)})
         w->setEnabled(blockMethod);
-    m_compositeThicknessSpin->setEnabled(blockMethod || pointsMethod);
+    // Points method: the bone is replaced up to the line of the points, so thickness does not apply.
+    m_compositeThicknessSpin->setEnabled(blockMethod);
     m_compositeResetButton->setEnabled(blockMethod || pointsMethod);
     m_compositeResetButton->setText(pointsMethod ? tr("Reiniciar contorno") : tr("Reiniciar bloque"));
     m_compositeGizmoButton->setVisible(!pointsMethod);

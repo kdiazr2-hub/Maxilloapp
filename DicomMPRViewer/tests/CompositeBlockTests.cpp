@@ -146,7 +146,7 @@ void testContourComposite()
 {
     const auto dental = upperTeeth({});
     const CompositeCutBlock block = InitialBlock(dental, bone(), 15.0);
-    const CompositeContour contour = archContour(1.0);
+    const CompositeContour contour = archContour(8.0); // points on the scan border (gingiva)
     QString error;
     require(ContourValid(block, contour, &error), "arch contour rejected: " + error.toStdString());
     const CompositeBlockResult result = CreateContourComposite(bone(), dental, block, contour);
@@ -160,7 +160,7 @@ void testContourComposite()
     double c[3] = {};
     for (vtkIdType i = 0; i < dentalPart->GetNumberOfCells(); ++i) {
         cellCentroid(dentalPart, i, c);
-        require(ContourField(block, contour, c) <= 0.5, "dental scan kept outside the contour");
+        require(ContourScanField(block, contour, c) <= 0.5, "dental scan kept outside the contour");
     }
     for (vtkIdType i = 0; i < bonePart->GetNumberOfCells(); ++i) {
         cellCentroid(bonePart, i, c);
@@ -180,6 +180,19 @@ void testContourComposite()
     require(std::abs(b[5] - 30.0) < 1e-6, "bone above the contour thickness was removed");
     double center[3] = {0.0, 0.0, 5.0}; // palate: inside the arch but outside the U contour
     require(ContourField(block, contour, center) > 0.0, "the inner loop does not exclude the palate");
+
+    // The whole scan inside the outline is used, also with a thin block (not only the occlusal part).
+    const CompositeCutBlock thin = WithSize(block, block.sizeMm[0], block.sizeMm[1], 2.0);
+    const CompositeBlockResult thinResult = CreateContourComposite(bone(), dental, thin, contour);
+    require(thinResult.ok, "thin-block contour composite failed: " + thinResult.error.toStdString());
+    const auto thinBounds = dentalBounds(ExtractPart(thinResult.composite, DentalPart));
+    for (size_t k = 0; k < 6; ++k)
+        require(std::abs(teethBounds[k] - thinBounds[k]) < 1e-6, "only part of the scan inside the outline was used");
+    // Bone is replaced only up to the line of the points: CT crowns below go, alveolar bone above stays.
+    const double belowLine[3] = {0.0, kArchRy, 6.0}; // front of the arch, well inside the U outline
+    const double aboveLine[3] = {0.0, kArchRy, 12.0};
+    require(ContourField(block, contour, belowLine) < 0.0 && ContourField(block, contour, aboveLine) > 0.0,
+            "bone replacement does not stop at the line of the points");
 
     require(!ContourValid(block, {contour[0], contour[1]}, &error) && !error.isEmpty(), "two points accepted");
     require(!CreateContourComposite(bone(), dental, block, {contour[0], contour[1]}).ok, "two-point contour built");

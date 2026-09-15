@@ -75,15 +75,19 @@ CompositeBlockResult CreateBlockComposite(vtkPolyData* bone, vtkPolyData* dental
 
 // ── Contour drawn with points around the scan (instead of the rectangle) ──
 // The polygon is the points, in placement order, projected on the block's
-// X–Y plane; it is extruded over the block thickness along axisZ.
+// X–Y plane; each point also keeps its height along axisZ.
 using CompositeContour = std::vector<std::array<double, 3>>;
 inline constexpr int MinContourPoints = 3;
 bool ContourValid(const CompositeCutBlock& block, const CompositeContour& contour, QString* error = nullptr);
-// Signed distance to the extruded polygon: negative inside.
+// Points on the scan border (gingiva): the scan inside the outline is kept at any height, and the bone
+// inside it is replaced from the occlusal side up to the line of the points (interpolated heights).
+// Bone replacement region: negative inside.
 double ContourField(const CompositeCutBlock& block, const CompositeContour& contour, const double point[3]);
-// Translucent wall along the contour over the block thickness (display).
+// Scan region, the outline seen along axisZ: negative inside.
+double ContourScanField(const CompositeCutBlock& block, const CompositeContour& contour, const double point[3]);
+// Translucent wall from the block's occlusal face up to each point (display).
 vtkSmartPointer<vtkPolyData> ContourWallMesh(const CompositeCutBlock& block, const CompositeContour& contour);
-// Closed polyline of the contour on the occlusal face of the block (display).
+// Closed polyline through the contour points (display).
 vtkSmartPointer<vtkPolyData> ContourPolyline(const CompositeCutBlock& block, const CompositeContour& contour);
 CompositeBlockResult CreateContourComposite(vtkPolyData* bone, vtkPolyData* dentalScan, const CompositeCutBlock& block,
                                             const CompositeContour& contour);

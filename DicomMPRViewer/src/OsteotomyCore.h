@@ -145,7 +145,8 @@ inline constexpr double DefaultThicknessMm = 1.0;
 QString TypeName(OsteotomyType type);
 // Le Fort I: piriform R, piriform L, zygomatic buttress R, buttress L.
 // BSSO: ramus R, oblique R, body R, ramus L, oblique L, body L.
-// Genioplasty: apical R, basal R, apical L, basal L.
+// Genioplasty: basal exit R, under canine R, under canine L, basal exit L.
+// Le Fort I and genioplasty paths are drawn in the frontal view (+Z superior) and swept antero-posteriorly.
 std::vector<OsteotomyLandmark> Landmarks(OsteotomyType type);
 
 OsteotomyPath LeFortPath(const std::array<OstPoint3, 4>& landmarks, double widthMm = LeFortWidthMm,

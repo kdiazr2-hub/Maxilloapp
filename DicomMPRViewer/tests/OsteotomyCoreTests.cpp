@@ -107,6 +107,13 @@ void testLeFortPath()
             "Le Fort path does not use the ProPlan defaults");
     for (const OstPoint3& landmark : kLeFort)
         require(std::abs(OsteotomyCore::PathField(path, landmark)) < 1e-6, "the cut does not pass through a landmark");
+    // Frontal view: between the landmarks the cut follows the path at any depth (not one tilted plane).
+    for (double y : {0.0, 20.0, 50.0}) {
+        require(std::abs(OsteotomyCore::PathField(path, {0.0, y, 20.5})) < 0.15,
+                "the cut is not the frontal path between the piriform points");
+        require(std::abs(OsteotomyCore::PathField(path, {-17.5, y, 17.5})) < 0.15,
+                "the cut does not follow the right lateral segment");
+    }
     require(OsteotomyCore::PathField(path, {0.0, 20.0, 35.0}) > 0.0, "cranial side is not positive");
     require(OsteotomyCore::PathField(path, {0.0, 20.0, 5.0}) < 0.0, "segment side is not negative");
     // Beyond the extensions the cut continues, so the bone is always separated.
@@ -185,14 +192,18 @@ void testLeFortSparesPosteriorBone()
 
 void testGenioPath()
 {
-    const std::array<OstPoint3, 4> points = {{{-15.0, 40.0, 20.0}, {-15.0, 30.0, 0.0}, {15.0, 40.0, 20.0}, {15.0, 30.0, 0.0}}};
+    // Frontal-view path: basal exit R, under canine R, under canine L, basal exit L.
+    const std::array<OstPoint3, 4> points = {{{-18.0, 40.0, -2.0}, {-12.0, 40.0, 14.0}, {12.0, 42.0, 14.0}, {18.0, 38.0, -2.0}}};
     const OsteotomyPath path = OsteotomyCore::GenioPath(points);
     require(path.valid, "genioplasty path rejected: " + path.error.toStdString());
     require(path.widthMm == 50.0, "genioplasty path does not use the ProPlan width");
-    require(OsteotomyCore::PathField(path, {0.0, 45.0, 5.0}) < 0.0, "chin is not the segment side");
-    require(OsteotomyCore::PathField(path, {0.0, 10.0, 10.0}) > 0.0, "mandibular body is not the remaining side");
     for (const OstPoint3& p : points)
         require(std::abs(OsteotomyCore::PathField(path, p)) < 1e-6, "the genioplasty cut misses a landmark");
+    require(OsteotomyCore::PathField(path, {0.0, 45.0, 5.0}) < 0.0, "chin below the path is not the segment side");
+    require(OsteotomyCore::PathField(path, {0.0, 20.0, 5.0}) < 0.0, "the chin cut is not swept antero-posteriorly");
+    require(OsteotomyCore::PathField(path, {0.0, 40.0, 25.0}) > 0.0, "bone above the path is not the remaining side");
+    require(OsteotomyCore::PathField(path, {30.0, 30.0, 5.0}) > 0.0, "the mandibular body lateral to the exits is cut");
+    require(std::abs(OsteotomyCore::PathField(path, {-15.0, 10.0, 6.0})) < 0.15, "the genioplasty cut does not follow its points");
     require(closedSurface(OsteotomyCore::PathGuideMesh(path)), "genioplasty guide is not closed");
 }
 
