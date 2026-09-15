@@ -122,6 +122,35 @@ void testClosedMeshAndFrame()
     require(result.contourWorld && result.contourWorld->GetNumberOfLines() == 1, "missing world contour");
 }
 
+// The splint ends where the marked teeth end: unmarked teeth past the last guide point are not covered.
+void testContourFollowsGuideSpan()
+{
+    Scene full = makeScene();
+    const auto fullResult = generateOk(full.inputs, "full arch");
+    const auto partialPoints = [](double z) {
+        std::vector<SplintPoint3> points;
+        // Most of the arch (so the occlusal plane stays well defined), the last three left teeth unmarked.
+        for (int k : {0, 3, 6, 8}) {
+            const auto c = toothCenter(k);
+            const double len = std::hypot(c[0], c[1]);
+            points.push_back({c[0] + 2.8 * c[0] / len, c[1] + 2.8 * c[1] / len, z});
+        }
+        return points;
+    };
+    Scene partial = makeScene({}, 4.0, -4.0);
+    partial.inputs.upperPoints = partialPoints(4.0);
+    partial.inputs.lowerPoints = partialPoints(-4.0);
+    const auto partialResult = generateOk(partial.inputs, "partial arch");
+    double fullBounds[6], partialBounds[6];
+    fullResult.contourWorld->GetBounds(fullBounds);
+    partialResult.contourWorld->GetBounds(partialBounds);
+    require(fullBounds[0] < toothCenter(kTeeth - 1)[0], "the full-arch splint does not reach the last tooth");
+    require(partialBounds[0] < toothCenter(8)[0], "the splint does not cover the last marked tooth");
+    require(partialBounds[0] > fullBounds[0] + 3.0,
+            "the splint extends past the marked teeth: min x " + std::to_string(partialBounds[0]) +
+                " vs full arch " + std::to_string(fullBounds[0]));
+}
+
 void testDefaultResolution()
 {
     Scene scene = makeScene();
@@ -573,6 +602,7 @@ int main(int argc, char** argv)
 
     const std::vector<std::pair<const char*, std::function<void()>>> tests = {
         {"closed mesh and frame", testClosedMeshAndFrame},
+        {"contour follows guide span", testContourFollowsGuideSpan},
         {"default resolution", testDefaultResolution},
         {"impression", testImpression},
         {"horizontal clearance", testHorizontalClearance},

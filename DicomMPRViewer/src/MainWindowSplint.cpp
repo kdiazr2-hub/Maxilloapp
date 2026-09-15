@@ -156,24 +156,22 @@ bool writeTextFile(const QString& path, const QByteArray& content)
 QWidget* MainWindow::buildSplintMethodPanel(QWidget* parent, QWidget* classicPanel)
 {
     auto* host = new QWidget(parent);
-    host->setFixedWidth(340);
+    host->setFixedWidth(380);
     auto* layout = new QVBoxLayout(host);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(6);
 
-    auto* methodRow = new QHBoxLayout();
-    methodRow->setContentsMargins(8, 4, 8, 0);
-    methodRow->addWidget(new QLabel(tr("Método:"), host));
+    // Only the height-map splint is offered; the classic generator stays in the code, not in the UI.
     m_splintMethodCombo = new QComboBox(host);
-    m_splintMethodCombo->addItem(tr("Mapa de altura (nuevo)"), kHeightmapMethod);
-    m_splintMethodCombo->addItem(tr("Clásico"), kClassicMethod);
-    methodRow->addWidget(m_splintMethodCombo, 1);
-    layout->addLayout(methodRow);
+    m_splintMethodCombo->addItem(tr("Mapa de altura"), kHeightmapMethod);
+    m_splintMethodCombo->setVisible(false);
 
     m_splintMethodStack = new QStackedWidget(host);
     m_splintDesignPanel = new SplintDesignPanel();
     auto* scroll = new QScrollArea(m_splintMethodStack);
+    scroll->setObjectName(QStringLiteral("SplintDesignScroll"));
     scroll->setWidgetResizable(true);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     scroll->setWidget(m_splintDesignPanel);
     m_splintMethodStack->addWidget(scroll);
     if (auto* classicScroll = qobject_cast<QScrollArea*>(classicPanel))
@@ -316,6 +314,11 @@ void MainWindow::refreshSplintDesignPanel()
     for (const SplintDesign& d : m_splintDesigns)
         names << d.name;
     m_splintDesignPanel->setDesigns(names, m_activeSplintDesign, design.builtIn);
+    m_splintDesignPanel->setDesignHint(design.label == SplintDesignCore::kIntermediateLabel
+        ? tr("Intermedia: Le Fort reposicionado sobre la mandíbula sin mover.")
+        : design.label == SplintDesignCore::kFinalLabel
+            ? tr("Final: Le Fort reposicionado sobre la mandíbula distal / post-mentón reposicionada.")
+            : tr("Diseño propio: elija el maxilar y la mandíbula."));
 
     std::vector<SplintDesignPanel::SourceOption> upper = {
         {tr("Segmento Le Fort I"), kLeFortSegLabel},
@@ -323,8 +326,8 @@ void MainWindow::refreshSplintDesignPanel()
         {tr("Maxilar"), 5},
     };
     std::vector<SplintDesignPanel::SourceOption> lower = {
-        {tr("Mandíbula inicial (sin reposicionar)"), kSplintInitialMandibleChoice},
-        {tr("Mandíbula final (reposicionada)"), kSplintFinalMandibleChoice},
+        {tr("Mandíbula sin mover (compuesto inicial)"), kSplintInitialMandibleChoice},
+        {tr("Mandíbula distal / post-mentón reposicionada"), kSplintFinalMandibleChoice},
         {tr("Post-mentón"), kGenioBodyLabel},
         {tr("Distal BSSO"), kBssoDistalLabel},
         {tr("Compuesto mandibular"), kLowerCompositeLabel},

@@ -59,7 +59,10 @@ The points JSON comes from "Exportar puntos" in the splint panel.
 - `ProjectSerializer` saves/loads `.maxilloproject` files; new keys must stay optional so older projects load.
 - Splints: `SplintHeightmapGenerator` (height-map splint, Prepare/Build), `SplintDesignCore` (named designs, JSON),
   `SplintContourEditCore`, `SplintPreviewScheduler` (background preview); UI in `SplintDesignPanel` and
-  `MainWindowSplint.cpp` (MainWindow methods kept out of `MainWindow.cpp`). The classic `SplintGenerator` stays behind the "Método" selector.
+  `MainWindowSplint.cpp` (MainWindow methods kept out of `MainWindow.cpp`). Only the height-map method is offered: the
+  classic `SplintGenerator` and its panel stay in the code but the "Método" selector is hidden (delete only if the user
+  confirms). The automatic contour keeps only teeth within the arch span of the guide points (+6 mm). Built-in designs:
+  Intermedia = repositioned Le Fort on the unmoved mandible, Final = on the repositioned distal / post-genioplasty mandible.
   Extras (bevel, wire holes, bracket margins) are applied in the Build voxel domain so the splint stays closed.
   `MeshRepairCore` validates/repairs STL (created splints are repaired automatically, export validates again).
 - Osteotomies: `OsteotomyCore` (line-segment cutting paths for Le Fort I / genioplasty, bilateral BSSO from 6 landmarks,
@@ -81,7 +84,11 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   ORIENTACION always shows the composites it orients; without composites and without a pending scan it builds them
   from the segmented bones (`createBoneOnlyComposites`, same as «Continuar sin match»).
   Le Fort I / genioplasty cuts skip bone below the path that is not connected to the segment (e.g. mastoids).
-  The permanent eight-step guide and action gates use `ModelWorkflowCore` + `MainWindowModels.cpp`.
+  Contour points lie on the buccal/palatal gingiva in any order: everything below their interpolated line within the
+  convex outline (+10 mm) comes from the scan and replaces the CT; a 2 mm skirt closes the gap to the bone.
+  The eight-step guide and the MODELOS actions live in a left side panel (`MainWindowModels.cpp`, buttons mirror the
+  QActions; the ribbon row is hidden). "Atrás" (`goBackModelWorkflow`) undoes the last step of the current jaw.
+  Gates use `ModelWorkflowCore`.
   Each jaw's registration continues to its own block and acceptance before the next jaw.
 
 - Osteotomies: `OsteotomyCore` (line-segment paths, BSSO planes, kerf split, segment references for movement measurements),

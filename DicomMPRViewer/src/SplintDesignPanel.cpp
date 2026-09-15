@@ -6,6 +6,7 @@
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
+#include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -75,11 +76,15 @@ SplintDesignPanel::SplintDesignPanel(QWidget* parent)
     auto* designLayout = new QVBoxLayout(designBox);
     m_designCombo = new QComboBox(designBox);
     designLayout->addWidget(m_designCombo);
-    auto* designButtons = new QHBoxLayout();
+    m_designHint = makeMuted(QString(), designBox);
+    designLayout->addWidget(m_designHint);
+    auto* designButtons = new QGridLayout();
+    int designButtonCount = 0;
     const auto addDesignButton = [&](const QString& text, void (SplintDesignPanel::*signal)()) {
         auto* button = new QPushButton(text, designBox);
         connect(button, &QPushButton::clicked, this, signal);
-        designButtons->addWidget(button);
+        designButtons->addWidget(button, designButtonCount / 2, designButtonCount % 2);
+        ++designButtonCount;
         return button;
     };
     addDesignButton(tr("Nuevo"), &SplintDesignPanel::newDesignRequested);
@@ -119,22 +124,24 @@ SplintDesignPanel::SplintDesignPanel(QWidget* parent)
            "Clic izquierdo: poner · arrastrar: mover · clic derecho: borrar."),
         pointsBox));
     auto* pointButtons = new QHBoxLayout();
-    m_upperPointsButton = new QPushButton(tr("Puntos maxilar"), pointsBox);
-    m_lowerPointsButton = new QPushButton(tr("Puntos mandíbula"), pointsBox);
+    m_upperPointsButton = new QPushButton(tr("Maxilar"), pointsBox);
+    m_lowerPointsButton = new QPushButton(tr("Mandíbula"), pointsBox);
     m_upperPointsButton->setCheckable(true);
     m_lowerPointsButton->setCheckable(true);
     m_upperPointsButton->setStyleSheet(QStringLiteral(
         "QPushButton:checked { background-color: rgb(255,128,0); color: black; }"));
     m_lowerPointsButton->setStyleSheet(QStringLiteral(
         "QPushButton:checked { background-color: rgb(0,0,255); color: white; }"));
+    pointButtons->addWidget(new QLabel(tr("Marcar:"), pointsBox));
     pointButtons->addWidget(m_upperPointsButton);
     pointButtons->addWidget(m_lowerPointsButton);
     pointsLayout->addLayout(pointButtons);
     m_pointStatus = makeMuted(QString(), pointsBox);
     pointsLayout->addWidget(m_pointStatus);
     auto* clearButtons = new QHBoxLayout();
-    auto* clearUpper = new QPushButton(tr("Borrar maxilar"), pointsBox);
-    auto* clearLower = new QPushButton(tr("Borrar mandíbula"), pointsBox);
+    auto* clearUpper = new QPushButton(tr("Maxilar"), pointsBox);
+    auto* clearLower = new QPushButton(tr("Mandíbula"), pointsBox);
+    clearButtons->addWidget(new QLabel(tr("Borrar:"), pointsBox));
     clearButtons->addWidget(clearUpper);
     clearButtons->addWidget(clearLower);
     pointsLayout->addLayout(clearButtons);
@@ -357,6 +364,12 @@ SplintDesignPanel::SplintDesignPanel(QWidget* parent)
     setContourEdited(false);
     setCanCreate(false);
     setCanExport(false);
+}
+
+void SplintDesignPanel::setDesignHint(const QString& text)
+{
+    m_designHint->setText(text);
+    m_designHint->setVisible(!text.isEmpty());
 }
 
 void SplintDesignPanel::setDesigns(const QStringList& names, int currentIndex, bool currentIsBuiltIn)

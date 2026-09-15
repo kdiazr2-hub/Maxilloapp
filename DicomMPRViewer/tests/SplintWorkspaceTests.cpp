@@ -14,6 +14,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QListWidget>
+#include <QScrollArea>
 #include <QToolButton>
 #include <QDialog>
 #include <QDir>
@@ -125,6 +126,14 @@ public:
         require(window.splintHeightmapMethodActive(), "the height-map method is not the default");
         window.setSplintWorkspace(true);
         settle();
+        // Only the height-map method, and its panel fits the column (nothing cut off, no horizontal scroll).
+        require(!window.m_splintMethodCombo->isVisibleTo(&window), "the classic splint method is still offered");
+        auto* splintScroll = window.findChild<QScrollArea*>(QStringLiteral("SplintDesignScroll"));
+        require(splintScroll != nullptr, "splint panel scroll area missing");
+        require(window.m_splintDesignPanel->minimumSizeHint().width() <= splintScroll->viewport()->width(),
+                "the splint panel is wider than its column: " +
+                    std::to_string(window.m_splintDesignPanel->minimumSizeHint().width()) + " > " +
+                    std::to_string(splintScroll->viewport()->width()));
 
         // ── Test sources and guide points ─────────────────────────────────
         Scene scene = makeScene();

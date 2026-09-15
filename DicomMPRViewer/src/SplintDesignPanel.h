@@ -61,6 +61,8 @@ public:
     void setStaleWarning(const QString& text);
 
     void setDesigns(const QStringList& names, int currentIndex, bool currentIsBuiltIn);
+    // What the active design is for (intermediate / final / custom).
+    void setDesignHint(const QString& text);
     void setSourceOptions(const std::vector<SourceOption>& upper, const std::vector<SourceOption>& lower);
     void setSources(int upperValue, int lowerValue);
     int upperSource() const;
@@ -113,6 +115,7 @@ private:
     bool m_updating = false;
 
     QComboBox* m_designCombo = nullptr;
+    QLabel* m_designHint = nullptr;
     QPushButton* m_deleteDesignButton = nullptr;
     QComboBox* m_upperSourceCombo = nullptr;
     QComboBox* m_lowerSourceCombo = nullptr;

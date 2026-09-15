@@ -647,6 +647,65 @@ void cleanRegion(std::vector<uint8_t>& region, int nu, int nv, double spacing)
     }
 }
 
+constexpr double kGuideSpanMarginMm = 6.0; // about half a molar: the last marked tooth stays whole
+constexpr double kGuidePi = 3.14159265358979323846;
+
+// Keeps the tooth cells whose direction from the guide-point centroid lies within the angular span of the
+// guide points (plus a few millimetres), so the splint ends where the marked teeth end: scan behind the
+// last marked teeth (tuberosity, retromolar pad, palate) does not enlarge it.
+void restrictToGuideSpan(std::vector<uint8_t>& teeth, size_t& teethCells, const SplintHeightmapInputs& inputs,
+                         const SplintOcclusalFrame& frame, int nu, int nv, double u0, double v0, double h)
+{
+    std::vector<SplintPointUV> guide;
+    for (const auto* list : {&inputs.upperPoints, &inputs.lowerPoints})
+        for (const SplintPoint3& p : *list) {
+            const SplintPoint3 q = frame.ToLocal(p);
+            guide.push_back({q[0], q[1]});
+        }
+    if (guide.size() < 3)
+        return;
+    double cu = 0.0, cv = 0.0;
+    for (const SplintPointUV& g : guide) {
+        cu += g[0] / static_cast<double>(guide.size());
+        cv += g[1] / static_cast<double>(guide.size());
+    }
+    std::vector<double> angles;
+    for (const SplintPointUV& g : guide)
+        angles.push_back(std::atan2(g[1] - cv, g[0] - cu));
+    std::sort(angles.begin(), angles.end());
+    // The arch opening is the largest angular gap between consecutive points.
+    double gap = angles.front() + 2.0 * kGuidePi - angles.back();
+    double start = angles.front();
+    for (size_t i = 1; i < angles.size(); ++i)
+        if (angles[i] - angles[i - 1] > gap) {
+            gap = angles[i] - angles[i - 1];
+            start = angles[i];
+        }
+    if (gap < kGuidePi / 3.0)
+        return; // points all around: no open end to limit
+    const double span = 2.0 * kGuidePi - gap;
+    size_t kept = 0;
+    for (int j = 0; j < nv; ++j)
+        for (int i = 0; i < nu; ++i) {
+            const size_t idx = static_cast<size_t>(j) * nu + i;
+            if (!teeth[idx])
+                continue;
+            const double du = u0 + i * h - cu;
+            const double dv = v0 + j * h - cv;
+            double offset = std::atan2(dv, du) - start;
+            while (offset < 0.0)
+                offset += 2.0 * kGuidePi;
+            while (offset >= 2.0 * kGuidePi)
+                offset -= 2.0 * kGuidePi;
+            const double margin = kGuideSpanMarginMm / std::max(1.0, std::hypot(du, dv));
+            if (offset <= span + margin || offset >= 2.0 * kGuidePi - margin)
+                ++kept;
+            else
+                teeth[idx] = 0;
+        }
+    teethCells = kept;
+}
+
 double signedArea(const SplintContourUV& c)
 {
     double a = 0.0;
@@ -1471,6 +1530,7 @@ SplintHeightmapResult SplintHeightmapGenerator::Build(const SplintHeightmapPrepa
                     ++teethCells;
                 }
             }
+        restrictToGuideSpan(teeth, teethCells, inputs, frame, nu, nv, u0, v0, h);
         if (teethCells == 0) {
             result.error = QStringLiteral("Los dientes no cruzan la franja entre los puntos superiores e inferiores.");
             return result;
