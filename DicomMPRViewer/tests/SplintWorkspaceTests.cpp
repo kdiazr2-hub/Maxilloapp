@@ -13,6 +13,7 @@
 #include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QListWidget>
 #include <QDialog>
 #include <QDir>
 #include <QElapsedTimer>
@@ -620,6 +621,64 @@ public:
         std::cout << "Composite workspace: block, mandatory review, link, splint source, union and project OK\n";
     }
 
+    // REPOSICIÓN analysis: intersection volume, highlight, restriction and pre-op ghost.
+    static void runRepositionAnalysis()
+    {
+        MainWindow window;
+        window.setAttribute(Qt::WA_DontShowOnScreen);
+        window.resize(1400, 900);
+        window.show();
+        settle();
+        window.m_leFortSegmentMesh = boxMesh({-10, 10, -10, 10, 0, 10}, false, false);
+        window.m_leFortCranialMesh = boxMesh({-20, 20, -20, 20, 8, 30}, false, false); // 2 mm impaction
+        window.addObjectEntry(QStringLiteral("Segmento Le Fort I"), QColor(200, 180, 160), kLeFortSegLabel);
+        window.addObjectEntry(QStringLiteral("Base craneal"), QColor(220, 210, 190), kLeFortCranialLabel);
+        window.setRepositionWorkspace(true);
+        settle();
+        for (int row = 0; row < window.m_repositionObjectList->count(); ++row) {
+            auto* item = window.m_repositionObjectList->item(row);
+            if (item->data(Qt::UserRole).toInt() == kLeFortSegLabel) {
+                item->setCheckState(Qt::Checked);
+                window.m_repositionObjectList->setCurrentItem(item);
+            }
+        }
+        require(window.selectedRepositionTargetLabels() == QList<int>{kLeFortSegLabel}, "Le Fort segment not selected");
+
+        window.analyzeRepositionIntersection(false);
+        require(std::abs(window.m_repositionLastIntersectionMm3 - 800.0) < 60.0,
+                "intersection volume is not the 2 mm impaction: " + std::to_string(window.m_repositionLastIntersectionMm3));
+        require(window.m_repositionIntersectionLabel->text().contains(QStringLiteral("mm³")), "intersection not reported");
+        window.toggleRepositionHighlight();
+        require(window.m_repositionHighlightActive &&
+                    window.m_repositionView->meshData(kRepositionHighlightBaseKey - kLeFortSegLabel) != nullptr,
+                "intersection not highlighted");
+        window.toggleRepositionHighlight();
+        require(!window.m_repositionHighlightActive &&
+                    !window.m_repositionView->meshData(kRepositionHighlightBaseKey - kLeFortSegLabel),
+                "highlight not removed");
+
+        double before[6];
+        window.m_leFortSegmentMesh->GetBounds(before);
+        window.setRepositionRestriction(2);
+        window.translateRepositionTarget(0.0, 0.0, -3.0);
+        double after[6];
+        window.m_leFortSegmentMesh->GetBounds(after);
+        require(after[4] == before[4], "translation ignored the rotation-only restriction");
+        window.setRepositionRestriction(0);
+        window.translateRepositionTarget(0.0, 0.0, -3.0);
+        window.m_leFortSegmentMesh->GetBounds(after);
+        require(std::abs(after[4] - (before[4] - 3.0)) < 1e-6, "translation not applied without restriction");
+        window.analyzeRepositionIntersection(false);
+        require(window.m_repositionLastIntersectionMm3 == 0.0, "moved segment still reports an intersection");
+
+        window.toggleRepositionPreOp();
+        require(window.m_repositionView->meshData(kRepositionPreOpBaseKey - kLeFortSegLabel) != nullptr,
+                "pre-op position not shown");
+        window.toggleRepositionPreOp();
+        require(!window.m_repositionView->meshData(kRepositionPreOpBaseKey - kLeFortSegLabel), "pre-op ghost not removed");
+        std::cout << "Reposition analysis OK\n";
+    }
+
     // FÉRULA follows REPOSICIÓN: the moved Le Fort segment is the source and its guide points follow it.
     static void runSplintFollowsReposition()
     {
@@ -751,6 +810,26 @@ public:
         const std::vector<OstPoint3> leFort = {{-10.0, 35.0, 20.0}, {10.0, 35.0, 21.0}, {-25.0, 10.0, 15.0}, {25.0, 10.0, 14.0}};
         place(leFort);
         require(window.m_ostWizard.planReady && window.m_ostWizard.currentLandmark == -1, "Le Fort I plan not ready");
+        {
+            // The plan (landmarks and properties) is saved in the project.
+            QTemporaryDir dir;
+            require(dir.isValid(), "no temporary directory");
+            const QString path = dir.filePath(QStringLiteral("osteotomia.maxilloproject"));
+            QString error;
+            require(ProjectSerializer::save(path, window.collectProjectState(), &error),
+                    "osteotomy plan save failed: " + error.toStdString());
+            ProjectState loaded;
+            require(ProjectSerializer::load(path, loaded, &error), "osteotomy plan load failed: " + error.toStdString());
+            MainWindow reopened;
+            reopened.setAttribute(Qt::WA_DontShowOnScreen);
+            reopened.show();
+            settle();
+            reopened.applyProjectState(loaded);
+            settle();
+            require(reopened.m_ostWizard.type == static_cast<int>(OsteotomyType::LeFortI) &&
+                        reopened.m_ostWizard.landmarks == window.m_ostWizard.landmarks,
+                    "osteotomy landmarks lost after reopening");
+        }
         require(window.m_osteotomyView->meshData(kOsteotomyGuideActorKey) != nullptr, "cutting path guide not shown");
         require(window.m_axialView && window.m_axialView->surfaceContourCount() >= 1, "cutting path contour not on the CT slices");
         // Re-indicate a landmark.
@@ -924,6 +1003,7 @@ int main(int argc, char** argv)
         SplintWorkspaceTests::runCompositeWorkflow(artifacts);
         SplintWorkspaceTests::runOrientationWithBonesOnly();
         SplintWorkspaceTests::runSplintFollowsReposition();
+        SplintWorkspaceTests::runRepositionAnalysis();
         SplintWorkspaceTests::runOsteotomyWorkflow(artifacts);
         if (!unexpectedDialogs.isEmpty()) {
             std::cerr << "FAIL unexpected dialogs: " << unexpectedDialogs.join(QStringLiteral(" | ")).toStdString() << '\n';

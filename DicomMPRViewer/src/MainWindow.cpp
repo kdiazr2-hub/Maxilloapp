@@ -126,6 +126,7 @@
 #include <vtkRegularPolygonSource.h>
 #include <vtkSTLReader.h>
 #include <vtkSTLWriter.h>
+#include "MeshRepairCore.h"
 #include <vtkStaticPointLocator.h>
 #include <vtkSampleFunction.h>
 #include <vtkTransform.h>
@@ -3905,19 +3906,26 @@ QWidget* MainWindow::buildRepositionControlPanel(QWidget* parent)
 
     addSection(tr("Restricciones"));
     auto* restrictCombo = new QComboBox(panel);
+    restrictCombo->setObjectName("RepositionRestriction");
     restrictCombo->addItems({tr("Sin restricción"), tr("Solo traslación"), tr("Solo rotación")});
+    connect(restrictCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this](int index) { setRepositionRestriction(index); });
     root->addWidget(restrictCombo);
 
-    addSection(tr("Analisis"));
+    addSection(tr("Análisis"));
     auto* analysisRow = new QHBoxLayout;
     analysisRow->setSpacing(6);
-    analysisRow->addWidget(makeButton(tr("Interseccion"), [this] {
-        statusBar()->showMessage(tr("Análisis de intersección pendiente de implementar."));
-    }));
-    analysisRow->addWidget(makeButton(tr("Resaltar"), [this] {
-        statusBar()->showMessage(tr("Resaltado de intersección pendiente de implementar."));
-    }));
+    analysisRow->addWidget(makeButton(tr("Intersección"), [this] { analyzeRepositionIntersection(false); }));
+    m_repositionHighlightButton = makeButton(tr("Resaltar"), [this] { toggleRepositionHighlight(); });
+    analysisRow->addWidget(m_repositionHighlightButton);
     root->addLayout(analysisRow);
+    m_repositionIntersectionLabel = new QLabel(panel);
+    m_repositionIntersectionLabel->setWordWrap(true);
+    m_repositionIntersectionLabel->setStyleSheet("color:#ff9f0a; font-size:10px;");
+    root->addWidget(m_repositionIntersectionLabel);
+    m_repositionPreOpButton = makeButton(tr("Ver pre-op"), [this] { toggleRepositionPreOp(); });
+    m_repositionPreOpButton->setToolTip(tr("Muestra la posición original de las estructuras movidas en gris translúcido."));
+    root->addWidget(m_repositionPreOpButton);
 
     root->addWidget(makeButton(tr("Toggle fixed view"), [this] {
         if (!m_repositionView) return;
@@ -5006,6 +5014,7 @@ void MainWindow::applyRepositionTransform(vtkMatrix4x4* matrix, const QString& d
         recordMandibleMovement(label, matrix);
         ++applied;
     }
+    clearRepositionAnalysis(); // the previous intersection no longer applies
     updateRepositionControls();
     statusBar()->showMessage(tr("Reposicion: %1 aplicado sobre %2 estructura(s).")
                                  .arg(description).arg(applied));
@@ -5088,6 +5097,10 @@ void MainWindow::translateRepositionTarget(double dx, double dy, double dz)
 {
     const QList<int> labels = selectedRepositionTargetLabels();
     if (labels.isEmpty()) return;
+    if (m_repositionRestriction == 2) {
+        statusBar()->showMessage(tr("Restricción activa: solo rotación."));
+        return;
+    }
     auto transform = vtkSmartPointer<vtkTransform>::New();
     transform->Translate(dx, dy, dz);
     applyRepositionTransform(transform->GetMatrix(), tr("traslacion"));
@@ -5107,6 +5120,10 @@ void MainWindow::rotateRepositionTarget(double axisX, double axisY, double axisZ
 {
     const QList<int> labels = selectedRepositionTargetLabels();
     if (labels.isEmpty()) return;
+    if (m_repositionRestriction == 1) {
+        statusBar()->showMessage(tr("Restricción activa: solo traslación."));
+        return;
+    }
     const int activeLabel = currentRepositionTargetLabel();
     auto activeMesh = repositionMeshForLabel(activeLabel);
     if (!activeMesh || activeMesh->GetNumberOfPoints() <= 0) return;
@@ -5174,6 +5191,10 @@ void MainWindow::sendRepositionTargetHome()
 void MainWindow::startRepositionGizmo()
 {
     if (!m_repositionView) return;
+    if (m_repositionRestriction != 0) {
+        statusBar()->showMessage(tr("El control interactivo traslada y rota: quite la restricción o use los botones."));
+        return;
+    }
     m_repositionPickingPivot = false;
     m_repositionView->setPointPickMode(false);
     updateRepositionControls();
@@ -5255,6 +5276,7 @@ void MainWindow::onRepositionGizmoUpdated(int meshLabel, vtkSmartPointer<vtkPoly
         m_repositionPivotWorld[groupLabel] = QVector3D(
             static_cast<float>(out[0]), static_cast<float>(out[1]), static_cast<float>(out[2]));
     }
+    clearRepositionAnalysis();
     setRepositionMeshForLabel(label, newMesh);
     for (int groupLabel : m_repositionGizmoGroupLabels) {
         if (groupLabel == label) continue;
@@ -5945,6 +5967,7 @@ ProjectState MainWindow::collectProjectState() const
 
     state.splintDesigns = SplintDesignCore::DesignsToJson(m_splintDesigns);
     state.compositeBlocks = compositeBlocksJson();
+    state.osteotomyPlan = osteotomyPlanJson();
     if (m_activeSplintDesign >= 0 && m_activeSplintDesign < static_cast<int>(m_splintDesigns.size()))
         state.activeSplintDesignId = m_splintDesigns[static_cast<size_t>(m_activeSplintDesign)].id;
     return state;
@@ -6175,6 +6198,7 @@ void MainWindow::applyProjectState(const ProjectState& state)
     restoreSpecial(m_finalSplintMesh.Get(),        kFinalSplintLabel);
     restoreSplintDesigns(state);
     restoreCompositeBlocks(state);
+    restoreOsteotomyPlan(state);
     syncVisibilityPanelToAllViews();
 
     // ── Populate MODELOS views ────────────────────────────────────────────
@@ -12905,12 +12929,17 @@ void MainWindow::exportLeFortSegments()
         QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation));
     if (dir.isEmpty()) return;
 
-    auto writeStl = [](vtkPolyData* mesh, const QString& path) {
+    QStringList failed;
+    int openMeshes = 0;
+    auto writeStl = [&failed, &openMeshes](vtkPolyData* mesh, const QString& path) {
         auto w = vtkSmartPointer<vtkSTLWriter>::New();
         w->SetFileTypeToBinary();
-        w->SetFileName(path.toUtf8().constData());
+        w->SetFileName(QFile::encodeName(path).constData());
         w->SetInputData(mesh);
-        w->Write();
+        if (w->Write() == 0)
+            failed << QFileInfo(path).fileName();
+        else if (!MeshRepairCore::Analyze(mesh).Valid())
+            ++openMeshes;
     };
 
     writeStl(m_leFortCranialMesh,  dir + "/01_base_craneal.stl");
@@ -12923,7 +12952,13 @@ void MainWindow::exportLeFortSegments()
     if (otherMesh)
         writeStl(otherMesh, dir + "/03_" + meshLabelName(otherLabel).replace(' ', '_') + ".stl");
 
-    statusBar()->showMessage(tr("Segmentos Le Fort I exportados en: %1").arg(dir));
+    if (!failed.isEmpty()) {
+        QMessageBox::warning(this, tr("Le Fort I"), tr("No se pudieron escribir: %1").arg(failed.join(QStringLiteral(", "))));
+        return;
+    }
+    statusBar()->showMessage(openMeshes == 0
+        ? tr("Segmentos Le Fort I exportados en: %1 · STL válidos.").arg(dir)
+        : tr("Segmentos Le Fort I exportados en: %1 · %2 malla(s) abiertas: repárelas antes de imprimir.").arg(dir).arg(openMeshes));
     LoggerCore::instance().logCustom(QStringLiteral("LEFORT_I_EXPORT"), dir);
 }
 

@@ -118,6 +118,8 @@ set(SOURCES
     src/OsteotomyCore.cpp
     src/OsteotomyWizardPanel.cpp
     src/MainWindowOsteotomy.cpp
+    src/MainWindowReposition.cpp
+    src/CollisionCore.cpp
     src/SurfaceContourOverlay.cpp
     src/MainWindowComposite.cpp
     src/MainWindowModels.cpp
@@ -178,6 +180,7 @@ set(HEADERS
     src/MeshRepairCore.h
     src/OsteotomyCore.h
     src/OsteotomyWizardPanel.h
+    src/CollisionCore.h
     src/SurfaceContourOverlay.h
     src/AppStateManager.h
     src/LoggerCore.h
@@ -284,6 +287,7 @@ add_core_test(ProjectSerializerTests tests/ProjectSerializerTests.cpp
     src/SplintDesignCore.cpp src/SplintHeightmapGenerator.cpp src/CompositeBlockCore.cpp)
 add_core_test(CompositeBlockTests tests/CompositeBlockTests.cpp src/CompositeBlockCore.cpp)
 add_core_test(MeshRepairTests tests/MeshRepairTests.cpp src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)
+add_core_test(CollisionTests tests/CollisionTests.cpp src/CollisionCore.cpp)
 add_core_test(SegmentationProgressTests tests/SegmentationProgressTests.cpp src/SegmentationProgressCore.cpp
     src/AISegmentationService.cpp src/AISegmentationService.h)
 add_core_test(MaskToObjectTests tests/MaskToObjectTests.cpp src/MaskToObjectCore.cpp

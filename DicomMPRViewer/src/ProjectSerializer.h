@@ -111,6 +111,9 @@ struct ProjectState
 
     // ── Composite cutting blocks {"upper": block, "lower": block} (optional) ───
     QJsonObject compositeBlocks;
+
+    // ── Osteotomy plan: type, landmarks and properties (optional) ─────────────
+    QJsonObject osteotomyPlan;
 };
 
 class ProjectSerializer

@@ -50,6 +50,10 @@ inline constexpr int kOrientationBoneReferenceKey = -160;
 // MODELOS composite contour wall (points method).
 inline constexpr int kCompositeContourActorKey = -522;
 
+// REPOSICIÓN analysis actors (key = base - label).
+inline constexpr int kRepositionHighlightBaseKey = -3000;
+inline constexpr int kRepositionPreOpBaseKey = -4000;
+
 inline int objectActorKey(int label)
 {
     return label > 0 ? 1000 + label : label;

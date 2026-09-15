@@ -12,6 +12,7 @@
 
 #include "CompositeModelCore.h"
 #include "LoggerCore.h"
+#include "MeshRepairCore.h"
 #include "MPRView.h"
 #include "Mesh3DView.h"
 #include "ObjectLabels.h"
@@ -678,7 +679,11 @@ void MainWindow::writeCompositeStl(const QVector<vtkSmartPointer<vtkPolyData>>& 
             return;
         }
         LoggerCore::instance().logExport(path, QStringLiteral("composite_stl"));
-        statusBar()->showMessage(tr("Modelo compuesto exportado: %1 %2").arg(path, note));
+        // Unjoined parts are open surfaces: report the check, never remesh silently.
+        const MeshCheck check = MeshRepairCore::Analyze(mesh);
+        const QString validation = check.Valid() ? tr("STL válido: %1").arg(check.Summary())
+                                                 : tr("STL no cerrado (use «Unir por vóxeles» para imprimir): %1").arg(check.Summary());
+        statusBar()->showMessage(tr("Modelo compuesto exportado: %1 %2 · %3").arg(path, note, validation));
     };
 
     if (box.clickedButton() == plainButton) {

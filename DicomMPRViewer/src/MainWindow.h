@@ -1009,6 +1009,24 @@ private:
     // Composites copied from the segmented bones (no intraoral scan); false without bones.
     bool createBoneOnlyComposites();
     QVector<int> repositionStructureLabels() const;
+    // REPOSICIÓN analysis (MainWindowReposition.cpp)
+    void setRepositionRestriction(int mode); // 0 none, 1 translation only, 2 rotation only
+    QList<int> repositionCollisionPartners(const QList<int>& moved) const;
+    void analyzeRepositionIntersection(bool highlight);
+    void toggleRepositionHighlight();
+    void clearRepositionAnalysis();
+    void toggleRepositionPreOp();
+    int m_repositionRestriction = 0;
+    bool m_repositionHighlightActive = false;
+    bool m_repositionPreOpVisible = false;
+    double m_repositionLastIntersectionMm3 = 0.0;
+    QLabel* m_repositionIntersectionLabel = nullptr;
+    QPushButton* m_repositionHighlightButton = nullptr;
+    QPushButton* m_repositionPreOpButton = nullptr;
+    // Osteotomy plan in the project (MainWindowOsteotomy.cpp)
+    QJsonObject osteotomyPlanJson() const;
+    void restoreOsteotomyPlan(const ProjectState& state);
+    bool m_ostKeepRestoredLandmarks = false; // next wizard start keeps the reopened landmarks
     // Automatic segmentation progress dialog.
     void closeSegmentationProgress();
     void onSegmentationCancelled();

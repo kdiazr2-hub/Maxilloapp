@@ -17,6 +17,9 @@
 #include "OsteotomyCore.h"
 #include "OsteotomyWizardPanel.h"
 
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QLocale>
 #include <QMessageBox>
 #include <QScrollArea>
 #include <QStatusBar>
@@ -28,6 +31,7 @@
 #include <vtkPolyDataNormals.h>
 
 #include <algorithm>
+#include <utility>
 
 // Defined in MainWindow.cpp.
 QString meshLabelName(int label);
@@ -116,13 +120,23 @@ void MainWindow::startOsteotomyWizard()
     setOsteotomyGizmo(false);
     const bool upper = hasMesh(m_upperCompositeMesh);
     const int type = m_ostWizard.type;
+    const auto landmarks = m_ostWizard.landmarks; // a reopened project's plan survives the first start
+    const bool keep = std::exchange(m_ostKeepRestoredLandmarks, false);
     m_ostWizard = OsteotomyWizardState{};
     m_ostWizard.type = (!upper && type == static_cast<int>(OsteotomyType::LeFortI)) ? static_cast<int>(OsteotomyType::Bsso) : type;
-    m_ostWizard.landmarks.assign(OsteotomyCore::Landmarks(typeOf(m_ostWizard.type)).size(), std::nullopt);
+    const size_t count = OsteotomyCore::Landmarks(typeOf(m_ostWizard.type)).size();
+    if (keep && m_ostWizard.type == type && landmarks.size() == count)
+        m_ostWizard.landmarks = landmarks;
+    else
+        m_ostWizard.landmarks.assign(count, std::nullopt);
+    const auto firstMissing = std::find(m_ostWizard.landmarks.begin(), m_ostWizard.landmarks.end(), std::nullopt);
+    m_ostWizard.currentLandmark = firstMissing == m_ostWizard.landmarks.end()
+        ? -1 : static_cast<int>(firstMissing - m_ostWizard.landmarks.begin());
     m_ostGuideMeshes.clear();
     ++m_osteotomyContourGeneration;
     refreshRegisteredArchContours();
     showOsteotomyScene();
+    rebuildOsteotomyPlan();
     m_osteotomyWizard->setStep(OsteotomyWizardPanel::TypeStep);
     selectOsteotomyBone(0);
     refreshOsteotomyWizard();
@@ -243,7 +257,7 @@ void MainWindow::refreshOsteotomyWizard()
         canNext = m_ostWizard.planReady && !m_ostWizard.gizmoActive;
         nextText = tr("Aplicar corte");
         status = m_ostWizard.gizmoActive ? tr("Ajuste con el gizmo y pulse de nuevo el botón para aceptar.")
-                 : m_ostWizard.planReady ? tr("La guía naranja muestra el corte (grosor %1 mm).").arg(p.thicknessMm, 0, 'f', 1)
+                 : m_ostWizard.planReady ? tr("La guía naranja muestra el corte (grosor %1 mm).").arg(QLocale().toString(p.thicknessMm, 'f', 1))
                                          : m_ostWizard.planError;
         break;
     case OsteotomyWizardPanel::FinalizeStep:
@@ -661,6 +675,61 @@ void MainWindow::showOsteotomyScene()
     }
     updateOsteotomyGuideDisplay();
     m_osteotomyView->render();
+}
+
+// ── Project ───────────────────────────────────────────────────────────────────
+
+QJsonObject MainWindow::osteotomyPlanJson() const
+{
+    QJsonObject plan;
+    plan[QStringLiteral("type")] = m_ostWizard.type;
+    QJsonArray landmarks;
+    for (const auto& point : m_ostWizard.landmarks)
+        landmarks.append(point ? QJsonValue(QJsonArray{(*point)[0], (*point)[1], (*point)[2]}) : QJsonValue());
+    plan[QStringLiteral("landmarks")] = landmarks;
+    QJsonArray properties;
+    for (const OsteotomyTypeProperties& p : m_ostProperties) {
+        QJsonObject o;
+        o[QStringLiteral("widthMm")] = p.widthMm;
+        o[QStringLiteral("thicknessMm")] = p.thicknessMm;
+        o[QStringLiteral("extensionRightMm")] = p.extensionRightMm;
+        o[QStringLiteral("extensionLeftMm")] = p.extensionLeftMm;
+        o[QStringLiteral("posteriorExtensionMm")] = p.posteriorExtensionMm;
+        o[QStringLiteral("inferiorExtensionMm")] = p.inferiorExtensionMm;
+        o[QStringLiteral("mediolateralExtensionMm")] = p.mediolateralExtensionMm;
+        properties.append(o);
+    }
+    plan[QStringLiteral("properties")] = properties;
+    return plan;
+}
+
+void MainWindow::restoreOsteotomyPlan(const ProjectState& state)
+{
+    const QJsonObject plan = state.osteotomyPlan;
+    if (plan.isEmpty())
+        return; // older project: keep the ProPlan defaults
+    const QJsonArray properties = plan.value(QStringLiteral("properties")).toArray();
+    for (int i = 0; i < 3 && i < properties.size(); ++i) {
+        const QJsonObject o = properties[i].toObject();
+        OsteotomyTypeProperties& p = m_ostProperties[static_cast<size_t>(i)];
+        p.widthMm = o.value(QStringLiteral("widthMm")).toDouble(p.widthMm);
+        p.thicknessMm = o.value(QStringLiteral("thicknessMm")).toDouble(p.thicknessMm);
+        p.extensionRightMm = o.value(QStringLiteral("extensionRightMm")).toDouble(p.extensionRightMm);
+        p.extensionLeftMm = o.value(QStringLiteral("extensionLeftMm")).toDouble(p.extensionLeftMm);
+        p.posteriorExtensionMm = o.value(QStringLiteral("posteriorExtensionMm")).toDouble(p.posteriorExtensionMm);
+        p.inferiorExtensionMm = o.value(QStringLiteral("inferiorExtensionMm")).toDouble(p.inferiorExtensionMm);
+        p.mediolateralExtensionMm = o.value(QStringLiteral("mediolateralExtensionMm")).toDouble(p.mediolateralExtensionMm);
+    }
+    m_ostWizard = OsteotomyWizardState{};
+    m_ostWizard.type = std::clamp(plan.value(QStringLiteral("type")).toInt(0), 0, 2);
+    m_ostWizard.landmarks.assign(OsteotomyCore::Landmarks(typeOf(m_ostWizard.type)).size(), std::nullopt);
+    const QJsonArray landmarks = plan.value(QStringLiteral("landmarks")).toArray();
+    for (int i = 0; i < landmarks.size() && i < static_cast<int>(m_ostWizard.landmarks.size()); ++i) {
+        const QJsonArray p = landmarks[i].toArray();
+        if (p.size() == 3)
+            m_ostWizard.landmarks[static_cast<size_t>(i)] = OstPoint3{p[0].toDouble(), p[1].toDouble(), p[2].toDouble()};
+    }
+    m_ostKeepRestoredLandmarks = true;
 }
 
 bool MainWindow::applyOsteotomyCut()
