@@ -383,6 +383,11 @@ struct ContourFrame
     std::vector<double> height;                 // block Z of each point: the scan border line
     std::vector<size_t> hull;                   // convex outline of the points (CCW), whatever their order
     double occlusal = 0.0;                      // block Z of the occlusal face (beyond the cusps)
+    // Arch span of the points seen from their centroid (open end = largest angular gap).
+    bool spanLimited = false;
+    double spanCenter[2] = {0.0, 0.0};
+    double spanStart = 0.0;
+    double spanWidth = 0.0;
 };
 
 // Bone is replaced up to the line of the points plus this margin, so no CT crown edge remains.
@@ -390,6 +395,11 @@ constexpr double kContourBoneMarginMm = 0.5;
 // Crowns reach beyond the gingival points in the occlusal view (bulges, proclined incisors, brackets):
 // the outline is widened by this much, still far from other bone below that level (mastoids).
 constexpr double kContourHullMarginMm = 10.0;
+// The replaced region ends this far past the first and last points along the arch (bone behind the marked
+// teeth: mandibular rami, tuberosity) and past the block's occlusal face (bone rising above the crowns).
+constexpr double kContourSpanMarginMm = 3.0;
+constexpr double kContourOcclusalMarginMm = 1.0;
+constexpr double kContourPi = 3.14159265358979323846;
 
 // Convex hull (monotone chain) as indices into the points, counter-clockwise.
 std::vector<size_t> convexHull(const std::vector<std::array<double, 2>>& points)
@@ -435,6 +445,31 @@ ContourFrame contourFrame(const CompositeCutBlock& block, const CompositeContour
         }
     }
     frame.hull = convexHull(frame.polygon);
+    if (frame.polygon.size() >= 3) {
+        double cu = 0.0, cv = 0.0;
+        for (const auto& p : frame.polygon) {
+            cu += p[0] / static_cast<double>(frame.polygon.size());
+            cv += p[1] / static_cast<double>(frame.polygon.size());
+        }
+        std::vector<double> angles;
+        for (const auto& p : frame.polygon)
+            angles.push_back(std::atan2(p[1] - cv, p[0] - cu));
+        std::sort(angles.begin(), angles.end());
+        double gap = angles.front() + 2.0 * kContourPi - angles.back();
+        double start = angles.front();
+        for (size_t i = 1; i < angles.size(); ++i)
+            if (angles[i] - angles[i - 1] > gap) {
+                gap = angles[i] - angles[i - 1];
+                start = angles[i];
+            }
+        if (gap >= kContourPi / 3.0) { // an open arch; points all around leave no end to limit
+            frame.spanLimited = true;
+            frame.spanCenter[0] = cu;
+            frame.spanCenter[1] = cv;
+            frame.spanStart = start;
+            frame.spanWidth = 2.0 * kContourPi - gap;
+        }
+    }
     return frame;
 }
 
@@ -475,6 +510,25 @@ double intersectFields(double a, double b)
     return std::hypot(std::max(a, 0.0), std::max(b, 0.0));
 }
 
+// Distance along the arch (arc length at this radius) to the nearest end of the points' span:
+// negative within the span, positive past its first or last point.
+double spanField(const ContourFrame& frame, double x, double y)
+{
+    if (!frame.spanLimited)
+        return -1e9;
+    const double du = x - frame.spanCenter[0];
+    const double dv = y - frame.spanCenter[1];
+    const double radius = std::hypot(du, dv);
+    double offset = std::atan2(dv, du) - frame.spanStart;
+    while (offset < 0.0)
+        offset += 2.0 * kContourPi;
+    while (offset >= 2.0 * kContourPi)
+        offset -= 2.0 * kContourPi;
+    if (offset <= frame.spanWidth)
+        return -std::min(offset, frame.spanWidth - offset) * radius;
+    return std::min(offset - frame.spanWidth, 2.0 * kContourPi - offset) * radius;
+}
+
 // Height of the scan border line above (x, y): inverse-distance weighting of the points.
 double lineHeight(const ContourFrame& frame, double x, double y)
 {
@@ -499,7 +553,11 @@ double belowLineField(const ContourFrame& frame, const Vec3& d, const CompositeC
     const double x = dot(d, block.axisX);
     const double y = dot(d, block.axisY);
     const double z = dot(d, block.axisZ);
-    return intersectFields(hullField(frame, x, y) - kContourHullMarginMm, z - (lineHeight(frame, x, y) + lift));
+    const double lateral = intersectFields(hullField(frame, x, y) - kContourHullMarginMm,
+                                           spanField(frame, x, y) - kContourSpanMarginMm);
+    const double vertical = intersectFields(z - (lineHeight(frame, x, y) + lift),
+                                            frame.occlusal - kContourOcclusalMarginMm - z);
+    return intersectFields(lateral, vertical);
 }
 
 // Bone replaced by the scan.
@@ -825,7 +883,13 @@ CompositeBlockResult CreateContourComposite(vtkPolyData* bone, vtkPolyData* dent
         result.error = QStringLiteral("Falta el escaneo dental registrado.");
         return result;
     }
-    const ContourFrame frame = contourFrame(block, contour);
+    ContourFrame frame = contourFrame(block, contour);
+    // The occlusal limit follows the scan's own cusps, whatever the block thickness.
+    for (vtkIdType i = 0; i < dentalScan->GetNumberOfPoints(); ++i) {
+        double p[3];
+        dentalScan->GetPoint(i, p);
+        frame.occlusal = std::min(frame.occlusal, dot(sub({p[0], p[1], p[2]}, block.center), block.axisZ));
+    }
     // Scan kept and bone replaced below the line of the points, within their outline (any point order).
     const auto boneField = [&frame, &block](const Vec3& p) { return contourFieldLocal(frame, sub(p, block.center), block); };
     const auto scanField = [&frame, &block](const Vec3& p) { return belowLineField(frame, sub(p, block.center), block, 0.0); };

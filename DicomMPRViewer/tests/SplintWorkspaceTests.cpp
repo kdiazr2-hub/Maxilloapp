@@ -602,6 +602,17 @@ public:
         window.m_frankfurtPoints = {QVector3D(-30.0f, -5.0f, 20.0f), QVector3D(30.0f, -5.0f, 20.0f),
                                     QVector3D(-25.0f, 30.0f, 26.0f), QVector3D(25.0f, 30.0f, 26.0f)};
         window.alignFrankfurtPlane();
+        // ORIENTACION guided side panel: its actions are buttons there and the guide explains the step.
+        window.updateOrientationGuide();
+        settle();
+        bool orientationButton = false;
+        for (auto* button : window.findChildren<QToolButton*>())
+            orientationButton = orientationButton ||
+                (button->defaultAction() == window.m_saveOrientationAct && button->isVisibleTo(&window));
+        require(window.m_orientationControlPopulated && orientationButton, "ORIENTACION actions are not in the side panel");
+        require(window.m_orientationGuideSteps[0]->text().startsWith(QStringLiteral("✓")) &&
+                    !window.m_orientationGuideMessage->text().isEmpty(),
+                "ORIENTACION side panel does not guide the Frankfort steps");
         require(window.m_orientationView->meshData(objectActorKey(kUpperCompositeLabel)) != nullptr &&
                     window.m_orientationView->meshData(-100) != nullptr,
                 "Frankfort alignment left the orientation view without the composite or the plane");

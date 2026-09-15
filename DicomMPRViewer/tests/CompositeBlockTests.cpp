@@ -250,6 +250,27 @@ void testContourComposite()
                 "CT crowns labial to the points were kept");
     }
 
+    // Bone behind the last marked teeth (mandibular rami, tuberosity) and bone rising past the occlusal side of
+    // the crowns stay, even inside the widened outline.
+    const Box pastCusps{-6.0, 6.0, kArchRy - 2.0, kArchRy + 2.0, -8.0, -3.0};
+    auto limitBoneInput = vtkSmartPointer<vtkAppendPolyData>::New();
+    limitBoneInput->AddInputData(bone());
+    limitBoneInput->AddInputData(boxMesh(pastCusps, false, false));
+    limitBoneInput->Update();
+    const CompositeBlockResult limitResult = CreateContourComposite(limitBoneInput->GetOutput(), dental, block, contour);
+    require(limitResult.ok, "contour composite with rami-like bone failed: " + limitResult.error.toStdString());
+    const auto limitBone = ExtractPart(limitResult.composite, BonePart);
+    bool behindKept = false;
+    bool pastCuspsKept = false;
+    double lc[3] = {};
+    for (vtkIdType i = 0; i < limitBone->GetNumberOfCells(); ++i) {
+        cellCentroid(limitBone, i, lc);
+        behindKept = behindKept || (lc[0] > 22.0 && lc[0] < 30.0 && lc[1] < -8.5 && lc[2] < gingiva - 1.0);
+        pastCuspsKept = pastCuspsKept || lc[2] < -2.5;
+    }
+    require(behindKept, "bone behind the last marked teeth was replaced");
+    require(pastCuspsKept, "bone past the occlusal side of the crowns was replaced");
+
     require(!ContourValid(block, {contour[0], contour[1]}, &error) && !error.isEmpty(), "two points accepted");
     require(!CreateContourComposite(bone(), dental, block, {contour[0], contour[1]}).ok, "two-point contour built");
     require(ContourFromJson(ContourToJson(contour)) == contour, "contour JSON round trip failed");

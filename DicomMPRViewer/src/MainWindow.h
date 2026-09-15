@@ -206,6 +206,14 @@ private:
     void populateModelControlPanel();
     QVBoxLayout* m_modelControlButtons = nullptr;
     bool m_modelControlPopulated = false;
+    // ORIENTACION guided panel on the left (MainWindowOrientation.cpp).
+    QWidget* buildOrientationControlPanel(QWidget* parent);
+    void populateOrientationControlPanel();
+    void updateOrientationGuide();
+    QVBoxLayout* m_orientationControlButtons = nullptr;
+    bool m_orientationControlPopulated = false;
+    QVector<QLabel*> m_orientationGuideSteps;
+    QLabel* m_orientationGuideMessage = nullptr;
     QWidget* m_modelGuide = nullptr;
     QVector<QLabel*> m_modelGuideSteps;
     QLabel* m_modelGuideMessage = nullptr;

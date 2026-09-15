@@ -119,6 +119,7 @@ set(SOURCES
     src/OsteotomyWizardPanel.cpp
     src/MainWindowOsteotomy.cpp
     src/MainWindowReposition.cpp
+    src/MainWindowOrientation.cpp
     src/CollisionCore.cpp
     src/SurfaceContourOverlay.cpp
     src/MainWindowComposite.cpp

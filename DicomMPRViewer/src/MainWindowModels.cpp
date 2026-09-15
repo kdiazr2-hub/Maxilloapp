@@ -39,6 +39,25 @@ QWidget* MainWindow::buildModelGuide(QWidget* parent)
     return m_modelGuide;
 }
 
+// Style shared by the guided side panels (MODELOS, ORIENTACION): next step amber, done green,
+// active or pressed blue.
+QString guidedSidePanelStyle(const QString& objectName)
+{
+    return QStringLiteral(
+        "#%1 { background:#1c1c1e; }"
+        "#%1 QLabel#GuidedPanelTitle { color:#ffffff; font-size:14px; font-weight:700; }"
+        "#%1 QLabel#GuidedPanelSection { color:#98989d; font-size:10px; font-weight:700; padding-top:8px; }"
+        "#%1 QToolButton { background:#2c2c2e; color:#f5f5f7; border:1px solid #3a3a3c;"
+        "  border-radius:8px; padding:7px 10px; font-size:11px; }"
+        "#%1 QToolButton:hover { background:#3a3a3c; }"
+        "#%1 QToolButton[guideState=\"done\"] { background:#24342a; border-color:#34c759; color:#d8f8df; }"
+        "#%1 QToolButton[guideState=\"next\"] { background:#6e6257; border-color:#f5d7ad;"
+        "  color:#ffffff; font-weight:700; }"
+        "#%1 QToolButton:disabled { background:#232325; border-color:#2c2c2e; color:#6e6e73; }"
+        "#%1 QToolButton:pressed, #%1 QToolButton:checked {"
+        "  background:#0a84ff; border-color:#64d2ff; color:#ffffff; font-weight:700; }").arg(objectName);
+}
+
 // Guided panel on the left, like the other modules: steps, instruction and the actions of the current
 // step. Its buttons mirror the workflow actions, so enabling, visibility and guide colours stay in one place.
 QWidget* MainWindow::buildModelControlPanel(QWidget* parent)
@@ -49,28 +68,16 @@ QWidget* MainWindow::buildModelControlPanel(QWidget* parent)
     scroll->setFrameShape(QFrame::NoFrame);
     auto* panel = new QWidget();
     panel->setObjectName(QStringLiteral("ModelControlPanel"));
-    panel->setStyleSheet(QStringLiteral(
-        "#ModelControlPanel { background:#1c1c1e; }"
-        "#ModelControlPanel QLabel#ModelPanelTitle { color:#ffffff; font-size:14px; font-weight:700; }"
-        "#ModelControlPanel QLabel#ModelPanelSection { color:#98989d; font-size:10px; font-weight:700; padding-top:8px; }"
-        "#ModelControlPanel QToolButton { background:#2c2c2e; color:#f5f5f7; border:1px solid #3a3a3c;"
-        "  border-radius:8px; padding:7px 10px; font-size:11px; }"
-        "#ModelControlPanel QToolButton:hover { background:#3a3a3c; }"
-        "#ModelControlPanel QToolButton[guideState=\"done\"] { background:#24342a; border-color:#34c759; color:#d8f8df; }"
-        "#ModelControlPanel QToolButton[guideState=\"next\"] { background:#6e6257; border-color:#f5d7ad;"
-        "  color:#ffffff; font-weight:700; }"
-        "#ModelControlPanel QToolButton:disabled { background:#232325; border-color:#2c2c2e; color:#6e6e73; }"
-        "#ModelControlPanel QToolButton:pressed, #ModelControlPanel QToolButton:checked {"
-        "  background:#0a84ff; border-color:#64d2ff; color:#ffffff; font-weight:700; }"));
+    panel->setStyleSheet(guidedSidePanelStyle(panel->objectName()));
     auto* layout = new QVBoxLayout(panel);
     layout->setContentsMargins(12, 12, 12, 12);
     layout->setSpacing(6);
     auto* title = new QLabel(tr("Modelos compuestos"), panel);
-    title->setObjectName(QStringLiteral("ModelPanelTitle"));
+    title->setObjectName(QStringLiteral("GuidedPanelTitle"));
     layout->addWidget(title);
     layout->addWidget(buildModelGuide(panel));
     auto* section = new QLabel(tr("PASO ACTUAL"), panel);
-    section->setObjectName(QStringLiteral("ModelPanelSection"));
+    section->setObjectName(QStringLiteral("GuidedPanelSection"));
     layout->addWidget(section);
     m_modelControlButtons = new QVBoxLayout();
     m_modelControlButtons->setSpacing(5);

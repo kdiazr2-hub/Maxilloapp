@@ -1294,10 +1294,17 @@ void MainWindow::buildToolBar()
     {
         auto  mod  = addModule(tr("ORIENTACION"));
         auto* page = mod.first;
-        auto* row  = mod.second;
+        // The ORIENTACION actions live in the guided panel on the left (MainWindowOrientation.cpp).
+        auto* orientationHint = new QLabel(tr("Siga los pasos en el panel izquierdo de Orientación."), page);
+        orientationHint->setStyleSheet("color:#98989d; font-size:11px; padding-left:8px;");
+        mod.second->addWidget(orientationHint);
+        mod.second->addStretch(1);
+        auto* hiddenOrientationRibbon = new QWidget(page);
+        hiddenOrientationRibbon->setVisible(false);
+        auto* row = new QHBoxLayout(hiddenOrientationRibbon);
 
         // Sequential landmarks: each enabled only after the previous is placed.
-        m_frankfortPorionDAct = new QAction(tr("Porion\nDer"), this);
+        m_frankfortPorionDAct = new QAction(tr("Porion derecho"), this);
         m_frankfortPorionDAct->setEnabled(false);
         m_frankfortPorionDAct->setCheckable(true);
         m_frankfortPorionDAct->setToolTip(tr("Marcar Porion derecho — vista lateral derecha."));
@@ -1313,7 +1320,7 @@ void MainWindow::buildToolBar()
         });
         row->addWidget(makeActBtn(m_frankfortPorionDAct, page));
 
-        m_frankfortPorionIAct = new QAction(tr("Porion\nIzq"), this);
+        m_frankfortPorionIAct = new QAction(tr("Porion izquierdo"), this);
         m_frankfortPorionIAct->setEnabled(false);
         m_frankfortPorionIAct->setCheckable(true);
         m_frankfortPorionIAct->setToolTip(tr("Marcar Porion izquierdo — vista lateral izquierda."));
@@ -1329,7 +1336,7 @@ void MainWindow::buildToolBar()
         });
         row->addWidget(makeActBtn(m_frankfortPorionIAct, page));
 
-        m_frankfortOrbitalDAct = new QAction(tr("Orbital\nDer"), this);
+        m_frankfortOrbitalDAct = new QAction(tr("Orbitale derecho"), this);
         m_frankfortOrbitalDAct->setEnabled(false);
         m_frankfortOrbitalDAct->setCheckable(true);
         m_frankfortOrbitalDAct->setToolTip(tr("Marcar Orbitale derecho — vista frontal."));
@@ -1344,7 +1351,7 @@ void MainWindow::buildToolBar()
         });
         row->addWidget(makeActBtn(m_frankfortOrbitalDAct, page));
 
-        m_frankfortOrbitalIAct = new QAction(tr("Orbital\nIzq"), this);
+        m_frankfortOrbitalIAct = new QAction(tr("Orbitale izquierdo"), this);
         m_frankfortOrbitalIAct->setEnabled(false);
         m_frankfortOrbitalIAct->setCheckable(true);
         m_frankfortOrbitalIAct->setToolTip(tr("Marcar Orbitale izquierdo — vista frontal."));
@@ -1361,7 +1368,7 @@ void MainWindow::buildToolBar()
 
         addSep(row, page);
 
-        m_alignFrankfurtAct = new QAction(tr("Alinear\nFrankfort"), this);
+        m_alignFrankfurtAct = new QAction(tr("Alinear al plano de Frankfort"), this);
         m_alignFrankfurtAct->setEnabled(false);
         m_alignFrankfurtAct->setToolTip(tr("Rotar craneo para que el plano de Frankfort sea horizontal."));
         connect(m_alignFrankfurtAct, &QAction::triggered, this, &MainWindow::alignFrankfurtPlane);
@@ -1370,7 +1377,7 @@ void MainWindow::buildToolBar()
         addSep(row, page);
 
         // Midline fine-tune via interactive gizmo (same mechanism as MODELOS).
-        m_midlineGizmoAct = new QAction(tr("Ajustar\nMedia"), this);
+        m_midlineGizmoAct = new QAction(tr("Ajustar línea media (gizmo)"), this);
         m_midlineGizmoAct->setEnabled(false);
         m_midlineGizmoAct->setToolTip(tr("Activar gizmo para ajustar rotacion de linea media en vista frontal."));
         connect(m_midlineGizmoAct, &QAction::triggered, this, [this] {
@@ -1404,7 +1411,7 @@ void MainWindow::buildToolBar()
         });
         row->addWidget(makeActBtn(m_midlineGizmoAct, page));
 
-        m_midlineAcceptGizmoAct = new QAction(tr("Aceptar\nGizmo"), this);
+        m_midlineAcceptGizmoAct = new QAction(tr("Aceptar ajuste de línea media"), this);
         m_midlineAcceptGizmoAct->setEnabled(false);
         m_midlineAcceptGizmoAct->setToolTip(tr("Confirmar ajuste de linea media y aplicar la misma transformacion al modelo inferior."));
         connect(m_midlineAcceptGizmoAct, &QAction::triggered, this, [this] {
@@ -1418,7 +1425,7 @@ void MainWindow::buildToolBar()
 
         addSep(row, page);
 
-        m_saveOrientationAct = new QAction(tr("Guardar\nOrient."), this);
+        m_saveOrientationAct = new QAction(tr("Guardar orientación y seguir"), this);
         m_saveOrientationAct->setEnabled(false);
         m_saveOrientationAct->setToolTip(tr("Guardar orientacion actual y pasar al modulo de Osteotomia."));
         connect(m_saveOrientationAct, &QAction::triggered, this, [this] {
@@ -1447,7 +1454,7 @@ void MainWindow::buildToolBar()
 
         addSep(row, page);
 
-        m_exportOrientedAct = new QAction(tr("Export\nOrient."), this);
+        m_exportOrientedAct = new QAction(tr("Exportar modelos orientados"), this);
         m_exportOrientedAct->setEnabled(false);
         m_exportOrientedAct->setToolTip(tr("Exportar modelos compuestos orientados como STL."));
         connect(m_exportOrientedAct, &QAction::triggered, this, &MainWindow::exportOrientedCompositeStl);
@@ -2438,9 +2445,10 @@ void MainWindow::buildCentralWidget()
     // ── PLAN / ORIENTACION workspace — page 2 ─────────────────────────────
     {
         auto* planPanel = new QWidget(m_viewModeStack);
-        auto* planLayout = new QVBoxLayout(planPanel);
+        auto* planLayout = new QHBoxLayout(planPanel);
         planLayout->setContentsMargins(0, 0, 0, 0);
         planLayout->setSpacing(0);
+        planLayout->addWidget(buildOrientationControlPanel(planPanel));
 
         m_orientationView = new Mesh3DView(planPanel);
         m_orientationView->setTitle(tr("ORIENTACIÓN — Plano de Frankfort"));
@@ -10051,6 +10059,7 @@ void MainWindow::updateFrankfurtPointStatus()
           QStringList({tr("Porion D"), tr("Porion I"), tr("Orbital D"), tr("Orbital I")})
               .mid(n).join(QStringLiteral(", "));
     statusBar()->showMessage(msg);
+    updateOrientationGuide();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
