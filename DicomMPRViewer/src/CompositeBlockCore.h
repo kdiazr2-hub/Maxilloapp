@@ -79,15 +79,16 @@ CompositeBlockResult CreateBlockComposite(vtkPolyData* bone, vtkPolyData* dental
 using CompositeContour = std::vector<std::array<double, 3>>;
 inline constexpr int MinContourPoints = 3;
 bool ContourValid(const CompositeCutBlock& block, const CompositeContour& contour, QString* error = nullptr);
-// Points on the scan border (gingiva): the scan inside the outline is kept at any height, and the bone
-// inside it is replaced from the occlusal side up to the line of the points (interpolated heights).
+// Points on the scan border (buccal and palatal gingiva, any order): everything below the line of the
+// points (heights interpolated between them) within their convex outline, widened for the crown bulges,
+// is taken from the scan; the CT bone there is replaced up to the line. Mucosa and palate above stay out.
 // Bone replacement region: negative inside.
 double ContourField(const CompositeCutBlock& block, const CompositeContour& contour, const double point[3]);
-// Scan region, the outline seen along axisZ: negative inside.
+// Scan region kept: negative inside.
 double ContourScanField(const CompositeCutBlock& block, const CompositeContour& contour, const double point[3]);
-// Translucent wall from the block's occlusal face up to each point (display).
+// Translucent wall around the outline, from the block's occlusal face up to the points (display).
 vtkSmartPointer<vtkPolyData> ContourWallMesh(const CompositeCutBlock& block, const CompositeContour& contour);
-// Closed polyline through the contour points (display).
+// Closed polyline around the outline of the points (display).
 vtkSmartPointer<vtkPolyData> ContourPolyline(const CompositeCutBlock& block, const CompositeContour& contour);
 CompositeBlockResult CreateContourComposite(vtkPolyData* bone, vtkPolyData* dentalScan, const CompositeCutBlock& block,
                                             const CompositeContour& contour);

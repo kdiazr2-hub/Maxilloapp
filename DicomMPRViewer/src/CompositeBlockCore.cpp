@@ -380,11 +380,45 @@ struct ContourFrame
 {
     std::vector<std::array<double, 2>> polygon; // block X–Y coordinates
     std::vector<double> height;                 // block Z of each point: the scan border line
+    std::vector<size_t> hull;                   // convex outline of the points (CCW), whatever their order
     double occlusal = 0.0;                      // block Z of the occlusal face (beyond the cusps)
 };
 
 // Bone is replaced up to the line of the points plus this margin, so no CT crown edge remains.
 constexpr double kContourBoneMarginMm = 0.5;
+// Crowns bulge beyond the gingival points (buccal and palatal): the outline is widened by this much.
+constexpr double kContourHullMarginMm = 3.0;
+
+// Convex hull (monotone chain) as indices into the points, counter-clockwise.
+std::vector<size_t> convexHull(const std::vector<std::array<double, 2>>& points)
+{
+    std::vector<size_t> order(points.size());
+    for (size_t i = 0; i < order.size(); ++i)
+        order[i] = i;
+    if (order.size() < 3)
+        return order;
+    std::sort(order.begin(), order.end(), [&points](size_t a, size_t b) {
+        return points[a][0] < points[b][0] || (points[a][0] == points[b][0] && points[a][1] < points[b][1]);
+    });
+    const auto turn = [&points](size_t o, size_t a, size_t b) {
+        return (points[a][0] - points[o][0]) * (points[b][1] - points[o][1]) -
+               (points[a][1] - points[o][1]) * (points[b][0] - points[o][0]);
+    };
+    std::vector<size_t> hull(2 * order.size());
+    size_t k = 0;
+    for (size_t i : order) {
+        while (k >= 2 && turn(hull[k - 2], hull[k - 1], i) <= 0.0)
+            --k;
+        hull[k++] = i;
+    }
+    for (size_t j = order.size() - 1, lower = k + 1; j-- > 0;) {
+        while (k >= lower && turn(hull[k - 2], hull[k - 1], order[j]) <= 0.0)
+            --k;
+        hull[k++] = order[j];
+    }
+    hull.resize(k - 1);
+    return hull;
+}
 
 ContourFrame contourFrame(const CompositeCutBlock& block, const CompositeContour& contour)
 {
@@ -398,6 +432,7 @@ ContourFrame contourFrame(const CompositeCutBlock& block, const CompositeContour
             frame.height.push_back(dot(d, block.axisZ));
         }
     }
+    frame.hull = convexHull(frame.polygon);
     return frame;
 }
 
@@ -409,23 +444,33 @@ double polygonArea(const std::vector<std::array<double, 2>>& polygon)
     return 0.5 * std::abs(area);
 }
 
-// Signed distance to the outline seen along the occlusal axis (negative inside).
-double planarField(const ContourFrame& frame, double x, double y)
+// Signed distance to the convex outline of the points seen along the occlusal axis (negative inside).
+double hullField(const ContourFrame& frame, double x, double y)
 {
+    const size_t n = frame.hull.size();
+    if (n < 3)
+        return std::numeric_limits<double>::max();
     double best = std::numeric_limits<double>::max();
-    bool inside = false;
-    const auto& poly = frame.polygon;
-    for (size_t i = 0, j = poly.size() - 1; i < poly.size(); j = i++) {
-        const auto& a = poly[i];
-        const auto& b = poly[j];
-        if ((a[1] > y) != (b[1] > y) && x < (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0])
-            inside = !inside;
+    bool inside = true;
+    for (size_t i = 0; i < n; ++i) {
+        const auto& a = frame.polygon[frame.hull[i]];
+        const auto& b = frame.polygon[frame.hull[(i + 1) % n]];
         const double ex = b[0] - a[0], ey = b[1] - a[1];
+        if (ex * (y - a[1]) - ey * (x - a[0]) < 0.0)
+            inside = false;
         const double len2 = ex * ex + ey * ey;
         const double t = len2 > 0.0 ? std::clamp(((x - a[0]) * ex + (y - a[1]) * ey) / len2, 0.0, 1.0) : 0.0;
         best = std::min(best, std::hypot(x - (a[0] + t * ex), y - (a[1] + t * ey)));
     }
     return inside ? -best : best;
+}
+
+// Signed field of the intersection of two regions (negative inside both).
+double intersectFields(double a, double b)
+{
+    if (a <= 0.0 && b <= 0.0)
+        return std::max(a, b);
+    return std::hypot(std::max(a, 0.0), std::max(b, 0.0));
 }
 
 // Height of the scan border line above (x, y): inverse-distance weighting of the points.
@@ -445,17 +490,20 @@ double lineHeight(const ContourFrame& frame, double x, double y)
     return weights > 0.0 ? sum / weights : 0.0;
 }
 
-// Bone replaced by the scan: inside the outline, from the occlusal side up to the line of the points.
-double contourFieldLocal(const ContourFrame& frame, const Vec3& d, const CompositeCutBlock& block)
+// Everything below the line of the points (toward the occlusal side) within their widened outline;
+// lift raises the line (the bone is replaced slightly above the scan border).
+double belowLineField(const ContourFrame& frame, const Vec3& d, const CompositeCutBlock& block, double lift)
 {
     const double x = dot(d, block.axisX);
     const double y = dot(d, block.axisY);
     const double z = dot(d, block.axisZ);
-    const double planar = planarField(frame, x, y);
-    const double vertical = z - (lineHeight(frame, x, y) + kContourBoneMarginMm);
-    if (planar <= 0.0 && vertical <= 0.0)
-        return std::max(planar, vertical);
-    return std::hypot(std::max(planar, 0.0), std::max(vertical, 0.0));
+    return intersectFields(hullField(frame, x, y) - kContourHullMarginMm, z - (lineHeight(frame, x, y) + lift));
+}
+
+// Bone replaced by the scan.
+double contourFieldLocal(const ContourFrame& frame, const Vec3& d, const CompositeCutBlock& block)
+{
+    return belowLineField(frame, d, block, kContourBoneMarginMm);
 }
 
 // Conforming midpoint refinement of triangle edges longer than maxEdgeMm that
@@ -620,7 +668,10 @@ bool ContourValid(const CompositeCutBlock& block, const CompositeContour& contou
             *error = QStringLiteral("Marque al menos %1 puntos alrededor del escaneo.").arg(MinContourPoints);
         return false;
     }
-    if (polygonArea(frame.polygon) < 1.0) {
+    std::vector<std::array<double, 2>> outline;
+    for (size_t i : frame.hull)
+        outline.push_back(frame.polygon[i]);
+    if (outline.size() < 3 || polygonArea(outline) < 1.0) {
         if (error)
             *error = QStringLiteral("Los puntos del contorno están alineados: rodee el escaneo.");
         return false;
@@ -641,8 +692,7 @@ double ContourScanField(const CompositeCutBlock& block, const CompositeContour& 
     const ContourFrame frame = contourFrame(block, contour);
     if (frame.polygon.size() < 3)
         return std::numeric_limits<double>::max();
-    const Vec3 d = sub({point[0], point[1], point[2]}, block.center);
-    return planarField(frame, dot(d, block.axisX), dot(d, block.axisY));
+    return belowLineField(frame, sub({point[0], point[1], point[2]}, block.center), block, 0.0);
 }
 
 vtkSmartPointer<vtkPolyData> ContourWallMesh(const CompositeCutBlock& block, const CompositeContour& contour)
@@ -653,9 +703,9 @@ vtkSmartPointer<vtkPolyData> ContourWallMesh(const CompositeCutBlock& block, con
     const auto world = [&](const std::array<double, 2>& uv, double z) {
         return add(block.center, add(mul(block.axisX, uv[0]), add(mul(block.axisY, uv[1]), mul(block.axisZ, z))));
     };
-    const size_t n = frame.polygon.size();
-    // From the occlusal face up to each point: where the scan replaces the CT teeth.
-    for (size_t i = 0; i < frame.polygon.size(); ++i) {
+    const size_t n = frame.hull.size();
+    // Around the outline, from the occlusal face up to each point: where the scan replaces the CT teeth.
+    for (size_t i : frame.hull) {
         points->InsertNextPoint(world(frame.polygon[i], frame.occlusal).data());
         points->InsertNextPoint(world(frame.polygon[i], frame.height[i]).data());
     }
@@ -680,8 +730,8 @@ vtkSmartPointer<vtkPolyData> ContourPolyline(const CompositeCutBlock& block, con
     auto points = vtkSmartPointer<vtkPoints>::New();
     auto lines = vtkSmartPointer<vtkCellArray>::New();
     std::vector<vtkIdType> ids;
-    // Through the points themselves, so the outline follows the scan border.
-    for (size_t i = 0; i < frame.polygon.size(); ++i) {
+    // Around the outline of the points, at their heights on the scan border.
+    for (size_t i : frame.hull) {
         const auto& uv = frame.polygon[i];
         const Vec3 p = add(block.center, add(mul(block.axisX, uv[0]), add(mul(block.axisY, uv[1]), mul(block.axisZ, frame.height[i]))));
         ids.push_back(points->InsertNextPoint(p.data()));
@@ -712,12 +762,9 @@ CompositeBlockResult CreateContourComposite(vtkPolyData* bone, vtkPolyData* dent
         return result;
     }
     const ContourFrame frame = contourFrame(block, contour);
-    // Scan: everything inside the outline, at any height. Bone: inside the outline up to the line of the points.
+    // Scan kept and bone replaced below the line of the points, within their outline (any point order).
     const auto boneField = [&frame, &block](const Vec3& p) { return contourFieldLocal(frame, sub(p, block.center), block); };
-    const auto scanField = [&frame, &block](const Vec3& p) {
-        const Vec3 d = sub(p, block.center);
-        return planarField(frame, dot(d, block.axisX), dot(d, block.axisY));
-    };
+    const auto scanField = [&frame, &block](const Vec3& p) { return belowLineField(frame, sub(p, block.center), block, 0.0); };
 
     // Region around the outline walls, where long edges are refined before clipping.
     const double top = *std::max_element(frame.height.begin(), frame.height.end()) + kContourBoneMarginMm;
@@ -727,8 +774,8 @@ CompositeBlockResult CreateContourComposite(vtkPolyData* bone, vtkPolyData* dent
         for (double z : {std::min(frame.occlusal, top), top}) {
             const Vec3 p = add(block.center, add(mul(block.axisX, uv[0]), add(mul(block.axisY, uv[1]), mul(block.axisZ, z))));
             for (size_t k = 0; k < 3; ++k) {
-                lo[k] = std::min(lo[k], p[k] - 2.0);
-                hi[k] = std::max(hi[k], p[k] + 2.0);
+                lo[k] = std::min(lo[k], p[k] - 2.0 - kContourHullMarginMm);
+                hi[k] = std::max(hi[k], p[k] + 2.0 + kContourHullMarginMm);
             }
         }
     Vec3 scanLo = lo;

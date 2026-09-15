@@ -1,6 +1,7 @@
 #include "CompositeBlockCore.h"
 #include "SplintTestGeometry.h"
 
+#include <vtkAppendPolyData.h>
 #include <vtkCellData.h>
 #include <vtkClipPolyData.h>
 #include <vtkFeatureEdges.h>
@@ -146,7 +147,11 @@ void testContourComposite()
 {
     const auto dental = upperTeeth({});
     const CompositeCutBlock block = InitialBlock(dental, bone(), 15.0);
-    const CompositeContour contour = archContour(8.0); // points on the scan border (gingiva)
+    double teethTop[6] = {};
+    dental->GetBounds(teethTop);
+    const double gingiva = teethTop[5];
+    // Points on the scan border, just above the synthetic crowns so no vertex lies exactly on the line.
+    const CompositeContour contour = archContour(gingiva + 0.3);
     QString error;
     require(ContourValid(block, contour, &error), "arch contour rejected: " + error.toStdString());
     const CompositeBlockResult result = CreateContourComposite(bone(), dental, block, contour);
@@ -178,8 +183,8 @@ void testContourComposite()
     double b[6] = {};
     bonePart->GetBounds(b);
     require(std::abs(b[5] - 30.0) < 1e-6, "bone above the contour thickness was removed");
-    double center[3] = {0.0, 0.0, 5.0}; // palate: inside the arch but outside the U contour
-    require(ContourField(block, contour, center) > 0.0, "the inner loop does not exclude the palate");
+    double center[3] = {0.0, 0.0, gingiva + 10.0}; // palate vault above the line of the points
+    require(ContourField(block, contour, center) > 0.0, "bone above the line of the points was replaced");
 
     // The whole scan inside the outline is used, also with a thin block (not only the occlusal part).
     const CompositeCutBlock thin = WithSize(block, block.sizeMm[0], block.sizeMm[1], 2.0);
@@ -189,16 +194,34 @@ void testContourComposite()
     for (size_t k = 0; k < 6; ++k)
         require(std::abs(teethBounds[k] - thinBounds[k]) < 1e-6, "only part of the scan inside the outline was used");
     // Bone is replaced only up to the line of the points: CT crowns below go, alveolar bone above stays.
-    const double belowLine[3] = {0.0, kArchRy, 6.0}; // front of the arch, well inside the U outline
-    const double aboveLine[3] = {0.0, kArchRy, 12.0};
+    const double belowLine[3] = {0.0, kArchRy, gingiva - 2.0}; // front of the arch
+    const double aboveLine[3] = {0.0, kArchRy, gingiva + 3.0};
     require(ContourField(block, contour, belowLine) < 0.0 && ContourField(block, contour, aboveLine) > 0.0,
             "bone replacement does not stop at the line of the points");
+
+    // Buccal and palatal points in any order give the same composite.
+    CompositeContour mixed;
+    for (size_t i = 0; i < contour.size() / 2; ++i) {
+        mixed.push_back(contour[i]);
+        mixed.push_back(contour[contour.size() - 1 - i]);
+    }
+    const CompositeBlockResult mixedResult = CreateContourComposite(bone(), dental, block, mixed);
+    require(mixedResult.ok && mixedResult.dentalCells == result.dentalCells && mixedResult.boneCells == result.boneCells,
+            "the order of the contour points changed the composite");
+    // Mucosa above the line (vestibule) is not taken from the scan.
+    auto withVestibule = vtkSmartPointer<vtkAppendPolyData>::New();
+    withVestibule->AddInputData(dental);
+    withVestibule->AddInputData(boxMesh({-30.0, 30.0, -6.0, 30.0, gingiva + 3.0, gingiva + 4.0}, false, false));
+    withVestibule->Update();
+    const CompositeBlockResult vestibuleResult = CreateContourComposite(bone(), withVestibule->GetOutput(), block, contour);
+    require(vestibuleResult.ok, "contour composite with vestibule failed: " + vestibuleResult.error.toStdString());
+    const auto vestibuleBounds = dentalBounds(ExtractPart(vestibuleResult.composite, DentalPart));
+    require(vestibuleBounds[5] <= gingiva + 1e-6, "scan above the line of the points was kept");
 
     require(!ContourValid(block, {contour[0], contour[1]}, &error) && !error.isEmpty(), "two points accepted");
     require(!CreateContourComposite(bone(), dental, block, {contour[0], contour[1]}).ok, "two-point contour built");
     require(ContourFromJson(ContourToJson(contour)) == contour, "contour JSON round trip failed");
-    require(ContourWallMesh(block, contour)->GetNumberOfPolys() == static_cast<vtkIdType>(contour.size()),
-            "contour wall does not follow the points");
+    require(ContourWallMesh(block, contour)->GetNumberOfPolys() >= 3, "contour wall missing around the points");
     require(ContourPolyline(block, contour)->GetNumberOfLines() == 1, "contour polyline missing");
 }
 

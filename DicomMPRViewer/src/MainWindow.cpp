@@ -8344,6 +8344,23 @@ void MainWindow::syncVisibilityPanelToAllViews()
             }
         }
     }
+    // MODELOS views show the pair being registered (CT bone and scan, or its composite): the object and
+    // mask lists must not hide them, or the scan would stand alone under the adjustment gizmo.
+    for (Mesh3DView* view : {m_modelMatchView, m_modelMaxillaView, m_modelMandibleView}) {
+        if (!view) continue;
+        for (int bone : {5, 6}) {
+            // One copy of the bone: its object when the view has one, otherwise the mask surface.
+            const bool hasObject = view->meshData(objectActorKey(bone)) != nullptr;
+            if (hasObject)
+                view->setMeshVisible(objectActorKey(bone), true);
+            if (view->meshData(bone))
+                view->setMeshVisible(bone, !hasObject);
+        }
+        for (int key : {objectActorKey(kUpperArchLabel), objectActorKey(kLowerArchLabel),
+                        objectActorKey(kUpperCompositeLabel), objectActorKey(kLowerCompositeLabel)})
+            if (view->meshData(key))
+                view->setMeshVisible(key, true);
+    }
     syncRepositionSelectionVisibility();
 }
 

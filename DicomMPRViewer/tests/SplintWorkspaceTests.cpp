@@ -476,11 +476,11 @@ public:
             const double kPiLocal = 3.14159265358979323846;
             for (int i = 0; i <= 5; ++i) {
                 const double t = kPiLocal * i / 5.0;
-                window.onCompositeContourPointAdded(0, (kArchRx + 5.0) * std::cos(t), (kArchRy + 5.0) * std::sin(t), 1.0);
+                window.onCompositeContourPointAdded(0, (kArchRx + 5.0) * std::cos(t), (kArchRy + 5.0) * std::sin(t), 9.0);
             }
             for (int i = 5; i >= 0; --i) {
                 const double t = kPiLocal * i / 5.0;
-                window.onCompositeContourPointAdded(0, (kArchRx - 6.0) * std::cos(t), (kArchRy - 6.0) * std::sin(t), 1.0);
+                window.onCompositeContourPointAdded(0, (kArchRx - 6.0) * std::cos(t), (kArchRy - 6.0) * std::sin(t), 9.0);
             }
         }
         require(window.m_compositeContours[0].size() == 12 && window.m_compositeCalculateButton->isEnabled(),
@@ -489,7 +489,7 @@ public:
                     window.m_modelMatchView->hasOverlay(5),
                 "contour not shown around the scan");
         window.onCompositeContourPointRemoved(0, 11);
-        window.onCompositeContourPointAdded(0, (kArchRx - 6.0), 0.0, 1.0);
+        window.onCompositeContourPointAdded(0, (kArchRx - 6.0), 0.0, 9.0);
         require(window.m_compositeContours[0].size() == 12, "removing/re-adding a contour point failed");
         window.m_modelMatchView->setStandardView(0);
         capture(window, QStringLiteral("composite-contour.png"));

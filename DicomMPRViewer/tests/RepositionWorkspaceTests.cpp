@@ -5,6 +5,7 @@
 #include "MPRView.h"
 #include "MeshGenerator.h"
 #include "NrrdVolumeExporter.h"
+#include "ObjectLabels.h"
 
 #include <QApplication>
 #include <QAction>
@@ -474,6 +475,34 @@ public:
         require(hidden.overlays == before.overlays, "Hiding objects changed the slice overlays");
         require(hidden.object5 == 0 && hidden.object6 == 0 && hidden.mask5 == 1 && hidden.mask6 == 1,
                 "Hiding the objects left their masks hidden in 3D");
+
+        // MODELOS registration: the CT bone stays next to the scan under the gizmo, even with the mask and
+        // the object hidden in the lists.
+        window.setMaskVisible(5, false);
+        window.setMaskVisible(6, false);
+        auto scan = vtkSmartPointer<vtkSphereSource>::New();
+        scan->SetRadius(5.0);
+        scan->Update();
+        window.m_upperArchMesh = scan->GetOutput();
+        if (window.m_modelStepStack) window.m_modelStepStack->setCurrentIndex(0);
+        window.syncModelViews();
+        settle();
+        const auto visibleIn = [](Mesh3DView* view, int key) -> int {
+            const auto mesh = view->meshData(key);
+            if (!mesh) return -1;
+            auto* renderers = view->findChild<QVTKOpenGLNativeWidget*>()->renderWindow()->GetRenderers();
+            renderers->InitTraversal();
+            while (auto* renderer = renderers->GetNextItem()) {
+                auto* actors = renderer->GetActors();
+                actors->InitTraversal();
+                while (auto* actor = actors->GetNextActor())
+                    if (actor->GetMapper() && actor->GetMapper()->GetInput() == mesh) return actor->GetVisibility();
+            }
+            return -2;
+        };
+        require(visibleIn(window.m_modelMatchView, 5) == 1, "The CT maxilla is hidden in the registration view");
+        require(visibleIn(window.m_modelMatchView, objectActorKey(kUpperArchLabel)) == 1,
+                "The scan is missing in the registration view");
     }
 
     static void runBoneCavityFill()
