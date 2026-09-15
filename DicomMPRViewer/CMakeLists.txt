@@ -120,6 +120,7 @@ set(SOURCES
     src/MainWindowOsteotomy.cpp
     src/MainWindowReposition.cpp
     src/MainWindowOrientation.cpp
+    src/MainWindowOrthognathic.cpp
     src/CollisionCore.cpp
     src/SurfaceContourOverlay.cpp
     src/MainWindowComposite.cpp

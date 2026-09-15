@@ -34,6 +34,16 @@ struct CompositeCutBlock
     bool valid = false;
 };
 
+// Jaw of a block: its normal (axisZ) points from the teeth to that jaw's bone, superior (+Z) for the upper
+// jaw and inferior for the lower one. Auto guesses from the bone centroid, which the mandibular rami and
+// condyles can pull above the lower teeth.
+enum class CompositeJaw
+{
+    Auto,
+    Upper,
+    Lower
+};
+
 struct CompositeBlockResult
 {
     bool ok = false;
@@ -63,7 +73,10 @@ inline constexpr double DefaultThicknessMm = 15.0;
 // Block on the occlusal plane of the registered scan, covering all of it from
 // just past the cusps toward the bone.
 CompositeCutBlock InitialBlock(vtkPolyData* dentalScan, vtkPolyData* bone,
-                               double thicknessMm = DefaultThicknessMm, QString* error = nullptr);
+                               double thicknessMm = DefaultThicknessMm, QString* error = nullptr,
+                               CompositeJaw jaw = CompositeJaw::Auto);
+// Whether the block normal points to that jaw's bone (always true for Auto).
+bool BlockFacesJaw(const CompositeCutBlock& block, CompositeJaw jaw);
 vtkSmartPointer<vtkMatrix4x4> BlockLocalToWorld(const CompositeCutBlock& block);
 vtkSmartPointer<vtkPolyData> BlockMesh(const CompositeCutBlock& block);
 // Applies an affine matrix (e.g. a gizmo result) and re-orthonormalises the axes.

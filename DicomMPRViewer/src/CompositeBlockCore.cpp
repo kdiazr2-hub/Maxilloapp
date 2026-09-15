@@ -124,7 +124,13 @@ bool vecFrom(const QJsonValue& value, Vec3& out)
 
 namespace CompositeBlockCore
 {
-CompositeCutBlock InitialBlock(vtkPolyData* dentalScan, vtkPolyData* bone, double thicknessMm, QString* error)
+bool BlockFacesJaw(const CompositeCutBlock& block, CompositeJaw jaw)
+{
+    return jaw == CompositeJaw::Auto || (jaw == CompositeJaw::Upper) == (block.axisZ[2] > 0.0);
+}
+
+CompositeCutBlock InitialBlock(vtkPolyData* dentalScan, vtkPolyData* bone, double thicknessMm, QString* error,
+                               CompositeJaw jaw)
 {
     CompositeCutBlock block;
     if (!dentalScan || dentalScan->GetNumberOfPoints() < 10) {
@@ -152,8 +158,14 @@ CompositeCutBlock InitialBlock(vtkPolyData* dentalScan, vtkPolyData* bone, doubl
     vtkMath::Jacobi(cov, eigenvalues, eigenvectors); // decreasing, vectors in columns
 
     Vec3 z = normalized({eigenvectors[0][2], eigenvectors[1][2], eigenvectors[2][2]}, {0.0, 0.0, 1.0});
-    if (bone && bone->GetNumberOfPoints() > 0 && dot(sub(sampledCentroid(bone), centroid), z) < 0.0)
+    if (jaw != CompositeJaw::Auto) {
+        // Upper jaw: the bone is superior to the teeth; lower jaw: inferior ("below the points" is then
+        // everything from the points up to the cusps).
+        if ((jaw == CompositeJaw::Upper) != (z[2] > 0.0))
+            z = mul(z, -1.0);
+    } else if (bone && bone->GetNumberOfPoints() > 0 && dot(sub(sampledCentroid(bone), centroid), z) < 0.0) {
         z = mul(z, -1.0);
+    }
     const Vec3 major{eigenvectors[0][0], eigenvectors[1][0], eigenvectors[2][0]};
     const Vec3 x = normalized(sub(major, mul(z, dot(major, z))), {1.0, 0.0, 0.0});
     const Vec3 y = cross(z, x);

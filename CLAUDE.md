@@ -69,6 +69,11 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   kerf split by a signed field that keeps cell data, guide slabs from the same field). ProPlan-style wizard in
   `OsteotomyWizardPanel` + `MainWindowOsteotomy.cpp` (tipo → hueso → puntos → trayectoria → finalizar); results land in the
   existing segment members/labels (Le Fort 205/206, BSSO 208–211, genioplasty 212/213). The old ribbon osteotomy actions in `MainWindow.cpp` are hidden but kept.
+- Ribbon: only ARCHIVO, MEDIDAS and ORTOGNÁTICA are visible. The planning modules (SEGMENTACION → FERULA) keep
+  hidden "MT" tabs (tests and code still click them by text) and are steps of the ORTOGNÁTICA left rail
+  (`MainWindowOrthognathic.cpp`: step buttons with ✓ when done, Anterior/Siguiente). Every module switch shows its
+  3D views in the frontal standard view (`showModuleViewsFrontal`); `Mesh3DView` frames its first mesh in the
+  current standard view (frontal by default, oblique only after `resetCamera`).
 - Object label constants and `objectActorKey` live in `ObjectLabels.h`.
 - Mask conversion uses `MaskToObjectCore` and `MainWindowSegmentation.cpp`: extract the current
   label without smoothing or new filling; update object actors only, leaving mask data and display intact.
@@ -84,8 +89,10 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   ORIENTACION always shows the composites it orients; without composites and without a pending scan it builds them
   from the segmented bones (`createBoneOnlyComposites`, same as «Continuar sin match»).
   Le Fort I / genioplasty cuts skip bone below the path that is not connected to the segment (e.g. mastoids).
-  Contour points lie on the buccal/palatal gingiva in any order: everything below their interpolated line within the
-  convex outline (+10 mm) comes from the scan and replaces the CT; a 2 mm skirt closes the gap to the bone.
+  Contour points lie on the buccal/palatal gingiva in any order: everything from their interpolated line to the cusps
+  within the convex outline (+10 mm) comes from the scan; CT bone there is replaced only within 3 mm of the kept scan;
+  a 2 mm skirt closes the gap to the bone. The block normal is set by jaw (`CompositeJaw`: upper +Z, lower −Z), never
+  by the bone centroid, which the mandibular rami pull above the lower teeth.
   The eight-step guide and the MODELOS actions live in a left side panel (`MainWindowModels.cpp`, buttons mirror the
   QActions; the ribbon row is hidden). "Atrás" (`goBackModelWorkflow`) undoes the last step of the current jaw.
   Gates use `ModelWorkflowCore`.

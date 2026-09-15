@@ -288,6 +288,54 @@ void testContourComposite()
     require(ContourPolyline(block, contour)->GetNumberOfLines() == 1, "contour polyline missing");
 }
 
+// Mandible: body below the teeth (overlapping the CT crowns) and tall rami whose points lie above them.
+vtkSmartPointer<vtkPolyData> mandible()
+{
+    auto append = vtkSmartPointer<vtkAppendPolyData>::New();
+    append->AddInputData(boxMesh({-35, 35, -10, 35, -30, -4}, false, false));
+    append->AddInputData(boxMesh({25, 35, -14, -8, -4, 90}, false, false));
+    append->AddInputData(boxMesh({-35, -25, -14, -8, -4, 90}, false, false));
+    append->Update();
+    auto out = vtkSmartPointer<vtkPolyData>::New();
+    out->DeepCopy(append->GetOutput());
+    return out;
+}
+
+void testMandibleContourComposite()
+{
+    const auto dental = lowerTeeth({});
+    const auto bone = mandible();
+    require(InitialBlock(dental, bone, 15.0).axisZ[2] > 0.0,
+            "fixture: the rami do not pull the bone centroid above the teeth");
+    const CompositeCutBlock block = InitialBlock(dental, bone, 15.0, nullptr, CompositeJaw::Lower);
+    require(block.valid && block.axisZ[2] < -0.99, "mandibular block does not point down to the bone");
+    require(BlockFacesJaw(block, CompositeJaw::Lower) && !BlockFacesJaw(block, CompositeJaw::Upper),
+            "block jaw check failed");
+    require(InitialBlock(upperTeeth({}), bone, 15.0, nullptr, CompositeJaw::Upper).axisZ[2] > 0.99,
+            "maxillary block does not point up to the bone");
+
+    double teeth[6] = {};
+    dental->GetBounds(teeth);
+    const double gingiva = teeth[4];
+    const CompositeContour contour = archContour(gingiva - 0.3);
+    const CompositeBlockResult result = CreateContourComposite(bone, dental, block, contour);
+    require(result.ok, "mandibular contour composite failed: " + result.error.toStdString());
+    // The scan is taken from the points up to the cusps.
+    double kept[6] = {};
+    ExtractPart(result.composite, DentalPart)->GetBounds(kept);
+    for (int k = 0; k < 6; ++k)
+        require(std::abs(teeth[k] - kept[k]) < 1e-6, "mandibular teeth above the points were lost");
+    // CT crowns above the line are replaced; the body below the line and the rami stay.
+    const auto c = toothCenter(kTeeth / 2);
+    const double crown[3] = {c[0], c[1], gingiva + 4.0};
+    const double body[3] = {c[0], c[1], gingiva - 3.0};
+    require(ContourField(block, contour, crown) < 0.0, "CT crowns above the mandibular points are not replaced");
+    require(ContourField(block, contour, body) > 0.0, "mandibular body below the points is replaced");
+    double b[6] = {};
+    ExtractPart(result.composite, BonePart)->GetBounds(b);
+    require(b[4] < -30.0 + 1e-6 && b[5] > 90.0 - 1e-6, "mandibular body or rami were removed");
+}
+
 void testLinkFollowsTransformAndCuts()
 {
     const auto dental = upperTeeth({});
@@ -386,6 +434,7 @@ int main()
 {
     const std::vector<std::pair<const char*, std::function<void()>>> tests = {
         {"initial block", testInitialBlock},
+        {"mandible contour composite", testMandibleContourComposite},
         {"cut keeps regions", testCutKeepsRegions},
         {"contour composite", testContourComposite},
         {"link follows transform and cuts", testLinkFollowsTransformAndCuts},

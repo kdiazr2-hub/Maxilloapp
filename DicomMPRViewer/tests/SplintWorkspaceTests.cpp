@@ -110,6 +110,44 @@ public:
         window.show();
         settle();
 
+        // Ribbon: ARCHIVO, MEDIDAS and ORTOGNÁTICA; the planning modules are steps of the ORTOGNÁTICA rail.
+        QStringList visibleTabs;
+        for (auto* tab : window.findChildren<QToolButton*>(QStringLiteral("MT")))
+            if (tab->isVisibleTo(&window))
+                visibleTabs << tab->text();
+        require(visibleTabs == QStringList({QStringLiteral("ARCHIVO"), QStringLiteral("MEDIDAS"),
+                                            QString::fromUtf8("ORTOGN\xc3\x81TICA")}),
+                "ribbon tabs are not ARCHIVO, MEDIDAS, ORTOGNATICA: " + visibleTabs.join(", ").toStdString());
+        require(!window.m_orthoStepPanel->isVisibleTo(&window), "step rail shown outside ORTOGNATICA");
+        window.m_orthoTab->click();
+        settle();
+        require(window.m_orthoStepPanel->isVisibleTo(&window) && window.m_orthoTab->isChecked() &&
+                    window.m_orthoStep == 0 && window.m_orthoStepButtons[0]->isChecked(),
+                "ORTOGNATICA did not open the step rail on segmentation");
+        window.m_orthoNextButton->click();
+        settle();
+        require(window.m_orthoStep == 1 && window.m_viewModeStack->currentIndex() == 1 &&
+                    window.m_orthoStepButtons[1]->isChecked() && window.m_orthoPrevButton->isEnabled(),
+                "Siguiente did not open MODELOS");
+        require(window.m_modelMatchView->standardViewIndex() == 0, "MODELOS does not open in the frontal view");
+        window.m_orthoStepButtons[6]->click();
+        settle();
+        require(window.m_orthoStep == 6 && window.m_viewModeStack->currentIndex() == 6 &&
+                    !window.m_orthoNextButton->isEnabled(),
+                "the step rail did not jump to FERULA");
+        require(window.m_splintView->standardViewIndex() == 0, "FERULA does not open in the frontal view");
+        for (auto* tab : window.findChildren<QToolButton*>(QStringLiteral("MT")))
+            if (tab->text() == QStringLiteral("MEDIDAS"))
+                tab->click();
+        settle();
+        require(!window.m_orthoStepPanel->isVisibleTo(&window) && window.m_viewModeStack->currentIndex() == 0 &&
+                    !window.m_orthoTab->isChecked(),
+                "MEDIDAS did not leave the ORTOGNATICA steps");
+        window.m_orthoTab->click();
+        settle();
+        require(window.m_orthoStep == 6 && window.m_viewModeStack->currentIndex() == 6,
+                "ORTOGNATICA did not return to the last step");
+
         int confirmations = 0;
         bool acceptConfirmations = true;
         window.m_splintConfirm = [&](const QString&) {

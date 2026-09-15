@@ -772,10 +772,15 @@ void MainWindow::buildToolBar()
         auto* tab = new QToolButton(tabBar);
         tab->setObjectName("MT");
         tab->setText(title);
-        tab->setCheckable(true);
         tab->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
-        tabGroup->addButton(tab);
         tabLayout->addWidget(tab);
+        // Planning modules are ORTOGNÁTICA steps: their tab stays hidden and is clicked from the step rail.
+        if (orthognathicStepTitles().contains(title)) {
+            tab->setVisible(false);
+        } else {
+            tab->setCheckable(true);
+            tabGroup->addButton(tab);
+        }
 
         auto* page   = new QWidget(stack);
         auto* layout = new QHBoxLayout(page);
@@ -799,6 +804,7 @@ void MainWindow::buildToolBar()
             setBiteRegistrationWorkspace(biteRegistration);
             setRepositionWorkspace(reposition);
             setSplintWorkspace(splint);
+            onModuleTabActivated(title);
         });
         if (idx == 0) { tab->setChecked(true); stack->setCurrentIndex(0); }
 
@@ -2011,6 +2017,16 @@ void MainWindow::buildToolBar()
         row->addStretch(1);
     }
 
+    // ORTOGNÁTICA: opens the step rail on the current planning module (MainWindowOrthognathic.cpp).
+    m_orthoTab = new QToolButton(tabBar);
+    m_orthoTab->setObjectName("MT");
+    m_orthoTab->setText(tr("ORTOGNÁTICA"));
+    m_orthoTab->setCheckable(true);
+    m_orthoTab->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+    tabGroup->addButton(m_orthoTab);
+    tabLayout->addWidget(m_orthoTab);
+    connect(m_orthoTab, &QToolButton::clicked, this, [this] { selectOrthognathicStep(m_orthoStep); });
+
     tabLayout->addStretch(1);   // push module tabs to the left
 }
 
@@ -2747,6 +2763,8 @@ void MainWindow::buildCentralWidget()
         m_viewModeStack->addWidget(splintPanel);  // index 6
     }
 
+    // ORTOGNÁTICA step rail, shown while a planning module is active.
+    hbox->addWidget(buildOrthognathicStepPanel(root));
     hbox->addWidget(m_viewModeStack, 1);
 
     // ── Right panel (Project Manager) ──────────────────────────────────────
@@ -2870,12 +2888,11 @@ void MainWindow::setBiteRegistrationWorkspace(bool enabled)
     for (Mesh3DView* view : {m_biteSegmentView, m_biteScanView, m_biteRegistrationView}) {
         if (!view) continue;
         view->setStandardView(0);
-        view->resetCamera();
-        view->render();
     }
+    // Once the GL widgets are exposed, frame again in the frontal view.
     QTimer::singleShot(120, this, [this] {
         for (Mesh3DView* view : {m_biteSegmentView, m_biteScanView, m_biteRegistrationView}) {
-            if (view) { view->resetCamera(); view->render(); }
+            if (view) view->setStandardView(0);
         }
     });
     statusBar()->showMessage(
@@ -5379,7 +5396,7 @@ void MainWindow::setOrientationWorkspace(bool enabled)
         }
 
         syncVisibilityPanelToAllViews();
-        m_orientationView->resetCamera();
+        m_orientationView->setStandardView(0);
         m_frankfurtPoints.clear();
         m_frankfurtCapturingIdx = -1;
         updateFrankfurtPointStatus();
@@ -6508,6 +6525,7 @@ void MainWindow::updateButtonStates()
         if (m_exportOrientedAct)    m_exportOrientedAct->setEnabled(false);
     }
     updateModelWorkflowUi();
+    updateOrthognathicSteps();
 }
 
 void MainWindow::updateModelWorkflowActions()

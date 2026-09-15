@@ -680,7 +680,11 @@ void Mesh3DView::addMesh(int label, vtkSmartPointer<vtkPolyData> mesh,
     updateGridGeometry();
 
     if (!hadMeshesBeforeAdd && !m_preserveCameraOnNextMesh) {
-        resetCamera();
+        // The first model is framed in the chosen standard view (frontal unless changed).
+        if (m_standardViewIndex >= 0)
+            applyStandardView(m_standardViewIndex);
+        else
+            resetCamera();
     } else {
         double bounds[6];
         sceneBounds(bounds);
@@ -888,7 +892,7 @@ void Mesh3DView::applyStandardView(int viewIndex)
     sceneBounds(bounds);
     if (!std::isfinite(bounds[0]) || bounds[0] > bounds[1] ||
         bounds[2] > bounds[3] || bounds[4] > bounds[5]) {
-        resetCamera();
+        render(); // nothing to frame yet: the first model added gets this view
         return;
     }
 

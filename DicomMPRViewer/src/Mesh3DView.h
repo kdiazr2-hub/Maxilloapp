@@ -44,6 +44,7 @@ public:
     void resetCamera();
     void cycleStandardView();
     void setStandardView(int viewIndex);
+    int standardViewIndex() const { return m_standardViewIndex; } // -1 after resetCamera
     void render();
     vtkSmartPointer<vtkPolyData> meshData(int label) const;
     void setGridVisible(bool visible);
@@ -188,7 +189,7 @@ private:
     using MeshSnapshot = std::map<int, vtkSmartPointer<vtkPolyData>>;
     QStack<MeshSnapshot> m_undoStack;
     static constexpr int kMaxUndo = 20;
-    int m_standardViewIndex = -1;
+    int m_standardViewIndex = 0; // frontal; -1 after resetCamera (oblique perspective)
     bool m_preserveCameraOnNextMesh = false;
 
     // ── Gizmo state ────────────────────────────────────────────────────────

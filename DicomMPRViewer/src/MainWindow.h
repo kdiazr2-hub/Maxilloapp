@@ -214,6 +214,22 @@ private:
     bool m_orientationControlPopulated = false;
     QVector<QLabel*> m_orientationGuideSteps;
     QLabel* m_orientationGuideMessage = nullptr;
+    // ORTOGNÁTICA: the planning modules are steps in a left rail; their ribbon tabs stay hidden
+    // (MainWindowOrthognathic.cpp).
+    static const QStringList& orthognathicStepTitles();
+    QWidget* buildOrthognathicStepPanel(QWidget* parent);
+    void selectOrthognathicStep(int step);
+    void onModuleTabActivated(const QString& title);
+    void updateOrthognathicSteps();
+    // Every module opens with its 3D models in the frontal view.
+    void showModuleViewsFrontal(const QString& title);
+    QWidget* m_orthoStepPanel = nullptr;
+    QToolButton* m_orthoTab = nullptr;
+    QVector<QToolButton*> m_orthoStepButtons;
+    QLabel* m_orthoStepMessage = nullptr;
+    QPushButton* m_orthoPrevButton = nullptr;
+    QPushButton* m_orthoNextButton = nullptr;
+    int m_orthoStep = 0;
     QWidget* m_modelGuide = nullptr;
     QVector<QLabel*> m_modelGuideSteps;
     QLabel* m_modelGuideMessage = nullptr;

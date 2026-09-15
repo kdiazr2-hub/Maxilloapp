@@ -205,10 +205,12 @@ void MainWindow::startCompositeBlockStage(int step)
         return;
     }
     CompositeCutBlock& block = compositeBlockForStep(step);
-    if (!block.valid) {
+    const CompositeJaw jaw = step == 0 ? CompositeJaw::Upper : CompositeJaw::Lower;
+    // A block saved before the jaw rule may face the wrong way (mandible toward the cusps): start it again.
+    if (!block.valid || !CompositeBlockCore::BlockFacesJaw(block, jaw)) {
         const double thickness = m_compositeThicknessSpin ? m_compositeThicknessSpin->value()
                                                           : CompositeBlockCore::DefaultThicknessMm;
-        block = CompositeBlockCore::InitialBlock(dental, bone, thickness, &error);
+        block = CompositeBlockCore::InitialBlock(dental, bone, thickness, &error, jaw);
         if (!block.valid) {
             m_autoCreateBothComposites = false;
             QMessageBox::warning(this, tr("Modelo compuesto"), error);
