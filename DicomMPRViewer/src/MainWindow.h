@@ -229,7 +229,7 @@ private:
     bool hasDerivedBonePlanning() const;
     QString refreshEditedSegmentationMesh(int label);
     void publishSegmentationMesh(int label, vtkSmartPointer<vtkPolyData> mesh);
-    void calculateObjectFromMask(int label);
+    void calculateObjectFromMask(int label, bool smooth = true);
     int smoothingIterationsForPreset(MeshSmoothingPreset smoothing) const;
     QString smoothingNameForPreset(MeshSmoothingPreset smoothing) const;
     bool chooseMeshSmoothingPreset(MeshSmoothingPreset* smoothing) const;

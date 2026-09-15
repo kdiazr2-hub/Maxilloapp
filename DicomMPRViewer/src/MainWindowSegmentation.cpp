@@ -9,10 +9,11 @@
 
 QString meshLabelName(int label);
 
-void MainWindow::calculateObjectFromMask(int label)
+void MainWindow::calculateObjectFromMask(int label, bool smooth)
 {
     QString error;
-    auto mesh = MaskToObjectCore::Convert(m_segmentationLabelmap, label, &error);
+    auto mesh = MaskToObjectCore::Convert(m_segmentationLabelmap, label, &error,
+                                          smooth ? MaskToObjectCore::Surface::Smooth : MaskToObjectCore::Surface::Exact);
     if (!mesh) {
         QMessageBox::warning(this, tr("Convertir máscara a objeto"), error);
         return;
@@ -45,5 +46,7 @@ void MainWindow::calculateObjectFromMask(int label)
     syncModelViews();
     updateButtonStates();
     m_appState.setProjectDirty(true);
-    statusBar()->showMessage(tr("Objeto creado desde la máscara actual: %1. Relleno conservado, sin suavizado adicional.").arg(name));
+    statusBar()->showMessage(smooth
+        ? tr("Objeto liso creado desde la máscara: %1. Relleno conservado; la máscara no cambia.").arg(name)
+        : tr("Objeto exacto (vóxeles) creado desde la máscara: %1. Relleno conservado; la máscara no cambia.").arg(name));
 }

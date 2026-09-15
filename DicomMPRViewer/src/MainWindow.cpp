@@ -5712,12 +5712,15 @@ QWidget* MainWindow::buildInfoPanel()
         if (label <= 0) return;
 
         QMenu menu(this);
-        QAction* convertAct = menu.addAction(tr("Convertir máscara a objeto 3D"));
+        QAction* convertAct = menu.addAction(tr("Convertir máscara a objeto 3D (liso)"));
+        QAction* convertExactAct = menu.addAction(tr("Convertir máscara a objeto 3D exacto (vóxeles)"));
         menu.addSeparator();
         QAction* deleteAct = menu.addAction(tr("Eliminar mascara"));
         QAction* chosen = menu.exec(m_maskTable->viewport()->mapToGlobal(pos));
         if (chosen == convertAct) {
-            calculateObjectFromMask(label);
+            calculateObjectFromMask(label, true);
+        } else if (chosen == convertExactAct) {
+            calculateObjectFromMask(label, false);
         } else if (chosen == deleteAct) {
             deleteSelectedMask();
         }
@@ -7856,6 +7859,8 @@ void MainWindow::refreshSegmentationOverlays()
         view->setSegmentationHiddenLabels(m_hiddenMaskLabels);
         view->setSegmentationOpacity(0.45);
         view->setSegmentationVisible(visible && m_segmentationLabelmap != nullptr);
+        // Without a render the slice keeps showing the previous overlay until the user interacts.
+        if (m_volume) view->render();
     }
 }
 
@@ -8295,6 +8300,7 @@ void MainWindow::syncVisibilityPanelToAllViews()
         m_splintUpperView, m_splintLowerView, m_splintView
     };
 
+    std::map<int, bool> maskVisible;
     if (m_maskTable) {
         for (int row = 0; row < m_maskTable->rowCount(); ++row) {
             auto* idItem = m_maskTable->item(row, 0);
@@ -8303,6 +8309,7 @@ void MainWindow::syncVisibilityPanelToAllViews()
             const int label = idItem->data(Qt::UserRole).toInt();
             if (label <= 0) continue;
             const bool visible = !visItem || visItem->checkState() == Qt::Checked;
+            maskVisible[label] = visible;
             for (Mesh3DView* view : views) {
                 if (view) view->setMeshVisible(label, visible);
             }
@@ -8320,7 +8327,14 @@ void MainWindow::syncVisibilityPanelToAllViews()
             for (Mesh3DView* view : views) {
                 if (!view) continue;
                 view->setMeshVisible(actorKey, visible);
-                if (label > 0) view->setMeshVisible(label, visible && !view->meshData(actorKey));
+                if (label > 0) {
+                    // A mask surface is hidden only while its object is shown in that view;
+                    // hiding the object shows the mask again instead of emptying the scene.
+                    const auto mask = maskVisible.find(label);
+                    view->setMeshVisible(label, mask != maskVisible.end()
+                        ? mask->second && !(visible && view->meshData(actorKey))
+                        : visible && !view->meshData(actorKey));
+                }
                 if (idItem->data(kObjectOpacityRole).isValid()) {
                     const double opacity = idItem->data(kObjectOpacityRole).toDouble();
                     const bool onTop = idItem->data(kObjectOnTopRole).toBool();
@@ -8685,9 +8699,8 @@ void MainWindow::publishSegmentationMesh(int label, vtkSmartPointer<vtkPolyData>
         if (primary || view->meshData(label)) {
             view->addMesh(label, mesh, meshLabelName(label));
             view->setMeshColor(label, maskColorForLabel(label));
-            view->setMeshVisible(label, hasObject
-                ? objectEntryVisible(label) && !view->meshData(actorKey)
-                : !m_hiddenMaskLabels.count(label));
+            view->setMeshVisible(label, !m_hiddenMaskLabels.count(label) &&
+                !(hasObject && objectEntryVisible(label) && view->meshData(actorKey)));
         }
     }
 }

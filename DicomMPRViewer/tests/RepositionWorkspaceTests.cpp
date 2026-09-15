@@ -371,6 +371,111 @@ public:
                 "Reposition did not receive the updated composite");
     }
 
+    // Masks, their slice overlays and 3D surfaces before and after converting them to objects.
+    static void runMaskConversionDisplay()
+    {
+        HideTestDialogs hideDialogs;
+        qApp->installEventFilter(&hideDialogs);
+        MainWindow window;
+        window.setAttribute(Qt::WA_DontShowOnScreen);
+        window.resize(1600, 1000);
+        window.show();
+        settle();
+        const int nx = 64, ny = 64, nz = 48;
+        auto volume = vtkSmartPointer<vtkImageData>::New();
+        volume->SetDimensions(nx, ny, nz);
+        volume->SetSpacing(0.5, 0.5, 0.6);
+        volume->SetOrigin(-10.0, -20.0, -30.0);
+        volume->AllocateScalars(VTK_SHORT, 1);
+        auto mask = vtkSmartPointer<vtkImageData>::New();
+        mask->CopyStructure(volume);
+        mask->AllocateScalars(VTK_UNSIGNED_CHAR, 1);
+        for (int z = 0; z < nz; ++z)
+            for (int y = 0; y < ny; ++y)
+                for (int x = 0; x < nx; ++x) {
+                    const bool inside = x >= 10 && x <= 54 && y >= 10 && y <= 54;
+                    const int label = inside && z >= 20 && z <= 40 ? 5 : inside && z >= 4 && z <= 18 ? 6 : 0;
+                    mask->SetScalarComponentFromDouble(x, y, z, 0, label);
+                    volume->SetScalarComponentFromDouble(x, y, z, 0, label ? 1200 : 0);
+                }
+        window.m_volume = volume;
+        window.m_segmentationLabelmap = mask;
+        window.distributeVolume();
+        settle();
+        for (int label : {5, 6}) {
+            window.addMaskEntry(label == 5 ? "Maxilar" : "Mandibula", QColor(220, 200, 180), label);
+            window.refreshEditedSegmentationMesh(label);
+        }
+        window.refreshSegmentationOverlays();
+        settle();
+
+        const auto overlayPixels = [](MPRView* view) {
+            view->render();
+            const QImage image = view->findChild<QVTKOpenGLNativeWidget*>()->grabFramebuffer();
+            int pink = 0, blue = 0;
+            for (int y = 0; y < image.height(); ++y)
+                for (int x = 0; x < image.width(); ++x) {
+                    const QColor c = image.pixelColor(x, y);
+                    if (c.red() - c.green() > 25 && std::abs(c.green() - c.blue()) < 25 && c.green() > 60) ++pink;
+                    else if (c.blue() - c.red() > 25 && c.blue() > c.green() && c.green() > 60) ++blue;
+                }
+            return std::pair<int, int>(pink, blue);
+        };
+        const auto actorVisible = [&](int key) -> int {
+            const auto mesh = window.m_mesh3DView->meshData(key);
+            if (!mesh) return -1;
+            auto* renderers = window.m_mesh3DView->findChild<QVTKOpenGLNativeWidget*>()->renderWindow()->GetRenderers();
+            renderers->InitTraversal();
+            while (auto* renderer = renderers->GetNextItem()) {
+                auto* actors = renderer->GetActors();
+                actors->InitTraversal();
+                while (auto* actor = actors->GetNextActor())
+                    if (actor->GetMapper() && actor->GetMapper()->GetInput() == mesh) return actor->GetVisibility();
+            }
+            return -2;
+        };
+        struct Display
+        {
+            std::array<std::pair<int, int>, 3> overlays; // axial, coronal, sagittal: pink (5), blue (6)
+            int mask5 = 0, mask6 = 0, object5 = 0, object6 = 0;
+        };
+        const auto capture = [&](const char* stage) {
+            Display display;
+            int index = 0;
+            for (auto* view : {window.m_axialView, window.m_coronalView, window.m_sagittalView})
+                display.overlays[static_cast<size_t>(index++)] = overlayPixels(view);
+            display.mask5 = actorVisible(5);
+            display.mask6 = actorVisible(6);
+            display.object5 = actorVisible(1005);
+            display.object6 = actorVisible(1006);
+            QDir().mkpath("workspace-test-artifacts");
+            window.grab().save(QString("workspace-test-artifacts/mask-conversion-%1.png").arg(stage));
+            return display;
+        };
+        const Display before = capture("before");
+        require(before.mask5 == 1 && before.mask6 == 1, "Mask surfaces were not shown before conversion");
+        for (const auto& overlay : before.overlays)
+            require(overlay.first > 1000, "Maxilla overlay missing on a slice view");
+        require(before.overlays[1].second > 1000 && before.overlays[2].second > 1000,
+                "Mandible overlay missing on the coronal or sagittal view");
+
+        window.calculateObjectFromMask(5);
+        window.calculateObjectFromMask(6);
+        settle();
+        const Display converted = capture("converted");
+        require(converted.overlays == before.overlays, "Converting masks changed their slice overlays");
+        require(converted.object5 == 1 && converted.object6 == 1 && converted.mask5 == 0 && converted.mask6 == 0,
+                "Visible objects did not stand in for their mask surfaces");
+
+        for (int row = 0; row < window.m_objectTable->rowCount(); ++row)
+            if (auto* visible = window.m_objectTable->item(row, 2)) visible->setCheckState(Qt::Unchecked);
+        settle();
+        const Display hidden = capture("objects-hidden");
+        require(hidden.overlays == before.overlays, "Hiding objects changed the slice overlays");
+        require(hidden.object5 == 0 && hidden.object6 == 0 && hidden.mask5 == 1 && hidden.mask6 == 1,
+                "Hiding the objects left their masks hidden in 3D");
+    }
+
     static void runBoneCavityFill()
     {
         HideTestDialogs hideDialogs;
@@ -876,6 +981,7 @@ int main(int argc, char** argv)
         RepositionWorkspaceTests::run();
         RepositionWorkspaceTests::runBoneCavityFill();
         RepositionWorkspaceTests::runSegmentationMeshSync();
+        RepositionWorkspaceTests::runMaskConversionDisplay();
         checkLayeredDisplay();
         std::cout << "RepositionWorkspaceTests OK\n";
         return 0;
