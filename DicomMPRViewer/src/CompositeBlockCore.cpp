@@ -17,7 +17,9 @@
 #include <vtkPlane.h>
 #include <vtkPoints.h>
 #include <vtkPolyData.h>
+#include <vtkGenericCell.h>
 #include <vtkPolyDataNormals.h>
+#include <vtkStaticCellLocator.h>
 #include <vtkStripper.h>
 #include <vtkTransform.h>
 #include <vtkTransformPolyDataFilter.h>
@@ -891,7 +893,6 @@ CompositeBlockResult CreateContourComposite(vtkPolyData* bone, vtkPolyData* dent
         frame.occlusal = std::min(frame.occlusal, dot(sub({p[0], p[1], p[2]}, block.center), block.axisZ));
     }
     // Scan kept and bone replaced below the line of the points, within their outline (any point order).
-    const auto boneField = [&frame, &block](const Vec3& p) { return contourFieldLocal(frame, sub(p, block.center), block); };
     const auto scanField = [&frame, &block](const Vec3& p) { return belowLineField(frame, sub(p, block.center), block, 0.0); };
 
     // Region around the outline walls, where long edges are refined before clipping.
@@ -926,6 +927,27 @@ CompositeBlockResult CreateContourComposite(vtkPolyData* bone, vtkPolyData* dent
         dentalWithSkirt = append->GetOutput();
     }
     const auto dentalPart = TagPart(dentalWithSkirt, DentalPart);
+    // Bone is only replaced where the scan actually is: within ContourNearScanMm of the kept scan inside the
+    // region. The field is evaluated in parallel: static cell locator queries with one generic cell per thread.
+    dentalWithSkirt->BuildCells();
+    auto scanLocator = vtkSmartPointer<vtkStaticCellLocator>::New();
+    scanLocator->SetDataSet(dentalWithSkirt);
+    scanLocator->BuildLocator();
+    const auto boneField = [&frame, &block, &scanLocator](const Vec3& p) {
+        const double region = contourFieldLocal(frame, sub(p, block.center), block);
+        if (region > ContourNearScanMm)
+            return region;
+        thread_local vtkSmartPointer<vtkGenericCell> cell = vtkSmartPointer<vtkGenericCell>::New();
+        double x[3] = {p[0], p[1], p[2]};
+        double closest[3] = {};
+        vtkIdType cellId = -1;
+        int subId = 0;
+        double dist2 = 0.0;
+        const bool found = scanLocator->FindClosestPointWithinRadius(x, 2.0 * ContourNearScanMm, closest, cell,
+                                                                     cellId, subId, dist2) != 0;
+        const double nearScan = found ? std::sqrt(dist2) - ContourNearScanMm : ContourNearScanMm;
+        return intersectFields(region, nearScan);
+    };
     const auto bonePart = TagPart(clipByField(refineNear(bone, lo, hi, kMaxEdgeMm), boneField, false), BonePart);
     result.boneCells = bonePart->GetNumberOfPolys();
     result.dentalCells = dentalPart->GetNumberOfPolys();

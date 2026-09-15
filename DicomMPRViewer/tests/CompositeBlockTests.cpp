@@ -5,6 +5,7 @@
 #include <vtkCellData.h>
 #include <vtkClipPolyData.h>
 #include <vtkFeatureEdges.h>
+#include <vtkImplicitPolyDataDistance.h>
 #include <vtkMassProperties.h>
 #include <vtkMatrix4x4.h>
 #include <vtkPlane.h>
@@ -167,9 +168,14 @@ void testContourComposite()
         cellCentroid(dentalPart, i, c);
         require(ContourScanField(block, contour, c) <= 0.5, "dental scan kept outside the contour");
     }
+    // Inside the region, bone may only remain away from the scan (it is replaced near the scan surface).
+    auto keptScanDistance = vtkSmartPointer<vtkImplicitPolyDataDistance>::New();
+    keptScanDistance->SetInput(dentalPart);
     for (vtkIdType i = 0; i < bonePart->GetNumberOfCells(); ++i) {
         cellCentroid(bonePart, i, c);
-        require(ContourField(block, contour, c) >= -0.5, "bone kept inside the contour");
+        require(!(ContourField(block, contour, c) < -0.5 &&
+                  std::abs(keptScanDistance->EvaluateFunction(c)) < ContourNearScanMm - 0.5),
+                "bone kept next to the scan inside the contour");
     }
     const auto dentalBounds = [](vtkPolyData* mesh) {
         std::array<double, 6> b{};
@@ -262,12 +268,16 @@ void testContourComposite()
     const auto limitBone = ExtractPart(limitResult.composite, BonePart);
     bool behindKept = false;
     bool pastCuspsKept = false;
+    bool besideKept = false;
     double lc[3] = {};
     for (vtkIdType i = 0; i < limitBone->GetNumberOfCells(); ++i) {
         cellCentroid(limitBone, i, lc);
         behindKept = behindKept || (lc[0] > 22.0 && lc[0] < 30.0 && lc[1] < -8.5 && lc[2] < gingiva - 1.0);
         pastCuspsKept = pastCuspsKept || lc[2] < -2.5;
+        // Beside the last tooth (external oblique ridge): inside the region but more than 3 mm from the scan.
+        besideKept = besideKept || (lc[0] > 30.5 && lc[0] < 34.0 && lc[1] > 0.5 && lc[1] < 8.0 && lc[2] < gingiva - 1.0);
     }
+    require(besideKept, "bone beside the teeth, away from the scan, was replaced");
     require(behindKept, "bone behind the last marked teeth was replaced");
     require(pastCuspsKept, "bone past the occlusal side of the crowns was replaced");
 

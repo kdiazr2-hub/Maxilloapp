@@ -78,6 +78,9 @@ CompositeBlockResult CreateBlockComposite(vtkPolyData* bone, vtkPolyData* dental
 // X–Y plane; each point also keeps its height along axisZ.
 using CompositeContour = std::vector<std::array<double, 3>>;
 inline constexpr int MinContourPoints = 3;
+// CT bone is only replaced within this distance of the kept scan (crowns, skirt): bone beside or behind the
+// teeth inside the region (external oblique ridge, ramus) stays when no scan covers it.
+inline constexpr double ContourNearScanMm = 3.0;
 bool ContourValid(const CompositeCutBlock& block, const CompositeContour& contour, QString* error = nullptr);
 // Points on the scan border (buccal and palatal gingiva, any order): everything below the line of the
 // points (heights interpolated between them) within their convex outline, widened for the crown bulges,
