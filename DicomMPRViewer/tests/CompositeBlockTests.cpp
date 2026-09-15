@@ -218,6 +218,30 @@ void testContourComposite()
     const auto vestibuleBounds = dentalBounds(ExtractPart(vestibuleResult.composite, DentalPart));
     require(vestibuleBounds[5] <= gingiva + 1e-6, "scan above the line of the points was kept");
 
+    // Proclined incisors (and brackets) reach several millimetres labial to the gingival points in the
+    // occlusal view: that scan is kept and the CT crowns there are replaced.
+    const Box proclined{-6.0, 6.0, kArchRy + 8.0, kArchRy + 12.0, gingiva - 5.0, gingiva - 1.0};
+    auto proclinedScan = vtkSmartPointer<vtkAppendPolyData>::New();
+    proclinedScan->AddInputData(dental);
+    proclinedScan->AddInputData(boxMesh(proclined, false, false));
+    proclinedScan->Update();
+    auto proclinedBone = vtkSmartPointer<vtkAppendPolyData>::New();
+    proclinedBone->AddInputData(bone());
+    proclinedBone->AddInputData(boxMesh(proclined, false, false));
+    proclinedBone->Update();
+    const CompositeBlockResult proclinedResult =
+        CreateContourComposite(proclinedBone->GetOutput(), proclinedScan->GetOutput(), block, contour);
+    require(proclinedResult.ok, "contour composite with proclined crowns failed: " + proclinedResult.error.toStdString());
+    const auto proclinedDental = dentalBounds(ExtractPart(proclinedResult.composite, DentalPart));
+    require(proclinedDental[3] >= kArchRy + 12.0 - 1e-6, "proclined crowns labial to the points were cut from the scan");
+    const auto proclinedBonePart = ExtractPart(proclinedResult.composite, BonePart);
+    double pc[3] = {};
+    for (vtkIdType i = 0; i < proclinedBonePart->GetNumberOfCells(); ++i) {
+        cellCentroid(proclinedBonePart, i, pc);
+        require(!(std::abs(pc[0]) < 6.0 && pc[1] > kArchRy + 7.0 && pc[1] < kArchRy + 13.0 && pc[2] < gingiva - 0.5),
+                "CT crowns labial to the points were kept");
+    }
+
     require(!ContourValid(block, {contour[0], contour[1]}, &error) && !error.isEmpty(), "two points accepted");
     require(!CreateContourComposite(bone(), dental, block, {contour[0], contour[1]}).ok, "two-point contour built");
     require(ContourFromJson(ContourToJson(contour)) == contour, "contour JSON round trip failed");

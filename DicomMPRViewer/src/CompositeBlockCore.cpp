@@ -386,8 +386,9 @@ struct ContourFrame
 
 // Bone is replaced up to the line of the points plus this margin, so no CT crown edge remains.
 constexpr double kContourBoneMarginMm = 0.5;
-// Crowns bulge beyond the gingival points (buccal and palatal): the outline is widened by this much.
-constexpr double kContourHullMarginMm = 3.0;
+// Crowns reach beyond the gingival points in the occlusal view (bulges, proclined incisors, brackets):
+// the outline is widened by this much, still far from other bone below that level (mastoids).
+constexpr double kContourHullMarginMm = 10.0;
 
 // Convex hull (monotone chain) as indices into the points, counter-clockwise.
 std::vector<size_t> convexHull(const std::vector<std::array<double, 2>>& points)
