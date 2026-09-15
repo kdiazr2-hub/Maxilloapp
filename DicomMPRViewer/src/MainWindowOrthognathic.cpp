@@ -1,25 +1,23 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // MainWindow — ORTOGNÁTICA. The ribbon shows ARCHIVO, MEDIDAS and ORTOGNÁTICA;
-// the planning modules (segmentation → splints) are steps in a left rail. Each
-// step keeps its hidden ribbon tab, so selecting a step clicks that tab and the
-// module switches exactly as before. Every module opens in the frontal view.
+// the planning modules (segmentation → splints) are steps of a bar at the top
+// of the ribbon, above the actions of the current module. Each step keeps its
+// hidden ribbon tab, so selecting a step clicks that tab and the module switches
+// exactly as before. Every module opens in the frontal view.
 // ─────────────────────────────────────────────────────────────────────────────
 
 #include "MainWindow.h"
 #include "Mesh3DView.h"
 
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
 #include <QStyle>
 #include <QToolButton>
-#include <QVBoxLayout>
 
 #include <algorithm>
 #include <array>
 #include <vector>
-
-// Defined in MainWindowModels.cpp.
-QString guidedSidePanelStyle(const QString& objectName);
 
 namespace
 {
@@ -61,46 +59,42 @@ QWidget* MainWindow::buildOrthognathicStepPanel(QWidget* parent)
 {
     auto* panel = new QWidget(parent);
     panel->setObjectName(QStringLiteral("OrthognathicStepPanel"));
-    panel->setFixedWidth(200);
-    panel->setStyleSheet(guidedSidePanelStyle(panel->objectName()) +
-                         QStringLiteral("#OrthognathicStepPanel { border-right:1px solid #2c2c2e; }"
-                                        "#OrthognathicStepPanel QToolButton { text-align:left; padding:9px 10px; }"
-                                        "#OrthognathicStepPanel QPushButton { background:#2c2c2e; color:#f5f5f7;"
-                                        "  border:1px solid #3a3a3c; border-radius:8px; padding:6px; font-size:11px; }"
-                                        "#OrthognathicStepPanel QPushButton:hover { background:#3a3a3c; }"
-                                        "#OrthognathicStepPanel QPushButton:disabled { background:#232325; color:#6e6e73; }"));
-    auto* layout = new QVBoxLayout(panel);
-    layout->setContentsMargins(10, 12, 10, 12);
+    panel->setAttribute(Qt::WA_StyledBackground, true);
+    // ID selectors outrank the ribbon's tall QToolButton style: compact stepper buttons.
+    panel->setStyleSheet(QStringLiteral(
+        "#OrthognathicStepPanel { background:#1f1f21; border-bottom:1px solid #2c2c2e; }"
+        "#OrthognathicStepPanel QToolButton, #OrthognathicStepPanel QPushButton { background:#2c2c2e; color:#f5f5f7;"
+        "  border:1px solid #3a3a3c; border-radius:8px; padding:4px 12px; font-size:11px;"
+        "  min-width:0px; min-height:22px; }"
+        "#OrthognathicStepPanel QToolButton:hover, #OrthognathicStepPanel QPushButton:hover { background:#3a3a3c; }"
+        "#OrthognathicStepPanel QToolButton[guideState=\"done\"] { background:#24342a; border-color:#34c759;"
+        "  color:#d8f8df; }"
+        "#OrthognathicStepPanel QToolButton:checked { background:#0a84ff; border-color:#64d2ff; color:#ffffff;"
+        "  font-weight:700; }"
+        "#OrthognathicStepPanel QPushButton:disabled { background:#232325; border-color:#2c2c2e; color:#6e6e73; }"
+        "#OrthognathicStepPanel QLabel { color:#98989d; font-size:11px; }"));
+    auto* layout = new QHBoxLayout(panel);
+    layout->setContentsMargins(8, 5, 8, 5);
     layout->setSpacing(6);
-    auto* title = new QLabel(tr("Ortognática"), panel);
-    title->setObjectName(QStringLiteral("GuidedPanelTitle"));
-    layout->addWidget(title);
-    auto* section = new QLabel(tr("PASOS"), panel);
-    section->setObjectName(QStringLiteral("GuidedPanelSection"));
-    layout->addWidget(section);
+    m_orthoPrevButton = new QPushButton(QStringLiteral("‹"), panel);
+    m_orthoPrevButton->setToolTip(tr("Paso anterior"));
+    connect(m_orthoPrevButton, &QPushButton::clicked, this, [this] { selectOrthognathicStep(m_orthoStep - 1); });
+    layout->addWidget(m_orthoPrevButton);
     for (int i = 0; i < kOrthoSteps; ++i) {
         auto* button = new QToolButton(panel);
         button->setCheckable(true);
         button->setToolButtonStyle(Qt::ToolButtonTextOnly);
-        button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        button->setToolTip(tr(kStepHints[static_cast<size_t>(i)]));
         connect(button, &QToolButton::clicked, this, [this, i] { selectOrthognathicStep(i); });
         m_orthoStepButtons.append(button);
         layout->addWidget(button);
     }
-    m_orthoStepMessage = new QLabel(panel);
-    m_orthoStepMessage->setWordWrap(true);
-    m_orthoStepMessage->setStyleSheet(QStringLiteral("color:#f5f5f7; font-size:11px; padding:8px 2px 2px 2px;"));
-    layout->addWidget(m_orthoStepMessage);
-    layout->addStretch(1);
-    auto* navigation = new QHBoxLayout();
-    navigation->setSpacing(6);
-    m_orthoPrevButton = new QPushButton(tr("‹ Anterior"), panel);
-    m_orthoNextButton = new QPushButton(tr("Siguiente ›"), panel);
-    connect(m_orthoPrevButton, &QPushButton::clicked, this, [this] { selectOrthognathicStep(m_orthoStep - 1); });
+    m_orthoNextButton = new QPushButton(QStringLiteral("›"), panel);
+    m_orthoNextButton->setToolTip(tr("Paso siguiente"));
     connect(m_orthoNextButton, &QPushButton::clicked, this, [this] { selectOrthognathicStep(m_orthoStep + 1); });
-    navigation->addWidget(m_orthoPrevButton);
-    navigation->addWidget(m_orthoNextButton);
-    layout->addLayout(navigation);
+    layout->addWidget(m_orthoNextButton);
+    m_orthoStepMessage = new QLabel(panel);
+    layout->addWidget(m_orthoStepMessage, 1);
     m_orthoStepPanel = panel;
     panel->setVisible(false);
     updateOrthognathicSteps();
@@ -161,7 +155,7 @@ void MainWindow::updateOrthognathicSteps()
         }
     }
     if (m_orthoStepMessage)
-        m_orthoStepMessage->setText(tr("Paso %1 de %2. %3")
+        m_orthoStepMessage->setText(tr("Paso %1 de %2 · %3")
                                         .arg(m_orthoStep + 1)
                                         .arg(kOrthoSteps)
                                         .arg(tr(kStepHints[static_cast<size_t>(m_orthoStep)])));

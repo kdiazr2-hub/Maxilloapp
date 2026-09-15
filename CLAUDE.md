@@ -70,8 +70,8 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   `OsteotomyWizardPanel` + `MainWindowOsteotomy.cpp` (tipo → hueso → puntos → trayectoria → finalizar); results land in the
   existing segment members/labels (Le Fort 205/206, BSSO 208–211, genioplasty 212/213). The old ribbon osteotomy actions in `MainWindow.cpp` are hidden but kept.
 - Ribbon: only ARCHIVO, MEDIDAS and ORTOGNÁTICA are visible. The planning modules (SEGMENTACION → FERULA) keep
-  hidden "MT" tabs (tests and code still click them by text) and are steps of the ORTOGNÁTICA left rail
-  (`MainWindowOrthognathic.cpp`: step buttons with ✓ when done, Anterior/Siguiente). Every module switch shows its
+  hidden "MT" tabs (tests and code still click them by text) and are steps of the ORTOGNÁTICA step bar at the top of
+  the ribbon, above the module's actions (`MainWindowOrthognathic.cpp`: step buttons with ✓ when done, ‹ ›). Every module switch shows its
   3D views in the frontal standard view (`showModuleViewsFrontal`); `Mesh3DView` frames its first mesh in the
   current standard view (frontal by default, oblique only after `resetCamera`).
 - Object label constants and `objectActorKey` live in `ObjectLabels.h`.

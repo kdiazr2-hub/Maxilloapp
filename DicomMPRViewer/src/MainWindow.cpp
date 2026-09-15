@@ -750,6 +750,9 @@ void MainWindow::buildToolBar()
     tabBar->setStyleSheet("background:#1c1c1e; border-bottom:1px solid #2c2c2e;");
     vbox->addWidget(tabBar);
 
+    // ── ORTOGNÁTICA step bar, above the actions of the current step ───────
+    vbox->addWidget(buildOrthognathicStepPanel(rw));
+
     // ── Stacked content area ──────────────────────────────────────────────
     auto* stack = new QStackedWidget(rw);
     stack->setFixedHeight(82);
@@ -2763,8 +2766,6 @@ void MainWindow::buildCentralWidget()
         m_viewModeStack->addWidget(splintPanel);  // index 6
     }
 
-    // ORTOGNÁTICA step rail, shown while a planning module is active.
-    hbox->addWidget(buildOrthognathicStepPanel(root));
     hbox->addWidget(m_viewModeStack, 1);
 
     // ── Right panel (Project Manager) ──────────────────────────────────────
