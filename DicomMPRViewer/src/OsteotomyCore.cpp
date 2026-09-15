@@ -15,7 +15,10 @@
 #include <vtkFlyingEdges3D.h>
 #include <vtkFloatArray.h>
 #include <vtkImageData.h>
+#include <vtkLandmarkTransform.h>
+#include <vtkMath.h>
 #include <vtkMatrix4x4.h>
+#include <vtkPoints.h>
 #include <vtkPointData.h>
 #include <vtkPolyData.h>
 #include <vtkPolyDataNormals.h>
@@ -767,5 +770,64 @@ vtkSmartPointer<vtkPolyData> BssoGuideMesh(const BssoPlan& plan, bool leftSide)
     maximum[2] += 15.0;
     return slabMesh([&planes](const Vec3& p) { return BssoField(planes, p); }, origin, x, y, z, minimum, maximum,
                     plan.thicknessMm);
+}
+
+SegmentReference CaptureSegmentReference(vtkPolyData* mesh, const std::vector<OstPoint3>& landmarks, int samples)
+{
+    SegmentReference reference;
+    reference.landmarks = landmarks;
+    if (!mesh || mesh->GetNumberOfPoints() < 4 || samples < 4)
+        return reference;
+    const vtkIdType count = mesh->GetNumberOfPoints();
+    const vtkIdType sampled = std::min<vtkIdType>(count, samples);
+    for (vtkIdType i = 0; i < sampled; ++i) {
+        const vtkIdType id = (i * count) / sampled;
+        double p[3];
+        mesh->GetPoint(id, p);
+        reference.ids.push_back(id);
+        reference.points.push_back({p[0], p[1], p[2]});
+    }
+    return reference;
+}
+
+LandmarkMovement MeasureLandmarkMovement(const SegmentReference& reference, vtkPolyData* current, double maxRmsMm)
+{
+    LandmarkMovement movement;
+    if (!current || reference.ids.size() < 4 || reference.ids.size() != reference.points.size())
+        return movement;
+    auto source = vtkSmartPointer<vtkPoints>::New();
+    auto target = vtkSmartPointer<vtkPoints>::New();
+    for (size_t i = 0; i < reference.ids.size(); ++i) {
+        const vtkIdType id = reference.ids[i];
+        if (id < 0 || id >= current->GetNumberOfPoints())
+            return movement;
+        double p[3];
+        current->GetPoint(id, p);
+        source->InsertNextPoint(reference.points[i].data());
+        target->InsertNextPoint(p);
+    }
+    auto fit = vtkSmartPointer<vtkLandmarkTransform>::New();
+    fit->SetSourceLandmarks(source);
+    fit->SetTargetLandmarks(target);
+    fit->SetModeToRigidBody();
+    fit->Update();
+
+    double sum = 0.0;
+    for (vtkIdType i = 0; i < source->GetNumberOfPoints(); ++i) {
+        double moved[3];
+        fit->TransformPoint(source->GetPoint(i), moved);
+        const double* expected = target->GetPoint(i);
+        sum += vtkMath::Distance2BetweenPoints(moved, expected);
+    }
+    movement.rmsMm = std::sqrt(sum / static_cast<double>(source->GetNumberOfPoints()));
+    if (movement.rmsMm > maxRmsMm)
+        return movement;
+    for (const OstPoint3& landmark : reference.landmarks) {
+        double moved[3];
+        fit->TransformPoint(landmark.data(), moved);
+        movement.displacements.push_back({moved[0] - landmark[0], moved[1] - landmark[1], moved[2] - landmark[2]});
+    }
+    movement.valid = true;
+    return movement;
 }
 } // namespace OsteotomyCore

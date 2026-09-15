@@ -1027,6 +1027,9 @@ private:
     QJsonObject osteotomyPlanJson() const;
     void restoreOsteotomyPlan(const ProjectState& state);
     bool m_ostKeepRestoredLandmarks = false; // next wizard start keeps the reopened landmarks
+    std::map<int, SegmentReference> m_segmentReferences; // osteotomy segment label → position at cut time
+    QLabel* m_repositionMeasureLabel = nullptr;
+    void updateRepositionMeasurements();
     // Automatic segmentation progress dialog.
     void closeSegmentationProgress();
     void onSegmentationCancelled();

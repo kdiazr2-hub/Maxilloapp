@@ -32,7 +32,7 @@ Tests (CTest):
 - `GeometryCoreTests`, `BoneCavityFillTests`, `MeshGeneratorTests` — plain C++ executables
 - `MaskToObjectTests` checks exact label extraction, committed cavity filling and immutable input.
 - `ModelWorkflowTests` checks guided MODELOS steps, paired point requirements, fine adjustment and mandatory acceptance.
-- `SplintHeightmapTests`, `SplintDesignTests`, `SplintContourEditTests`, `SplintPreviewSchedulerTests`, `ProjectSerializerTests`, `CompositeBlockTests`, `MeshRepairTests`, `OsteotomyCoreTests` — core tests declared with `add_core_test()`; synthetic arches in `tests/SplintTestGeometry.h`
+- `SplintHeightmapTests`, `SplintDesignTests`, `SplintContourEditTests`, `SplintPreviewSchedulerTests`, `ProjectSerializerTests`, `CompositeBlockTests`, `MeshRepairTests`, `OsteotomyCoreTests`, `CollisionTests`, `SegmentationProgressTests` — core tests declared with `add_core_test()`; synthetic arches in `tests/SplintTestGeometry.h`
 - `SplintWorkspaceTests` also covers the composite block flow and the osteotomy wizard (Le Fort I → BSSO → genioplasty)
 - `RepositionWorkspaceTests`, `SplintWorkspaceTests` — instantiate `MainWindow` (declared `friend`), render offscreen, write PNGs to `build/workspace-test-artifacts`
 - `Mesh3DViewInteractionTests` — drives `Mesh3DView` offscreen with synthetic mouse events
@@ -83,5 +83,10 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   Le Fort I / genioplasty cuts skip bone below the path that is not connected to the segment (e.g. mastoids).
   The permanent eight-step guide and action gates use `ModelWorkflowCore` + `MainWindowModels.cpp`.
   Each jaw's registration continues to its own block and acceptance before the next jaw.
+
+- Osteotomies: `OsteotomyCore` (line-segment paths, BSSO planes, kerf split, segment references for movement measurements),
+  wizard in `OsteotomyWizardPanel` + `MainWindowOsteotomy.cpp`; the plan is saved under the optional `osteotomyPlan` project key.
+- REPOSICIÓN analysis in `MainWindowReposition.cpp`: `CollisionCore` intersection volume/highlight, translation/rotation
+  restriction, pre-op ghost, impaction per cut-path point (oriented frame, Z+ superior).
 
 `README.md` documents the load pipeline and cache but its build section is outdated.

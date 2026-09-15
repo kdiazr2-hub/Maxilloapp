@@ -20,6 +20,7 @@
 #include <vtkPolyData.h>
 
 #include <algorithm>
+#include <cmath>
 
 // Defined in MainWindow.cpp.
 QString meshLabelName(int label);
@@ -141,6 +142,38 @@ void MainWindow::clearRepositionAnalysis()
         m_repositionHighlightButton->setText(tr("Resaltar"));
     if (m_repositionIntersectionLabel)
         m_repositionIntersectionLabel->clear();
+}
+
+void MainWindow::updateRepositionMeasurements()
+{
+    if (!m_repositionMeasureLabel)
+        return;
+    const QLocale locale;
+    const auto signedText = [&locale](double value) {
+        const double rounded = std::abs(value) < 0.05 ? 0.0 : value;
+        return (rounded > 0.0 ? QStringLiteral("+") : QString()) + locale.toString(rounded, 'f', 1);
+    };
+    QStringList lines;
+    for (const auto& [label, reference] : m_segmentReferences) {
+        const auto mesh = repositionMeshForLabel(label);
+        if (!hasPoints(mesh) || reference.landmarks.empty())
+            continue;
+        lines << tr("%1 desde el corte:").arg(meshLabelName(label));
+        const LandmarkMovement movement = OsteotomyCore::MeasureLandmarkMovement(reference, mesh);
+        if (!movement.valid) {
+            lines << tr("  no disponible (la malla ya no coincide con la del corte)");
+            continue;
+        }
+        for (size_t i = 0; i < movement.displacements.size(); ++i) {
+            const OstPoint3& d = movement.displacements[i];
+            QString vertical = tr("Z %1").arg(signedText(d[2]));
+            if (label == kLeFortSegLabel && std::abs(d[2]) >= 0.05)
+                vertical += d[2] > 0.0 ? tr(" impactación") : tr(" descenso");
+            lines << tr("  P%1: X %2 · Y %3 · %4 mm").arg(i + 1).arg(signedText(d[0]), signedText(d[1]), vertical);
+        }
+    }
+    m_repositionMeasureLabel->setText(lines.join(QLatin1Char('\n')));
+    m_repositionMeasureLabel->setVisible(!lines.isEmpty());
 }
 
 void MainWindow::toggleRepositionPreOp()

@@ -3926,6 +3926,14 @@ QWidget* MainWindow::buildRepositionControlPanel(QWidget* parent)
     m_repositionPreOpButton = makeButton(tr("Ver pre-op"), [this] { toggleRepositionPreOp(); });
     m_repositionPreOpButton->setToolTip(tr("Muestra la posición original de las estructuras movidas en gris translúcido."));
     root->addWidget(m_repositionPreOpButton);
+    addSection(tr("Mediciones"));
+    m_repositionMeasureLabel = new QLabel(panel);
+    m_repositionMeasureLabel->setWordWrap(true);
+    m_repositionMeasureLabel->setStyleSheet("color:#f5f5f7; font-size:10px;");
+    m_repositionMeasureLabel->setToolTip(tr("Desplazamiento de los puntos de la trayectoria de corte (P1 derecha → último izquierda).\n"
+                                            "Ejes orientados: X lateral, Y antero-posterior, Z vertical (Z+ superior)."));
+    m_repositionMeasureLabel->setVisible(false);
+    root->addWidget(m_repositionMeasureLabel);
 
     root->addWidget(makeButton(tr("Toggle fixed view"), [this] {
         if (!m_repositionView) return;
@@ -4821,6 +4829,7 @@ void MainWindow::syncRepositionSelectionVisibility()
 void MainWindow::updateRepositionControls()
 {
     updateMandibleMovementSummary();
+    updateRepositionMeasurements();
     const int label = currentRepositionTargetLabel();
     const bool hasTarget = label > 0 && repositionMeshForLabel(label);
     const bool hasSelection = !selectedRepositionTargetLabels().isEmpty();

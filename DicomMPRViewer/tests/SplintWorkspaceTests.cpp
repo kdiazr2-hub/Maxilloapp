@@ -643,6 +643,8 @@ public:
             }
         }
         require(window.selectedRepositionTargetLabels() == QList<int>{kLeFortSegLabel}, "Le Fort segment not selected");
+        window.m_segmentReferences[kLeFortSegLabel] =
+            OsteotomyCore::CaptureSegmentReference(window.m_leFortSegmentMesh, {{0.0, 10.0, 0.0}});
 
         window.analyzeRepositionIntersection(false);
         require(std::abs(window.m_repositionLastIntersectionMm3 - 800.0) < 60.0,
@@ -668,6 +670,8 @@ public:
         window.translateRepositionTarget(0.0, 0.0, -3.0);
         window.m_leFortSegmentMesh->GetBounds(after);
         require(std::abs(after[4] - (before[4] - 3.0)) < 1e-6, "translation not applied without restriction");
+        require(window.m_repositionMeasureLabel->text().contains(QStringLiteral("descenso")),
+                "Le Fort descent not measured: " + window.m_repositionMeasureLabel->text().toStdString());
         window.analyzeRepositionIntersection(false);
         require(window.m_repositionLastIntersectionMm3 == 0.0, "moved segment still reports an intersection");
 

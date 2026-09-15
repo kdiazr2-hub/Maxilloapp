@@ -22,6 +22,7 @@
 
 #include <QString>
 #include <vtkSmartPointer.h>
+#include <vtkType.h>
 
 #include <array>
 #include <vector>
@@ -104,6 +105,22 @@ struct OsteotomySplitResult
     vtkSmartPointer<vtkPolyData> positive; // remaining side
 };
 
+// Segment position at cut time, to measure its later movement at the landmarks
+// (impaction / advancement). Point order survives rigid transforms.
+struct SegmentReference
+{
+    std::vector<vtkIdType> ids;      // sampled mesh vertices
+    std::vector<OstPoint3> points;   // their positions at cut time
+    std::vector<OstPoint3> landmarks;
+};
+
+struct LandmarkMovement
+{
+    bool valid = false;
+    double rmsMm = 0.0;                   // rigid fit residual
+    std::vector<OstPoint3> displacements; // current − cut position, per landmark
+};
+
 struct BssoSplitResult
 {
     bool ok = false;
@@ -155,4 +172,8 @@ BssoSplitResult SplitBsso(vtkPolyData* mesh, const BssoPlan& plan);
 // Closed kerf slabs inside the guide extents, in world coordinates.
 vtkSmartPointer<vtkPolyData> PathGuideMesh(const OsteotomyPath& path);
 vtkSmartPointer<vtkPolyData> BssoGuideMesh(const BssoPlan& plan, bool leftSide);
+
+SegmentReference CaptureSegmentReference(vtkPolyData* mesh, const std::vector<OstPoint3>& landmarks, int samples = 64);
+// Invalid when the mesh no longer matches the reference (point order changed or non-rigid).
+LandmarkMovement MeasureLandmarkMovement(const SegmentReference& reference, vtkPolyData* current, double maxRmsMm = 0.5);
 }

@@ -700,6 +700,21 @@ QJsonObject MainWindow::osteotomyPlanJson() const
         properties.append(o);
     }
     plan[QStringLiteral("properties")] = properties;
+    QJsonObject references;
+    for (const auto& [label, reference] : m_segmentReferences) {
+        QJsonArray ids, points, marks;
+        for (vtkIdType id : reference.ids)
+            ids.append(static_cast<qint64>(id));
+        for (const OstPoint3& p : reference.points)
+            for (double v : p) points.append(v);
+        for (const OstPoint3& p : reference.landmarks)
+            for (double v : p) marks.append(v);
+        references[QString::number(label)] = QJsonObject{{QStringLiteral("ids"), ids},
+                                                         {QStringLiteral("points"), points},
+                                                         {QStringLiteral("landmarks"), marks}};
+    }
+    if (!references.isEmpty())
+        plan[QStringLiteral("segmentReferences")] = references;
     return plan;
 }
 
@@ -719,6 +734,24 @@ void MainWindow::restoreOsteotomyPlan(const ProjectState& state)
         p.posteriorExtensionMm = o.value(QStringLiteral("posteriorExtensionMm")).toDouble(p.posteriorExtensionMm);
         p.inferiorExtensionMm = o.value(QStringLiteral("inferiorExtensionMm")).toDouble(p.inferiorExtensionMm);
         p.mediolateralExtensionMm = o.value(QStringLiteral("mediolateralExtensionMm")).toDouble(p.mediolateralExtensionMm);
+    }
+    const auto triples = [](const QJsonArray& values) {
+        std::vector<OstPoint3> out;
+        for (qsizetype i = 0; i + 2 < values.size(); i += 3)
+            out.push_back({values[i].toDouble(), values[i + 1].toDouble(), values[i + 2].toDouble()});
+        return out;
+    };
+    m_segmentReferences.clear();
+    const QJsonObject references = plan.value(QStringLiteral("segmentReferences")).toObject();
+    for (auto it = references.begin(); it != references.end(); ++it) {
+        const QJsonObject o = it.value().toObject();
+        SegmentReference reference;
+        for (const QJsonValue& id : o.value(QStringLiteral("ids")).toArray())
+            reference.ids.push_back(static_cast<vtkIdType>(id.toInteger()));
+        reference.points = triples(o.value(QStringLiteral("points")).toArray());
+        reference.landmarks = triples(o.value(QStringLiteral("landmarks")).toArray());
+        if (reference.ids.size() == reference.points.size())
+            m_segmentReferences[it.key().toInt()] = std::move(reference);
     }
     m_ostWizard = OsteotomyWizardState{};
     m_ostWizard.type = std::clamp(plan.value(QStringLiteral("type")).toInt(0), 0, 2);
@@ -769,6 +802,7 @@ bool MainWindow::applyOsteotomyCut()
         m_leFortSegmentMesh = split.negative;
         commit(kLeFortCranialLabel, m_leFortCranialMesh);
         commit(kLeFortSegLabel, m_leFortSegmentMesh);
+        m_segmentReferences[kLeFortSegLabel] = OsteotomyCore::CaptureSegmentReference(m_leFortSegmentMesh, m_ostWizard.path.points);
         if (m_leFortExportAct)
             m_leFortExportAct->setEnabled(true);
     } else if (type == OsteotomyType::Bsso) {
@@ -794,6 +828,7 @@ bool MainWindow::applyOsteotomyCut()
         m_genioSegmentMesh = nullptr;
         discard(kGenioBodyLabel);
         discard(kGenioSegmentLabel);
+        m_segmentReferences.erase(kGenioSegmentLabel);
         discard(kBssoProximalLabel);
         commit(kBssoDistalLabel, m_bssoDistalMesh);
         commit(kBssoProximalRightLabel, m_bssoRightProximalMesh);
@@ -814,6 +849,7 @@ bool MainWindow::applyOsteotomyCut()
         }
         commit(kGenioBodyLabel, m_genioBodyMesh);
         commit(kGenioSegmentLabel, m_genioSegmentMesh);
+        m_segmentReferences[kGenioSegmentLabel] = OsteotomyCore::CaptureSegmentReference(m_genioSegmentMesh, m_ostWizard.path.points);
     }
 
     m_ostWizard.planReady = false;

@@ -8,6 +8,8 @@
 #include <vtkPlaneSource.h>
 #include <vtkPolyData.h>
 #include <vtkSmartPointer.h>
+#include <vtkTransform.h>
+#include <vtkTransformPolyDataFilter.h>
 #include <vtkTriangleFilter.h>
 
 #include <algorithm>
@@ -275,9 +277,39 @@ void testBssoSplit()
 }
 } // namespace
 
+void testLandmarkMovement()
+{
+    const auto segment = gridBox(-20, 20, 0, 30, -10, 0);
+    const std::vector<OstPoint3> landmarks = {{-15.0, 25.0, 0.0}, {15.0, 25.0, 0.0}};
+    const SegmentReference reference = OsteotomyCore::CaptureSegmentReference(segment, landmarks);
+    require(reference.ids.size() == 64 && reference.points.size() == 64, "segment reference not sampled");
+
+    auto transform = vtkSmartPointer<vtkTransform>::New();
+    transform->Translate(0.0, 4.0, 3.0);
+    transform->RotateY(5.0);
+    auto filter = vtkSmartPointer<vtkTransformPolyDataFilter>::New();
+    filter->SetInputData(segment);
+    filter->SetTransform(transform);
+    filter->Update();
+    const LandmarkMovement movement = OsteotomyCore::MeasureLandmarkMovement(reference, filter->GetOutput());
+    require(movement.valid && movement.rmsMm < 1e-3 && movement.displacements.size() == 2, "rigid movement not measured");
+    for (size_t i = 0; i < landmarks.size(); ++i) {
+        double expected[3];
+        transform->TransformPoint(landmarks[i].data(), expected);
+        for (int a = 0; a < 3; ++a)
+            require(std::abs(movement.displacements[i][a] - (expected[a] - landmarks[i][a])) < 1e-3,
+                    "landmark displacement is wrong");
+    }
+    const auto identity = OsteotomyCore::MeasureLandmarkMovement(reference, segment);
+    require(identity.valid && std::abs(identity.displacements[0][2]) < 1e-6, "unmoved segment reports movement");
+    require(!OsteotomyCore::MeasureLandmarkMovement(reference, gridBox(-30, 30, 0, 30, -10, 0)).valid,
+            "a different mesh was accepted as the moved segment");
+}
+
 int main()
 {
     const std::vector<std::pair<const char*, std::function<void()>>> tests = {
+        {"landmark movement", testLandmarkMovement},
         {"landmarks", testLandmarks},
         {"Le Fort path", testLeFortPath},
         {"Le Fort split and guide", testLeFortSplitAndGuide},
