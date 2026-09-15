@@ -6,7 +6,6 @@ import subprocess
 import sys
 import tempfile
 import traceback
-import urllib.request
 import zipfile
 from pathlib import Path
 
@@ -19,10 +18,8 @@ except ImportError:
 
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
-WEIGHTS_URL = (
-    "https://github.com/gaudot/SlicerDentalSegmentator/releases/download/"
-    "v1.0.0-alpha/Dataset111_453CT_v100.zip"
-)
+# Official DentalSegmentator weights; installed locally, never downloaded by the app.
+MODEL_ZIP_NAME = "Dataset111_453CT_v100.zip"
 DATASET_ID = "111"
 CONFIGURATION = "3d_fullres"
 FOLDS = "0"
@@ -75,7 +72,7 @@ def require_imports():
             "Faltan dependencias DentalSegmentator standalone: "
             + ", ".join(missing)
             + ". Instale en el Python configurado: "
-              "pip install SimpleITK numpy torch nnunetv2 requests"
+              "pip install SimpleITK numpy torch nnunetv2"
         )
 
 
@@ -90,35 +87,52 @@ def find_dataset_dir(model_dir):
     return None
 
 
-def ensure_weights(model_dir):
+def model_search_dirs(model_dir):
+    """Local folders only: the app never downloads the model."""
+    dirs = [Path(model_dir), Path(__file__).resolve().parent / "models" / "DentalSegmentator"]
+    local = os.environ.get("LOCALAPPDATA", "")
+    if local:
+        slicer_root = Path(local) / "slicer.org"
+        if slicer_root.is_dir():
+            # Weights already installed by the 3D Slicer DentalSegmentator extension.
+            dirs.extend(sorted(
+                slicer_root.glob("*/slicer.org/Extensions-*/DentalSegmentator/lib/*/qt-scripted-modules/Resources/ML"),
+                reverse=True,
+            ))
+    unique = []
+    for folder in dirs:
+        if folder not in unique:
+            unique.append(folder)
+    return unique
+
+
+def ensure_weights(model_dir, search_dirs=None):
     model_dir = Path(model_dir)
-    dataset_dir = find_dataset_dir(model_dir)
-    if dataset_dir:
-        return dataset_dir
+    candidates = [Path(d) for d in (search_dirs if search_dirs is not None else model_search_dirs(model_dir))]
+    for folder in candidates:
+        if folder.is_dir():
+            dataset_dir = find_dataset_dir(folder)
+            if dataset_dir:
+                log(f"Pesos DentalSegmentator locales: {dataset_dir}")
+                return dataset_dir
 
-    no_download = os.environ.get("DENTALSEGMENTATOR_NO_DOWNLOAD", "").strip() == "1"
-    if no_download:
-        raise RuntimeError(
-            f"No se encontraron pesos DentalSegmentator en {model_dir}. "
-            "Defina DENTALSEGMENTATOR_MODEL_DIR o quite DENTALSEGMENTATOR_NO_DOWNLOAD."
-        )
+    for folder in candidates:
+        zip_path = folder / MODEL_ZIP_NAME
+        if zip_path.is_file():
+            log(f"25% Descomprimiendo pesos DentalSegmentator locales: {zip_path}")
+            model_dir.mkdir(parents=True, exist_ok=True)
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                zf.extractall(model_dir)
+            dataset_dir = find_dataset_dir(model_dir)
+            if dataset_dir:
+                return dataset_dir
 
-    model_dir.mkdir(parents=True, exist_ok=True)
-    zip_path = model_dir / "Dataset111_453CT_v100.zip"
-    log("15% Descargando pesos DentalSegmentator oficiales...")
-    log(f"URL: {WEIGHTS_URL}")
-    urllib.request.urlretrieve(WEIGHTS_URL, zip_path)
-
-    log("25% Descomprimiendo pesos DentalSegmentator...")
-    with zipfile.ZipFile(zip_path, "r") as zf:
-        zf.extractall(model_dir)
-
-    dataset_dir = find_dataset_dir(model_dir)
-    if not dataset_dir:
-        raise RuntimeError(
-            f"Los pesos se descargaron, pero no se encontro dataset.json en {model_dir}."
-        )
-    return dataset_dir
+    raise RuntimeError(
+        "No se encontraron los pesos de DentalSegmentator en este equipo y la app no los descarga.\n"
+        f"Copie {MODEL_ZIP_NAME} (o la carpeta Dataset111_453CT descomprimida) en:\n  {model_dir}\n"
+        "El archivo es el de la release oficial de SlicerDentalSegmentator o el de Zenodo "
+        "(doi 10.5281/zenodo.10829674)."
+    )
 
 
 def nnunet_predict_executable():

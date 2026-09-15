@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+import zipfile
 
 import numpy as np
 import SimpleITK as sitk
@@ -187,6 +188,51 @@ class BoneRemapTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cuadricula fisica"):
             self.remap(shell(), "completo", shifted_prediction=True)
         self.assertFalse((self.root / "output.nrrd").exists())
+
+
+class OfflineWeightsTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    @staticmethod
+    def dataset(base):
+        folder = base / "Dataset111_453CT" / "nnUNetTrainer__nnUNetPlans__3d_fullres"
+        folder.mkdir(parents=True)
+        (folder / "dataset.json").write_text("{}")
+        return base / "Dataset111_453CT"
+
+    def test_script_has_no_download_code(self):
+        source = SCRIPT.read_text(encoding="utf-8")
+        for token in ("urllib", "urlretrieve", "requests", "http.client", "socket"):
+            self.assertNotIn(token, source)
+
+    def test_uses_weights_installed_by_slicer(self):
+        slicer = self.root / "slicer" / "Resources" / "ML"
+        expected = self.dataset(slicer)
+        app = self.root / "app"
+        with patch("socket.socket", side_effect=AssertionError("network used")):
+            found = segmentator.ensure_weights(app, [app, slicer])
+        self.assertEqual(found, expected)
+        self.assertFalse(app.exists())
+
+    def test_extracts_a_local_zip(self):
+        app = self.root / "app"
+        app.mkdir()
+        with zipfile.ZipFile(app / segmentator.MODEL_ZIP_NAME, "w") as archive:
+            archive.writestr("Dataset111_453CT/nnUNetTrainer__nnUNetPlans__3d_fullres/dataset.json", "{}")
+        with patch("socket.socket", side_effect=AssertionError("network used")):
+            found = segmentator.ensure_weights(app, [app])
+        self.assertEqual(found, app / "Dataset111_453CT")
+
+    def test_missing_weights_fail_without_network(self):
+        app = self.root / "app"
+        with patch("socket.socket", side_effect=AssertionError("network used")):
+            with self.assertRaisesRegex(RuntimeError, "no los descarga"):
+                segmentator.ensure_weights(app, [app])
 
 
 class ProcessOutputTests(unittest.TestCase):

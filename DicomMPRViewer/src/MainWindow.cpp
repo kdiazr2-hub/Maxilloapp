@@ -7643,7 +7643,7 @@ void MainWindow::showSegmentationBackendInfo()
         tr("Backend de segmentacion"),
         tr("La segmentacion ya no depende de Slicer.exe.\n\n"
            "Dental IA usa DentalSegmentator standalone con nnU-Net/PyTorch y los pesos "
-           "oficiales. La primera ejecucion puede descargar el modelo.\n\n"
+           "oficiales instalados en este equipo (sin conexion a internet).\n\n"
            "Python debe tener SimpleITK, numpy, torch y nnunetv2. Puede definir "
            "DENTALSEGMENTATOR_PYTHON para seleccionar el Python de ese entorno, "
            "DENTALSEGMENTATOR_MODEL_DIR para los pesos y DENTALSEGMENTATOR_DEVICE "
