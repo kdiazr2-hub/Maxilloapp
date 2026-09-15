@@ -38,6 +38,14 @@ def log(message):
     print(message, flush=True)
 
 
+# The app reads this script's output as UTF-8; unmappable characters must not abort the run.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
+
 def default_model_dir():
     configured = os.environ.get("DENTALSEGMENTATOR_MODEL_DIR", "").strip()
     if configured:
@@ -145,18 +153,34 @@ def nnunet_predict_executable():
     )
 
 
-def run_logged(command, env=None):
-    log(" ".join([str(p) for p in command]))
-    process = subprocess.Popen(
+def child_environment(env=None):
+    """Child Python tools (nnU-Net, tqdm) write UTF-8 so the pipe decodes the same way."""
+    child = dict(os.environ if env is None else env)
+    child["PYTHONIOENCODING"] = "utf-8"
+    child["PYTHONUNBUFFERED"] = "1"
+    return child
+
+
+def open_logged_process(command, env=None):
+    # Never decode with the Windows ANSI code page: tqdm bars contain bytes
+    # such as 0x8f that cp1252 cannot map (UnicodeDecodeError).
+    return subprocess.Popen(
         command,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
-        universal_newlines=True,
-        env=env,
+        encoding="utf-8",
+        errors="replace",
+        env=child_environment(env),
     )
-    for line in process.stdout:
-        log(line.rstrip())
+
+
+def run_logged(command, env=None):
+    log(" ".join([str(p) for p in command]))
+    process = open_logged_process(command, env)
+    with process.stdout:
+        for line in process.stdout:
+            log(line.rstrip())
     code = process.wait()
     if code != 0:
         raise RuntimeError(f"Comando fallo con codigo {code}: {command[0]}")
@@ -664,15 +688,10 @@ def expand_command(template, input_path, output_path, target):
 
 
 def run_command(command):
-    process = subprocess.Popen(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        universal_newlines=True,
-    )
-    for line in process.stdout:
-        log(line.rstrip())
+    process = open_logged_process(command)
+    with process.stdout:
+        for line in process.stdout:
+            log(line.rstrip())
     return process.wait()
 
 

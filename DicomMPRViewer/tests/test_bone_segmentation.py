@@ -1,5 +1,6 @@
 import importlib.util
 import os
+import sys
 from pathlib import Path
 import tempfile
 import unittest
@@ -186,6 +187,21 @@ class BoneRemapTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cuadricula fisica"):
             self.remap(shell(), "completo", shifted_prediction=True)
         self.assertFalse((self.root / "output.nrrd").exists())
+
+
+class ProcessOutputTests(unittest.TestCase):
+    def test_tqdm_bytes_do_not_abort_logging(self):
+        # nnU-Net progress bars write bytes such as 0x8f that cp1252 cannot decode.
+        child = (
+            "import sys; "
+            "sys.stdout.buffer.write(b'  1%|\\xe2\\x96\\x8f | 4/448\\n  2%|\\x8f|\\n'); "
+            "sys.stdout.flush()"
+        )
+        lines = []
+        with patch.object(segmentator, "log", side_effect=lines.append):
+            segmentator.run_logged([sys.executable, "-c", child])
+        self.assertTrue(any("4/448" in line for line in lines))
+        self.assertTrue(any("2%" in line for line in lines))
 
 
 if __name__ == "__main__":
