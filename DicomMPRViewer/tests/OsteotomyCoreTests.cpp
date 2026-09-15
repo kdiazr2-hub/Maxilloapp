@@ -156,6 +156,31 @@ void testLeFortSplitAndGuide()
     require(worst < 1.6, "guide surface is not the kerf of the cut");
 }
 
+// A composite that includes the skull base: bone hanging below the Le Fort
+// path far behind the maxilla (mastoid-like) must not be cut.
+void testLeFortSparesPosteriorBone()
+{
+    const OsteotomyPath path = OsteotomyCore::LeFortPath(kLeFort);
+    for (bool tagged : {true, false}) {
+        auto append = vtkSmartPointer<vtkAppendPolyData>::New();
+        const auto maxilla = gridBox(-30.0, 30.0, 0.0, 40.0, 0.0, 40.0);
+        const auto mastoid = gridBox(40.0, 50.0, -60.0, -50.0, 0.0, 40.0);
+        append->AddInputData(tagged ? CompositeBlockCore::TagPart(maxilla, CompositeBlockCore::DentalPart).GetPointer()
+                                    : maxilla.GetPointer());
+        append->AddInputData(tagged ? CompositeBlockCore::TagPart(mastoid, CompositeBlockCore::BonePart).GetPointer()
+                                    : mastoid.GetPointer());
+        append->Update();
+        const OsteotomySplitResult split = OsteotomyCore::SplitByPath(append->GetOutput(), path);
+        const std::string label = tagged ? " (tagged)" : " (untagged)";
+        require(split.ok, "split with posterior bone failed" + label + ": " + split.error.toStdString());
+        double bounds[6];
+        split.negative->GetBounds(bounds);
+        require(bounds[1] < 35.0 && bounds[2] > -1.0, "posterior bone was cut into the Le Fort segment" + label);
+        split.positive->GetBounds(bounds);
+        require(bounds[1] > 49.5 && bounds[4] < 0.5, "posterior bone lost its lower part" + label);
+    }
+}
+
 void testGenioPath()
 {
     const std::array<OstPoint3, 4> points = {{{-15.0, 40.0, 20.0}, {-15.0, 30.0, 0.0}, {15.0, 40.0, 20.0}, {15.0, 30.0, 0.0}}};
@@ -256,6 +281,7 @@ int main()
         {"landmarks", testLandmarks},
         {"Le Fort path", testLeFortPath},
         {"Le Fort split and guide", testLeFortSplitAndGuide},
+        {"Le Fort spares posterior bone", testLeFortSparesPosteriorBone},
         {"genioplasty path", testGenioPath},
         {"BSSO field", testBssoField},
         {"BSSO split", testBssoSplit},

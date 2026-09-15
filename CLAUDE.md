@@ -75,6 +75,12 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   uses it). STL drops cell data: `ProjectSerializer` stores a `.vtp` next to tagged meshes. Avoid filters that drop cell
   data (e.g. appending with untagged meshes) on composites and their segments. MODELOS flow in `MainWindowComposite.cpp`
   (Registrar → Ajuste fino with scan contours on the MPR slices → Bloque → Revisar, review never skipped).
+  Default composite method is "Contorno por puntos": points on the registered scan form a polygon extruded over the
+  block thickness (`CompositeBlockCore::CreateContourComposite`, long edges refined to 1 mm before clipping); the
+  cutting block and the classic trim stay selectable. Arch registration has no accept dialog (metrics in status bar).
+  ORIENTACION always shows the composites it orients; without composites and without a pending scan it builds them
+  from the segmented bones (`createBoneOnlyComposites`, same as «Continuar sin match»).
+  Le Fort I / genioplasty cuts skip bone below the path that is not connected to the segment (e.g. mastoids).
   The permanent eight-step guide and action gates use `ModelWorkflowCore` + `MainWindowModels.cpp`.
   Each jaw's registration continues to its own block and acceptance before the next jaw.
 

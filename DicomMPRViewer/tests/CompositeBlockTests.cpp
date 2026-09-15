@@ -127,6 +127,68 @@ void testCutKeepsRegions()
     require(!CreateBlockComposite(bone(), dental, away).ok, "block without teeth accepted");
 }
 
+// U-shaped contour around the synthetic arch: outer loop then inner loop back.
+CompositeContour archContour(double z)
+{
+    CompositeContour contour;
+    for (int i = 0; i <= 5; ++i) {
+        const double t = kPi * i / 5.0;
+        contour.push_back({(kArchRx + 5.0) * std::cos(t), (kArchRy + 5.0) * std::sin(t), z});
+    }
+    for (int i = 5; i >= 0; --i) {
+        const double t = kPi * i / 5.0;
+        contour.push_back({(kArchRx - 6.0) * std::cos(t), (kArchRy - 6.0) * std::sin(t), z});
+    }
+    return contour;
+}
+
+void testContourComposite()
+{
+    const auto dental = upperTeeth({});
+    const CompositeCutBlock block = InitialBlock(dental, bone(), 15.0);
+    const CompositeContour contour = archContour(1.0);
+    QString error;
+    require(ContourValid(block, contour, &error), "arch contour rejected: " + error.toStdString());
+    const CompositeBlockResult result = CreateContourComposite(bone(), dental, block, contour);
+    require(result.ok, "contour composite failed: " + result.error.toStdString());
+    require(HasParts(result.composite), "contour composite has no part tags");
+
+    const auto bonePart = ExtractPart(result.composite, BonePart);
+    const auto dentalPart = ExtractPart(result.composite, DentalPart);
+    require(bonePart && dentalPart, "contour parts cannot be extracted");
+    // Edges near the contour are refined to 1 mm, so cut cells may straddle it by half a millimetre.
+    double c[3] = {};
+    for (vtkIdType i = 0; i < dentalPart->GetNumberOfCells(); ++i) {
+        cellCentroid(dentalPart, i, c);
+        require(ContourField(block, contour, c) <= 0.5, "dental scan kept outside the contour");
+    }
+    for (vtkIdType i = 0; i < bonePart->GetNumberOfCells(); ++i) {
+        cellCentroid(bonePart, i, c);
+        require(ContourField(block, contour, c) >= -0.5, "bone kept inside the contour");
+    }
+    const auto dentalBounds = [](vtkPolyData* mesh) {
+        std::array<double, 6> b{};
+        mesh->GetBounds(b.data());
+        return b;
+    };
+    const auto teethBounds = dentalBounds(upperTeeth({}));
+    const auto keptBounds = dentalBounds(dentalPart);
+    for (size_t k = 0; k < 6; ++k)
+        require(std::abs(teethBounds[k] - keptBounds[k]) < 1e-6, "teeth inside the contour were lost");
+    double b[6] = {};
+    bonePart->GetBounds(b);
+    require(std::abs(b[5] - 30.0) < 1e-6, "bone above the contour thickness was removed");
+    double center[3] = {0.0, 0.0, 5.0}; // palate: inside the arch but outside the U contour
+    require(ContourField(block, contour, center) > 0.0, "the inner loop does not exclude the palate");
+
+    require(!ContourValid(block, {contour[0], contour[1]}, &error) && !error.isEmpty(), "two points accepted");
+    require(!CreateContourComposite(bone(), dental, block, {contour[0], contour[1]}).ok, "two-point contour built");
+    require(ContourFromJson(ContourToJson(contour)) == contour, "contour JSON round trip failed");
+    require(ContourWallMesh(block, contour)->GetNumberOfPolys() == static_cast<vtkIdType>(contour.size()),
+            "contour wall does not follow the points");
+    require(ContourPolyline(block, contour)->GetNumberOfLines() == 1, "contour polyline missing");
+}
+
 void testLinkFollowsTransformAndCuts()
 {
     const auto dental = upperTeeth({});
@@ -226,6 +288,7 @@ int main()
     const std::vector<std::pair<const char*, std::function<void()>>> tests = {
         {"initial block", testInitialBlock},
         {"cut keeps regions", testCutKeepsRegions},
+        {"contour composite", testContourComposite},
         {"link follows transform and cuts", testLinkFollowsTransformAndCuts},
         {"block transform and json", testBlockTransformAndJson},
         {"slice contour", testSliceContour},

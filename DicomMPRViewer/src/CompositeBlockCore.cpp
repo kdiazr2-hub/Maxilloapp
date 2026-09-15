@@ -8,6 +8,8 @@
 #include <vtkClipPolyData.h>
 #include <vtkCubeSource.h>
 #include <vtkCutter.h>
+#include <vtkDoubleArray.h>
+#include <vtkPointData.h>
 #include <vtkFlyingEdges3D.h>
 #include <vtkImageData.h>
 #include <vtkMath.h>
@@ -30,6 +32,7 @@
 #include <functional>
 #include <limits>
 #include <thread>
+#include <unordered_map>
 
 namespace
 {
@@ -369,6 +372,355 @@ CompositeBlockResult CreateBlockComposite(vtkPolyData* bone, vtkPolyData* dental
                         .arg(result.boneCells).arg(result.dentalCells);
     result.ok = true;
     return result;
+}
+
+namespace
+{
+struct ContourFrame
+{
+    std::vector<std::array<double, 2>> polygon; // block X–Y coordinates
+    double halfThickness = 0.0;
+};
+
+ContourFrame contourFrame(const CompositeCutBlock& block, const CompositeContour& contour)
+{
+    ContourFrame frame;
+    frame.halfThickness = 0.5 * block.sizeMm[2];
+    for (const auto& p : contour) {
+        const Vec3 d = sub(p, block.center);
+        const std::array<double, 2> uv{dot(d, block.axisX), dot(d, block.axisY)};
+        if (frame.polygon.empty() || std::hypot(uv[0] - frame.polygon.back()[0], uv[1] - frame.polygon.back()[1]) > 1e-6)
+            frame.polygon.push_back(uv);
+    }
+    return frame;
+}
+
+double polygonArea(const std::vector<std::array<double, 2>>& polygon)
+{
+    double area = 0.0;
+    for (size_t i = 0, j = polygon.size() - 1; i < polygon.size(); j = i++)
+        area += polygon[j][0] * polygon[i][1] - polygon[i][0] * polygon[j][1];
+    return 0.5 * std::abs(area);
+}
+
+double contourFieldLocal(const ContourFrame& frame, const Vec3& d, const CompositeCutBlock& block)
+{
+    const double x = dot(d, block.axisX);
+    const double y = dot(d, block.axisY);
+    const double z = dot(d, block.axisZ);
+    double best = std::numeric_limits<double>::max();
+    bool inside = false;
+    const auto& poly = frame.polygon;
+    for (size_t i = 0, j = poly.size() - 1; i < poly.size(); j = i++) {
+        const auto& a = poly[i];
+        const auto& b = poly[j];
+        if ((a[1] > y) != (b[1] > y) && x < (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0])
+            inside = !inside;
+        const double ex = b[0] - a[0], ey = b[1] - a[1];
+        const double len2 = ex * ex + ey * ey;
+        const double t = len2 > 0.0 ? std::clamp(((x - a[0]) * ex + (y - a[1]) * ey) / len2, 0.0, 1.0) : 0.0;
+        best = std::min(best, std::hypot(x - (a[0] + t * ex), y - (a[1] + t * ey)));
+    }
+    const double planar = inside ? -best : best;
+    const double vertical = std::abs(z) - frame.halfThickness;
+    if (planar <= 0.0 && vertical <= 0.0)
+        return std::max(planar, vertical);
+    return std::hypot(std::max(planar, 0.0), std::max(vertical, 0.0));
+}
+
+// Conforming midpoint refinement of triangle edges longer than maxEdgeMm that
+// touch the box [lo, hi]: clipping by a curved field only interpolates along
+// edges, so long edges crossing the contour must be split first.
+vtkSmartPointer<vtkPolyData> refineNear(vtkPolyData* input, const Vec3& lo, const Vec3& hi, double maxEdgeMm)
+{
+    auto mesh = triangulated(input);
+    auto points = vtkSmartPointer<vtkPoints>::New();
+    points->DeepCopy(mesh->GetPoints());
+    std::vector<std::array<vtkIdType, 3>> tris;
+    tris.reserve(static_cast<size_t>(mesh->GetNumberOfPolys()));
+    {
+        auto it = vtk::TakeSmartPointer(mesh->GetPolys()->NewIterator());
+        for (it->GoToFirstCell(); !it->IsDoneWithTraversal(); it->GoToNextCell()) {
+            vtkIdType npts = 0;
+            const vtkIdType* ids = nullptr;
+            it->GetCurrentCell(npts, ids);
+            if (npts == 3)
+                tris.push_back({ids[0], ids[1], ids[2]});
+        }
+    }
+    const double max2 = maxEdgeMm * maxEdgeMm;
+    const auto touches = [&](const Vec3& a, const Vec3& b) {
+        for (size_t k = 0; k < 3; ++k)
+            if (std::max(a[k], b[k]) < lo[k] || std::min(a[k], b[k]) > hi[k])
+                return false;
+        return true;
+    };
+    for (int pass = 0; pass < 12; ++pass) {
+        std::unordered_map<unsigned long long, vtkIdType> midpoints;
+        const auto key = [](vtkIdType a, vtkIdType b) {
+            return (static_cast<unsigned long long>(std::min(a, b)) << 32) ^ static_cast<unsigned long long>(std::max(a, b));
+        };
+        const auto midpoint = [&](vtkIdType a, vtkIdType b) -> vtkIdType {
+            const auto found = midpoints.find(key(a, b));
+            return found == midpoints.end() ? -1 : found->second;
+        };
+        Vec3 pa{}, pb{};
+        for (const auto& t : tris) {
+            for (int e = 0; e < 3; ++e) {
+                const vtkIdType a = t[static_cast<size_t>(e)];
+                const vtkIdType b = t[static_cast<size_t>((e + 1) % 3)];
+                if (midpoints.count(key(a, b)))
+                    continue;
+                points->GetPoint(a, pa.data());
+                points->GetPoint(b, pb.data());
+                const Vec3 d = sub(pb, pa);
+                if (dot(d, d) > max2 && touches(pa, pb))
+                    midpoints[key(a, b)] = points->InsertNextPoint(mul(add(pa, pb), 0.5).data());
+            }
+        }
+        if (midpoints.empty())
+            break;
+        std::vector<std::array<vtkIdType, 3>> next;
+        next.reserve(tris.size() * 2);
+        for (const auto& t : tris) {
+            std::array<vtkIdType, 3> m{midpoint(t[0], t[1]), midpoint(t[1], t[2]), midpoint(t[2], t[0])};
+            const int splits = (m[0] >= 0) + (m[1] >= 0) + (m[2] >= 0);
+            if (splits == 0) {
+                next.push_back(t);
+            } else if (splits == 3) {
+                next.push_back({t[0], m[0], m[2]});
+                next.push_back({m[0], t[1], m[1]});
+                next.push_back({m[2], m[1], t[2]});
+                next.push_back({m[0], m[1], m[2]});
+            } else {
+                // Rotate so that edge 0 (v0-v1) is split.
+                int r = 0;
+                while (m[static_cast<size_t>(r)] < 0)
+                    ++r;
+                const vtkIdType v0 = t[static_cast<size_t>(r)], v1 = t[static_cast<size_t>((r + 1) % 3)],
+                                v2 = t[static_cast<size_t>((r + 2) % 3)];
+                const vtkIdType m01 = m[static_cast<size_t>(r)];
+                const vtkIdType m12 = m[static_cast<size_t>((r + 1) % 3)];
+                const vtkIdType m20 = m[static_cast<size_t>((r + 2) % 3)];
+                if (splits == 1) {
+                    next.push_back({v0, m01, v2});
+                    next.push_back({m01, v1, v2});
+                } else if (m12 >= 0) {
+                    next.push_back({v0, m01, v2});
+                    next.push_back({m01, v1, m12});
+                    next.push_back({m01, m12, v2});
+                } else { // m20
+                    next.push_back({v0, m01, m20});
+                    next.push_back({m01, v1, v2});
+                    next.push_back({m20, m01, v2});
+                }
+            }
+        }
+        tris.swap(next);
+    }
+    auto polys = vtkSmartPointer<vtkCellArray>::New();
+    for (const auto& t : tris)
+        polys->InsertNextCell(3, t.data());
+    auto out = vtkSmartPointer<vtkPolyData>::New();
+    out->SetPoints(points);
+    out->SetPolys(polys);
+    return out;
+}
+
+// Mesh part where the field is below (inside) or above (outside) zero.
+vtkSmartPointer<vtkPolyData> clipByField(vtkPolyData* mesh, const std::function<double(const Vec3&)>& field, bool inside)
+{
+    auto work = vtkSmartPointer<vtkPolyData>::New();
+    work->ShallowCopy(mesh);
+    const vtkIdType n = work->GetNumberOfPoints();
+    auto values = vtkSmartPointer<vtkDoubleArray>::New();
+    values->SetName("CompositeContourField");
+    values->SetNumberOfTuples(n);
+    parallelFor(static_cast<int>(n), [&](int begin, int end) {
+        double p[3] = {};
+        for (int i = begin; i < end; ++i) {
+            work->GetPoint(i, p);
+            values->SetValue(i, field({p[0], p[1], p[2]}));
+        }
+    });
+    work->GetPointData()->AddArray(values);
+    work->GetPointData()->SetActiveScalars("CompositeContourField");
+    auto clipper = vtkSmartPointer<vtkClipPolyData>::New();
+    clipper->SetInputData(work);
+    clipper->SetValue(0.0);
+    clipper->SetInsideOut(inside);
+    clipper->GenerateClipScalarsOff();
+    clipper->Update();
+    auto out = vtkSmartPointer<vtkPolyData>::New();
+    out->DeepCopy(clipper->GetOutput());
+    out->GetPointData()->RemoveArray("CompositeContourField");
+    return out;
+}
+
+vtkSmartPointer<vtkPolyData> mergeTaggedParts(vtkPolyData* bonePart, vtkPolyData* dentalPart)
+{
+    auto append = vtkSmartPointer<vtkAppendPolyData>::New();
+    append->AddInputData(bonePart);
+    append->AddInputData(dentalPart);
+    auto clean = vtkSmartPointer<vtkCleanPolyData>::New();
+    clean->SetInputConnection(append->GetOutputPort());
+    auto normals = vtkSmartPointer<vtkPolyDataNormals>::New();
+    normals->SetInputConnection(clean->GetOutputPort());
+    normals->ComputePointNormalsOn();
+    normals->ComputeCellNormalsOff();
+    normals->SplittingOff();
+    normals->ConsistencyOn();
+    normals->Update();
+    auto out = vtkSmartPointer<vtkPolyData>::New();
+    out->DeepCopy(normals->GetOutput());
+    return out;
+}
+} // namespace
+
+bool ContourValid(const CompositeCutBlock& block, const CompositeContour& contour, QString* error)
+{
+    if (!block.valid) {
+        if (error)
+            *error = QStringLiteral("Falta el marco del escaneo para el contorno.");
+        return false;
+    }
+    const ContourFrame frame = contourFrame(block, contour);
+    if (static_cast<int>(frame.polygon.size()) < MinContourPoints) {
+        if (error)
+            *error = QStringLiteral("Marque al menos %1 puntos alrededor del escaneo.").arg(MinContourPoints);
+        return false;
+    }
+    if (polygonArea(frame.polygon) < 1.0) {
+        if (error)
+            *error = QStringLiteral("Los puntos del contorno están alineados: rodee el escaneo.");
+        return false;
+    }
+    return true;
+}
+
+double ContourField(const CompositeCutBlock& block, const CompositeContour& contour, const double point[3])
+{
+    const ContourFrame frame = contourFrame(block, contour);
+    if (frame.polygon.size() < 3)
+        return std::numeric_limits<double>::max();
+    return contourFieldLocal(frame, sub({point[0], point[1], point[2]}, block.center), block);
+}
+
+vtkSmartPointer<vtkPolyData> ContourWallMesh(const CompositeCutBlock& block, const CompositeContour& contour)
+{
+    const ContourFrame frame = contourFrame(block, contour);
+    auto points = vtkSmartPointer<vtkPoints>::New();
+    auto polys = vtkSmartPointer<vtkCellArray>::New();
+    const auto world = [&](const std::array<double, 2>& uv, double z) {
+        return add(block.center, add(mul(block.axisX, uv[0]), add(mul(block.axisY, uv[1]), mul(block.axisZ, z))));
+    };
+    const size_t n = frame.polygon.size();
+    for (const auto& uv : frame.polygon) {
+        points->InsertNextPoint(world(uv, -frame.halfThickness).data());
+        points->InsertNextPoint(world(uv, frame.halfThickness).data());
+    }
+    if (n >= 2) {
+        for (size_t i = 0; i < n; ++i) {
+            const vtkIdType a = static_cast<vtkIdType>(2 * i);
+            const vtkIdType b = static_cast<vtkIdType>(2 * ((i + 1) % n));
+            const vtkIdType quad[4] = {a, b, b + 1, a + 1};
+            if (n > 2 || i == 0)
+                polys->InsertNextCell(4, quad);
+        }
+    }
+    auto mesh = vtkSmartPointer<vtkPolyData>::New();
+    mesh->SetPoints(points);
+    mesh->SetPolys(polys);
+    return mesh;
+}
+
+vtkSmartPointer<vtkPolyData> ContourPolyline(const CompositeCutBlock& block, const CompositeContour& contour)
+{
+    const ContourFrame frame = contourFrame(block, contour);
+    auto points = vtkSmartPointer<vtkPoints>::New();
+    auto lines = vtkSmartPointer<vtkCellArray>::New();
+    std::vector<vtkIdType> ids;
+    for (const auto& uv : frame.polygon) {
+        const Vec3 p = add(block.center, add(mul(block.axisX, uv[0]), add(mul(block.axisY, uv[1]), mul(block.axisZ, -frame.halfThickness))));
+        ids.push_back(points->InsertNextPoint(p.data()));
+    }
+    if (ids.size() >= 2) {
+        if (ids.size() >= 3)
+            ids.push_back(ids.front());
+        lines->InsertNextCell(static_cast<vtkIdType>(ids.size()), ids.data());
+    }
+    auto polyline = vtkSmartPointer<vtkPolyData>::New();
+    polyline->SetPoints(points);
+    polyline->SetLines(lines);
+    return polyline;
+}
+
+CompositeBlockResult CreateContourComposite(vtkPolyData* bone, vtkPolyData* dentalScan, const CompositeCutBlock& block,
+                                            const CompositeContour& contour)
+{
+    CompositeBlockResult result;
+    if (!ContourValid(block, contour, &result.error))
+        return result;
+    if (!bone || bone->GetNumberOfPolys() == 0) {
+        result.error = QStringLiteral("Falta la malla de hueso del TAC.");
+        return result;
+    }
+    if (!dentalScan || dentalScan->GetNumberOfPolys() == 0) {
+        result.error = QStringLiteral("Falta el escaneo dental registrado.");
+        return result;
+    }
+    const ContourFrame frame = contourFrame(block, contour);
+    const auto field = [&frame, &block](const Vec3& p) { return contourFieldLocal(frame, sub(p, block.center), block); };
+
+    // Region around the extruded contour, where long edges are refined before clipping.
+    Vec3 lo{std::numeric_limits<double>::max(), std::numeric_limits<double>::max(), std::numeric_limits<double>::max()};
+    Vec3 hi = mul(lo, -1.0);
+    for (const auto& uv : frame.polygon)
+        for (double z : {-frame.halfThickness, frame.halfThickness}) {
+            const Vec3 p = add(block.center, add(mul(block.axisX, uv[0]), add(mul(block.axisY, uv[1]), mul(block.axisZ, z))));
+            for (size_t k = 0; k < 3; ++k) {
+                lo[k] = std::min(lo[k], p[k] - 2.0);
+                hi[k] = std::max(hi[k], p[k] + 2.0);
+            }
+        }
+    constexpr double kMaxEdgeMm = 1.0;
+    const auto dentalPart = TagPart(clipByField(refineNear(dentalScan, lo, hi, kMaxEdgeMm), field, true), DentalPart);
+    const auto bonePart = TagPart(clipByField(refineNear(bone, lo, hi, kMaxEdgeMm), field, false), BonePart);
+    result.boneCells = bonePart->GetNumberOfPolys();
+    result.dentalCells = dentalPart->GetNumberOfPolys();
+    if (result.dentalCells == 0) {
+        result.error = QStringLiteral("El contorno no contiene el escaneo dental: rodee los dientes con los puntos.");
+        return result;
+    }
+    if (result.boneCells == 0) {
+        result.error = QStringLiteral("El contorno cubre todo el hueso: acérquelo a los dientes.");
+        return result;
+    }
+    result.composite = mergeTaggedParts(bonePart, dentalPart);
+    result.report = QStringLiteral("Contorno de %1 puntos (%2 mm², grosor %3 mm): hueso conservado %4 triángulos, escaneo dental %5 triángulos.")
+                        .arg(frame.polygon.size()).arg(polygonArea(frame.polygon), 0, 'f', 0)
+                        .arg(block.sizeMm[2], 0, 'f', 1).arg(result.boneCells).arg(result.dentalCells);
+    result.ok = true;
+    return result;
+}
+
+QJsonArray ContourToJson(const CompositeContour& contour)
+{
+    QJsonArray array;
+    for (const auto& p : contour)
+        array.append(vecJson(p));
+    return array;
+}
+
+CompositeContour ContourFromJson(const QJsonArray& array)
+{
+    CompositeContour contour;
+    for (const QJsonValue& value : array) {
+        Vec3 p{};
+        if (vecFrom(value, p))
+            contour.push_back(p);
+    }
+    return contour;
 }
 
 vtkSmartPointer<vtkPolyData> ExtractPart(vtkPolyData* mesh, unsigned char part)

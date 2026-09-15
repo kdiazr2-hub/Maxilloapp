@@ -12,6 +12,7 @@
 // No Qt Widgets.
 // ─────────────────────────────────────────────────────────────────────────────
 
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QString>
 #include <vtkSmartPointer.h>
@@ -71,6 +72,23 @@ CompositeCutBlock WithSize(const CompositeCutBlock& block, double widthMm, doubl
 bool Contains(const CompositeCutBlock& block, const double point[3], double toleranceMm = 0.0);
 
 CompositeBlockResult CreateBlockComposite(vtkPolyData* bone, vtkPolyData* dentalScan, const CompositeCutBlock& block);
+
+// ── Contour drawn with points around the scan (instead of the rectangle) ──
+// The polygon is the points, in placement order, projected on the block's
+// X–Y plane; it is extruded over the block thickness along axisZ.
+using CompositeContour = std::vector<std::array<double, 3>>;
+inline constexpr int MinContourPoints = 3;
+bool ContourValid(const CompositeCutBlock& block, const CompositeContour& contour, QString* error = nullptr);
+// Signed distance to the extruded polygon: negative inside.
+double ContourField(const CompositeCutBlock& block, const CompositeContour& contour, const double point[3]);
+// Translucent wall along the contour over the block thickness (display).
+vtkSmartPointer<vtkPolyData> ContourWallMesh(const CompositeCutBlock& block, const CompositeContour& contour);
+// Closed polyline of the contour on the occlusal face of the block (display).
+vtkSmartPointer<vtkPolyData> ContourPolyline(const CompositeCutBlock& block, const CompositeContour& contour);
+CompositeBlockResult CreateContourComposite(vtkPolyData* bone, vtkPolyData* dentalScan, const CompositeCutBlock& block,
+                                            const CompositeContour& contour);
+QJsonArray ContourToJson(const CompositeContour& contour);
+CompositeContour ContourFromJson(const QJsonArray& array);
 
 bool HasParts(vtkPolyData* mesh);
 vtkSmartPointer<vtkPolyData> TagPart(vtkPolyData* mesh, unsigned char part);

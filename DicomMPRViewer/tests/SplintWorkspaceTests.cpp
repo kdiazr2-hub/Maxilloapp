@@ -12,6 +12,7 @@
 #include <QApplication>
 #include <QAction>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QDialog>
 #include <QDir>
 #include <QElapsedTimer>
@@ -463,8 +464,47 @@ public:
         require(window.m_compositeStage == MainWindow::CompositeStage::Block, "composite did not open the block stage");
         require(window.m_upperCompositeBlock.valid && std::abs(window.m_upperCompositeBlock.sizeMm[2] - 15.0) < 1e-9,
                 "initial cutting block is not 15 mm thick");
-        require(window.m_modelMatchView->meshData(kCompositeBlockActorKey) != nullptr, "cutting block not shown");
         require(window.m_compositeBlockPanel->isVisibleTo(&window), "block panel not shown");
+
+        // Default method: contour points placed around the scan.
+        require(window.compositePointsMethodActive(), "contour points are not the default composite method");
+        require(!window.m_compositeCalculateButton->isEnabled(), "composite can be calculated without contour points");
+        {
+            const double kPiLocal = 3.14159265358979323846;
+            for (int i = 0; i <= 5; ++i) {
+                const double t = kPiLocal * i / 5.0;
+                window.onCompositeContourPointAdded(0, (kArchRx + 5.0) * std::cos(t), (kArchRy + 5.0) * std::sin(t), 1.0);
+            }
+            for (int i = 5; i >= 0; --i) {
+                const double t = kPiLocal * i / 5.0;
+                window.onCompositeContourPointAdded(0, (kArchRx - 6.0) * std::cos(t), (kArchRy - 6.0) * std::sin(t), 1.0);
+            }
+        }
+        require(window.m_compositeContours[0].size() == 12 && window.m_compositeCalculateButton->isEnabled(),
+                "contour points not stored");
+        require(window.m_modelMatchView->meshData(kCompositeContourActorKey) != nullptr &&
+                    window.m_modelMatchView->hasOverlay(5),
+                "contour not shown around the scan");
+        window.onCompositeContourPointRemoved(0, 11);
+        window.onCompositeContourPointAdded(0, (kArchRx - 6.0), 0.0, 1.0);
+        require(window.m_compositeContours[0].size() == 12, "removing/re-adding a contour point failed");
+        window.m_modelMatchView->setStandardView(0);
+        capture(window, QStringLiteral("composite-contour.png"));
+        window.calculateBlockComposite();
+        require(waitFor([&] {
+                    return !window.m_compositeInProgress && window.m_compositeStage == MainWindow::CompositeStage::Review;
+                }, 60000),
+                "contour composite review never opened");
+        require(CompositeBlockCore::HasParts(window.m_compositeReviewMesh) &&
+                    CompositeBlockCore::ExtractPart(window.m_compositeReviewMesh, CompositeBlockCore::DentalPart),
+                "contour composite has no dental part");
+        window.backToCompositeBlockStage();
+
+        // The cutting block stays available.
+        window.m_compositeMethodCombo->setCurrentIndex(window.m_compositeMethodCombo->findData(0));
+        require(!window.compositePointsMethodActive() && window.compositeBlockMethodActive(), "block method not selectable");
+        require(window.m_modelMatchView->meshData(kCompositeBlockActorKey) != nullptr, "cutting block not shown");
+        require(!window.m_modelMatchView->meshData(kCompositeContourActorKey), "contour still shown with the block method");
         require(window.m_modelGuide->isVisibleTo(&window) && window.m_modelGuideSteps[3]->property("current").toBool(),
                 "guide disappeared during block adjustment");
         window.m_compositeThicknessSpin->setValue(12.0);
@@ -544,6 +584,10 @@ public:
                     std::abs(window.m_frankfurtPoints[1].z() - window.m_frankfurtPoints[3].z()) < 1e-3,
                 "Frankfort plane is not horizontal after alignment");
         require(CompositeBlockCore::HasParts(window.m_upperCompositeMesh), "Frankfort alignment dropped the dental link");
+        // Hidden in the object list: ORIENTACION still shows the model it orients.
+        window.setObjectEntryVisible(kUpperCompositeLabel, false);
+        window.setOrientationWorkspace(true);
+        require(window.objectEntryVisible(kUpperCompositeLabel), "ORIENTACION left the composite hidden");
         window.m_orientationView->setStandardView(1);
         window.m_orientationView->render();
         settle();
@@ -570,7 +614,27 @@ public:
                     reopened.m_upperCompositeBlock.center == window.m_upperCompositeBlock.center &&
                     reopened.m_upperCompositeBlock.sizeMm == window.m_upperCompositeBlock.sizeMm,
                 "cutting block lost after reopening");
+        require(reopened.m_compositeContours[0] == window.m_compositeContours[0], "composite contour lost after reopening");
         std::cout << "Composite workspace: block, mandatory review, link, splint source, union and project OK\n";
+    }
+
+    // ORIENTACION with segmented bones only: the bones are oriented (as «Continuar sin match»).
+    static void runOrientationWithBonesOnly()
+    {
+        MainWindow window;
+        window.setAttribute(Qt::WA_DontShowOnScreen);
+        window.resize(1400, 900);
+        window.show();
+        settle();
+        window.m_mesh3DView->addMesh(5, boxMesh({-35, 35, -10, 35, 4, 30}, false, false), "Maxilar");
+        window.m_mesh3DView->addMesh(6, boxMesh({-35, 35, -10, 35, -30, -4}, false, false), "Mandibula");
+        window.setOrientationWorkspace(true);
+        settle();
+        require(window.m_upperCompositeMesh && window.m_lowerCompositeMesh, "bones were not turned into composites");
+        require(window.m_orientationView->meshData(objectActorKey(kUpperCompositeLabel)) != nullptr &&
+                    window.m_orientationView->meshData(objectActorKey(kLowerCompositeLabel)) != nullptr,
+                "ORIENTACION does not show the segmented bones");
+        std::cout << "Orientation with bones only OK\n";
     }
 
     // OSTEOTOMIA wizard: Le Fort I → BSSO (6 points, both sides) → genioplasty on the distal segment.
@@ -804,6 +868,7 @@ int main(int argc, char** argv)
         SplintWorkspaceTests::run(artifacts);
         SplintWorkspaceTests::runModelGuide(artifacts);
         SplintWorkspaceTests::runCompositeWorkflow(artifacts);
+        SplintWorkspaceTests::runOrientationWithBonesOnly();
         SplintWorkspaceTests::runOsteotomyWorkflow(artifacts);
         if (!unexpectedDialogs.isEmpty()) {
             std::cerr << "FAIL unexpected dialogs: " << unexpectedDialogs.join(QStringLiteral(" | ")).toStdString() << '\n';

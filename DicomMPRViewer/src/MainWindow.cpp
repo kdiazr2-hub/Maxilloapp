@@ -5276,6 +5276,13 @@ void MainWindow::setOrientationWorkspace(bool enabled)
     }
 
     if (enabled && m_orientationView) {
+        // Orientation rotates the composites. With segmented bones and no registered scan
+        // waiting for its composite, orient the bones directly (as «Continuar sin match»).
+        const bool scanPending = m_compositeStage != CompositeStage::None ||
+                                 (m_upperRegistrationCalculated && !m_upperCompositeMesh) ||
+                                 (m_lowerRegistrationCalculated && !m_lowerCompositeMesh);
+        if (!m_upperCompositeMesh && !m_lowerCompositeMesh && !scanPending && createBoneOnlyComposites())
+            publishCompositeMeshesToSceneViews();
         m_orientationView->clearMeshes();
         m_orientationView->clearPointMarkers();
 
@@ -5290,6 +5297,26 @@ void MainWindow::setOrientationWorkspace(bool enabled)
             m_orientationView->addMesh(k, m_lowerCompositeMesh,
                                        meshLabelName(kLowerCompositeLabel));
             m_orientationView->setMeshColor(k, objectColorForLabel(kLowerCompositeLabel));
+        }
+        // The models being oriented are always shown, even when hidden in the object list.
+        for (int label : {kUpperCompositeLabel, kLowerCompositeLabel}) {
+            if (!(label == kUpperCompositeLabel ? m_upperCompositeMesh : m_lowerCompositeMesh))
+                continue;
+            if (!objectEntryExists(label))
+                addObjectEntry(meshLabelName(label), objectColorForLabel(label), label);
+            if (!objectEntryVisible(label))
+                setObjectEntryVisible(label, true);
+        }
+        // A registered scan still waiting for its composite: show the bones as reference.
+        if (!m_upperCompositeMesh && !m_lowerCompositeMesh) {
+            for (int i = 0; i < 2; ++i) {
+                if (const auto bone = meshForAnatomicLabel(i == 0 ? 5 : 6)) {
+                    const int key = kOrientationBoneReferenceKey - i;
+                    m_orientationView->addMesh(key, bone, i == 0 ? tr("Maxilar (referencia)") : tr("Mandíbula (referencia)"));
+                    m_orientationView->setMeshColor(key, objectColorForLabel(i == 0 ? 5 : 6));
+                    m_orientationView->setMeshOpacity(key, 0.6);
+                }
+            }
         }
 
         syncVisibilityPanelToAllViews();
@@ -6644,52 +6671,12 @@ void MainWindow::continueToOrientationWithoutMatch()
     if (m_dentalGizmoActive)
         commitActiveDentalGizmos(false);
 
-    auto copyMesh = [](vtkPolyData* source) -> vtkSmartPointer<vtkPolyData> {
-        if (!source || source->GetNumberOfPoints() <= 0) return nullptr;
-        auto copy = vtkSmartPointer<vtkPolyData>::New();
-        copy->DeepCopy(source);
-        return copy;
-    };
-
-    bool available = false;
-
-    if (!m_upperCompositeMesh) {
-        if (auto maxilla = meshForAnatomicLabel(5)) {
-            m_upperCompositeMesh = copyMesh(maxilla);
-            if (m_upperCompositeMesh) {
-                addObjectEntry(tr("Compuesto maxilar (sin STL)"),
-                               objectColorForLabel(kUpperCompositeLabel),
-                               kUpperCompositeLabel);
-                available = true;
-            }
-        }
-    } else {
-        available = true;
-    }
-
-    if (!m_lowerCompositeMesh) {
-        if (auto mandible = meshForAnatomicLabel(6)) {
-            m_lowerCompositeMesh = copyMesh(mandible);
-            if (m_lowerCompositeMesh) {
-                addObjectEntry(tr("Compuesto mandibular (sin STL)"),
-                               objectColorForLabel(kLowerCompositeLabel),
-                               kLowerCompositeLabel);
-                available = true;
-            }
-        }
-    } else {
-        available = true;
-    }
-
-    if (!available) {
+    if (!createBoneOnlyComposites()) {
         QMessageBox::warning(this, tr("Continuar sin match"),
                              tr("No hay maxilar ni mandibula calculados para orientar.\n"
                                 "Primero calcule las mallas desde Segmentacion."));
         return;
     }
-
-    m_appState.setUpperCompositeReady(m_upperCompositeMesh != nullptr);
-    m_appState.setLowerCompositeReady(m_lowerCompositeMesh != nullptr);
     publishCompositeMeshesToSceneViews();
     showFinalCompositeView(true);
     updateButtonStates();
@@ -13055,10 +13042,6 @@ void MainWindow::alignUpperArchToMaxilla()
         statusBar()->showMessage(tr("ICP superior omitido: %1").arg(icpError));
     }
 
-    // Restored when the user rejects this registration.
-    const auto previousUpperMatrix = m_upperArchRegistrationMatrix;
-    const bool previousUpperCalculated = m_upperRegistrationCalculated;
-    const QString previousUpperReport = m_upperRegistrationReport;
     auto priorMatrix = m_upperArchRegistrationMatrix
         ? TransformCore::CloneMatrix(m_upperArchRegistrationMatrix)
         : TransformCore::IdentityMatrix();
@@ -13091,40 +13074,11 @@ void MainWindow::alignUpperArchToMaxilla()
     double meanDist = 0.0, maxDist = 0.0, p95Dist = 0.0;
     RegistrationResult::computeMetrics(transformed, maxilla, meanDist, maxDist, p95Dist);
 
-    // ── Phase 5: show accept/reject dialog ─────────────────────────────────
-    {
-        const QString summary =
-            tr("Registro superior completado.\n\n"
-               "  LM-RMS:           %1 mm\n"
-               "  Media pt-sup:     %2 mm\n"
-               "  P95  pt-sup:      %3 mm\n"
-               "  Máx  pt-sup:      %4 mm\n\n"
-               "%5\n\n"
-               "¿Aceptar este registro?")
-                .arg(landmarkRms, 0, 'f', 3)
-                .arg(meanDist,    0, 'f', 3)
-                .arg(p95Dist,     0, 'f', 3)
-                .arg(maxDist,     0, 'f', 3)
-                .arg(icpReport.isEmpty()
-                         ? tr("(ICP no aplicado)")
-                         : icpReport);
-
-        const auto ret = QMessageBox::question(
-            this, tr("Registro superior — Métricas"),
-            summary,
-            QMessageBox::Yes | QMessageBox::No,
-            QMessageBox::Yes);
-
-        if (ret != QMessageBox::Yes) {
-            m_upperArchRegistrationMatrix = previousUpperMatrix;
-            m_upperRegistrationCalculated = previousUpperCalculated;
-            m_upperRegistrationReport = previousUpperReport;
-            statusBar()->showMessage(tr("Registro superior rechazado: se mantiene el registro anterior."));
-            LoggerCore::instance().logRegistration(
-                QStringLiteral("upper"), landmarkRms, meanDist, p95Dist, false);
-            return;
-        }
-    }
+    // ── Phase 5: metrics in the status bar (no confirmation dialog: the fine
+    // adjustment and the mandatory composite review follow) ────────────────
+    statusBar()->showMessage(
+        tr("Registro superior aplicado: LM-RMS %1 mm · media %2 mm · P95 %3 mm · máx %4 mm.")
+            .arg(landmarkRms, 0, 'f', 2).arg(meanDist, 0, 'f', 2).arg(p95Dist, 0, 'f', 2).arg(maxDist, 0, 'f', 2));
 
     // ── Accept: apply transformed mesh ────────────────────────────────────
     m_upperArchMesh = transformed;
@@ -13203,10 +13157,6 @@ void MainWindow::alignLowerArchToMandible()
         statusBar()->showMessage(tr("ICP inferior omitido: %1").arg(icpError));
     }
 
-    // Restored when the user rejects this registration.
-    const auto previousLowerMatrix = m_lowerArchRegistrationMatrix;
-    const bool previousLowerCalculated = m_lowerRegistrationCalculated;
-    const QString previousLowerReport = m_lowerRegistrationReport;
     auto priorMatrix = m_lowerArchRegistrationMatrix
         ? TransformCore::CloneMatrix(m_lowerArchRegistrationMatrix)
         : TransformCore::IdentityMatrix();
@@ -13239,40 +13189,11 @@ void MainWindow::alignLowerArchToMandible()
     double meanDist = 0.0, maxDist = 0.0, p95Dist = 0.0;
     RegistrationResult::computeMetrics(transformed, mandible, meanDist, maxDist, p95Dist);
 
-    // ── Phase 5: show accept/reject dialog ─────────────────────────────────
-    {
-        const QString summary =
-            tr("Registro inferior completado.\n\n"
-               "  LM-RMS:           %1 mm\n"
-               "  Media pt-sup:     %2 mm\n"
-               "  P95  pt-sup:      %3 mm\n"
-               "  Máx  pt-sup:      %4 mm\n\n"
-               "%5\n\n"
-               "¿Aceptar este registro?")
-                .arg(landmarkRms, 0, 'f', 3)
-                .arg(meanDist,    0, 'f', 3)
-                .arg(p95Dist,     0, 'f', 3)
-                .arg(maxDist,     0, 'f', 3)
-                .arg(icpReport.isEmpty()
-                         ? tr("(ICP no aplicado)")
-                         : icpReport);
-
-        const auto ret = QMessageBox::question(
-            this, tr("Registro inferior — Métricas"),
-            summary,
-            QMessageBox::Yes | QMessageBox::No,
-            QMessageBox::Yes);
-
-        if (ret != QMessageBox::Yes) {
-            m_lowerArchRegistrationMatrix = previousLowerMatrix;
-            m_lowerRegistrationCalculated = previousLowerCalculated;
-            m_lowerRegistrationReport = previousLowerReport;
-            statusBar()->showMessage(tr("Registro inferior rechazado: se mantiene el registro anterior."));
-            LoggerCore::instance().logRegistration(
-                QStringLiteral("lower"), landmarkRms, meanDist, p95Dist, false);
-            return;
-        }
-    }
+    // ── Phase 5: metrics in the status bar (no confirmation dialog: the fine
+    // adjustment and the mandatory composite review follow) ────────────────
+    statusBar()->showMessage(
+        tr("Registro inferior aplicado: LM-RMS %1 mm · media %2 mm · P95 %3 mm · máx %4 mm.")
+            .arg(landmarkRms, 0, 'f', 2).arg(meanDist, 0, 'f', 2).arg(p95Dist, 0, 'f', 2).arg(maxDist, 0, 'f', 2));
 
     // ── Accept: apply transformed mesh ────────────────────────────────────
     m_lowerArchMesh = transformed;

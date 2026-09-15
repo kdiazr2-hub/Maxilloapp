@@ -991,6 +991,17 @@ private:
                            const QString& path);
     QJsonObject compositeBlocksJson() const;
     void restoreCompositeBlocks(const ProjectState& state);
+    // Composites copied from the segmented bones (no intraoral scan); false without bones.
+    bool createBoneOnlyComposites();
+    // Composite region drawn with points around the scan (default method).
+    bool compositePointsMethodActive() const;
+    void onCompositeContourPointAdded(int group, double x, double y, double z);
+    void onCompositeContourPointMoved(int group, int index, double x, double y, double z);
+    void onCompositeContourPointRemoved(int group, int index);
+    void clearCompositeContour();
+    void updateCompositeContourDisplay();
+    std::array<CompositeBlockCore::CompositeContour, 2> m_compositeContours; // 0 upper, 1 lower
+    QPushButton* m_compositeClearPointsButton = nullptr;
 
     CompositeStage               m_compositeStage = CompositeStage::None;
     int                          m_compositeStageStep = 0;

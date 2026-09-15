@@ -46,7 +46,7 @@ ModelWorkflowCore::State ModelWorkflowCore::Evaluate(const Input& input)
     if (input.phase != Phase::Registration) {
         out.current += 3;
         switch (input.phase) {
-        case Phase::Block: out.instruction = QStringLiteral("Ajuste el bloque y pulse Calcular compuesto."); break;
+        case Phase::Block: out.instruction = QStringLiteral("Rodee el escaneo con puntos (o ajuste el bloque) y pulse Calcular compuesto."); break;
         case Phase::Computing: out.instruction = QStringLiteral("Calculando compuesto. Todavía no está aceptado."); break;
         case Phase::Review: out.instruction = QStringLiteral("Revise el resultado. Aceptar compuesto lo guarda; Atrás permite corregir el bloque."); break;
         default: break;

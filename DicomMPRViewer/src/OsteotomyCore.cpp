@@ -1,5 +1,14 @@
 #include "OsteotomyCore.h"
 
+#include "CompositeBlockCore.h"
+
+#include <vtkCellArray.h>
+#include <vtkCellArrayIterator.h>
+#include <vtkCellData.h>
+
+#include <numeric>
+#include <unordered_map>
+
 #include <vtkCleanPolyData.h>
 #include <vtkClipPolyData.h>
 #include <vtkDoubleArray.h>
@@ -243,7 +252,84 @@ vtkSmartPointer<vtkPolyData> finishPiece(vtkPolyData* clipped)
     return out;
 }
 
-OsteotomySplitResult splitByField(vtkPolyData* mesh, const std::function<double(const Vec3&)>& field, double thicknessMm)
+// Bone below the path that is not connected to the segment (e.g. the mastoid
+// processes of a composite that includes the skull base) must not be cut:
+// only the connected parts below the path that hold teeth or lie mostly inside
+// the guide extent are cut; the rest is pushed to the remaining side.
+void restrictToSegment(vtkPolyData* mesh, vtkDoubleArray* values, double halfKerf, const PathFrame& frame)
+{
+    const vtkIdType n = mesh->GetNumberOfPoints();
+    if (n == 0 || frame.poly.empty())
+        return;
+    std::vector<vtkIdType> parent(static_cast<size_t>(n));
+    std::iota(parent.begin(), parent.end(), vtkIdType{0});
+    const auto root = [&parent](vtkIdType i) {
+        while (parent[static_cast<size_t>(i)] != i) {
+            parent[static_cast<size_t>(i)] = parent[static_cast<size_t>(parent[static_cast<size_t>(i)])];
+            i = parent[static_cast<size_t>(i)];
+        }
+        return i;
+    };
+    const auto below = [values, halfKerf](vtkIdType i) { return values->GetValue(i) < halfKerf; };
+
+    vtkDataArray* parts = mesh->GetCellData()->GetArray(CompositeBlockCore::PartArrayName);
+    std::vector<char> dentalPoint(static_cast<size_t>(n), 0);
+    const vtkIdType offset = mesh->GetNumberOfVerts() + mesh->GetNumberOfLines();
+    vtkIdType cellIndex = 0;
+    auto it = vtk::TakeSmartPointer(mesh->GetPolys()->NewIterator());
+    for (it->GoToFirstCell(); !it->IsDoneWithTraversal(); it->GoToNextCell(), ++cellIndex) {
+        vtkIdType npts = 0;
+        const vtkIdType* ids = nullptr;
+        it->GetCurrentCell(npts, ids);
+        const bool dental = parts && std::lround(parts->GetTuple1(offset + cellIndex)) == CompositeBlockCore::DentalPart;
+        for (vtkIdType k = 0; k < npts; ++k) {
+            const vtkIdType a = ids[k];
+            const vtkIdType b = ids[(k + 1) % npts];
+            if (below(a) && below(b)) {
+                const vtkIdType ra = root(a);
+                const vtkIdType rb = root(b);
+                if (ra != rb)
+                    parent[static_cast<size_t>(ra)] = rb;
+            }
+            if (dental)
+                dentalPoint[static_cast<size_t>(a)] = 1;
+        }
+    }
+
+    const double minS = frame.poly.front()[0];
+    const double maxS = frame.poly.back()[0];
+    std::unordered_map<vtkIdType, std::array<vtkIdType, 3>> components; // total, inside guide, dental
+    Vec3 p{};
+    for (vtkIdType i = 0; i < n; ++i) {
+        if (!below(i))
+            continue;
+        auto& c = components[root(i)];
+        ++c[0];
+        mesh->GetPoint(i, p.data());
+        const Vec3 d = sub(p, frame.origin);
+        const double s = dot(d, frame.lateral);
+        const double u = dot(d, frame.depth);
+        if (s >= minS && s <= maxS && std::abs(u - frame.centerDepth) <= frame.halfWidth)
+            ++c[1];
+        if (dentalPoint[static_cast<size_t>(i)])
+            ++c[2];
+    }
+    bool anyKept = false;
+    std::unordered_map<vtkIdType, bool> keep;
+    for (const auto& [id, c] : components) {
+        const bool kept = c[2] > 0 || 2 * c[1] >= c[0];
+        keep[id] = kept;
+        anyKept = anyKept || kept;
+    }
+    if (!anyKept)
+        return;
+    for (vtkIdType i = 0; i < n; ++i)
+        if (below(i) && !keep[root(i)])
+            values->SetValue(i, 1.0e3);
+}
+
+OsteotomySplitResult splitByField(vtkPolyData* mesh, const std::function<double(const Vec3&)>& field, double thicknessMm,
+                                  const std::function<void(vtkPolyData*, vtkDoubleArray*, double)>& adjust = {})
 {
     OsteotomySplitResult result;
     if (!mesh || mesh->GetNumberOfCells() == 0) {
@@ -261,12 +347,14 @@ OsteotomySplitResult splitByField(vtkPolyData* mesh, const std::function<double(
             values->SetValue(i, field(p));
         }
     });
+    const double halfKerf = 0.5 * std::clamp(thicknessMm, 0.0, 10.0);
+    if (adjust)
+        adjust(mesh, values, halfKerf);
     auto work = vtkSmartPointer<vtkPolyData>::New();
     work->ShallowCopy(mesh);
     work->GetPointData()->AddArray(values);
     work->GetPointData()->SetActiveScalars(OsteotomyCore::FieldArrayName);
 
-    const double halfKerf = 0.5 * std::clamp(thicknessMm, 0.0, 10.0);
     const auto clip = [&](double value, bool insideOut) {
         auto clipper = vtkSmartPointer<vtkClipPolyData>::New();
         clipper->SetInputData(work);
@@ -594,7 +682,10 @@ OsteotomySplitResult SplitByPath(vtkPolyData* mesh, const OsteotomyPath& path)
         result.error = frame.error;
         return result;
     }
-    return splitByField(mesh, [&frame](const Vec3& p) { return pathFieldWorld(frame, p); }, path.thicknessMm);
+    return splitByField(mesh, [&frame](const Vec3& p) { return pathFieldWorld(frame, p); }, path.thicknessMm,
+                        [&frame](vtkPolyData* m, vtkDoubleArray* values, double halfKerf) {
+                            restrictToSegment(m, values, halfKerf, frame);
+                        });
 }
 
 OsteotomySplitResult SplitBssoSide(vtkPolyData* mesh, const BssoPlan& plan, bool leftSide)

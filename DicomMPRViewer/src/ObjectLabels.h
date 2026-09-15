@@ -44,6 +44,12 @@ inline constexpr int kSplintBevelOverlayKey = 2;
 inline constexpr int kOsteotomyGuideActorKey = -530;
 inline constexpr int kOsteotomyGuideLeftActorKey = -531;
 
+// ORIENTACION reference bones while a registered scan waits for its composite (maxilla, mandible = key - 1).
+inline constexpr int kOrientationBoneReferenceKey = -160;
+
+// MODELOS composite contour wall (points method).
+inline constexpr int kCompositeContourActorKey = -522;
+
 inline int objectActorKey(int label)
 {
     return label > 0 ? 1000 + label : label;
