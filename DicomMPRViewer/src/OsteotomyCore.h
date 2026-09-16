@@ -20,6 +20,7 @@
 // same field inside the guide extents, so preview, slice contour and cut match.
 // ─────────────────────────────────────────────────────────────────────────────
 
+#include <QJsonObject>
 #include <QString>
 #include <vtkSmartPointer.h>
 #include <vtkType.h>
@@ -156,6 +157,9 @@ OsteotomyPath LeFortPath(const std::array<OstPoint3, 4>& landmarks, double width
 OsteotomyPath GenioPath(const std::array<OstPoint3, 4>& landmarks, double widthMm = GenioWidthMm,
                         double thicknessMm = DefaultThicknessMm, double extensionRightMm = GenioExtensionMm,
                         double extensionLeftMm = GenioExtensionMm);
+// A path as JSON, so plans that reference a cut (the surgical guides) can be saved and reloaded.
+QJsonObject PathToJson(const OsteotomyPath& path);
+OsteotomyPath PathFromJson(const QJsonObject& object);
 // Validates and completes a path (valid / error).
 OsteotomyPath CheckedPath(OsteotomyPath path);
 // Rigid (or scaled) gizmo transform: points move, axes rotate, width scales.

@@ -250,6 +250,8 @@ bool ProjectSerializer::save(const QString& projectFilePath,
         root[QStringLiteral("compositeBlocks")] = state.compositeBlocks;
     if (!state.osteotomyPlan.isEmpty())
         root[QStringLiteral("osteotomyPlan")] = state.osteotomyPlan;
+    if (!state.guidesPlan.isEmpty())
+        root[QStringLiteral("guidesPlan")] = state.guidesPlan;
 
     // ── Assets ────────────────────────────────────────────────────────────────
     QJsonObject assets;
@@ -430,6 +432,7 @@ bool ProjectSerializer::load(const QString& projectFilePath,
     state.activeSplintDesignId = root.value(QStringLiteral("activeSplintDesign")).toString();
     state.compositeBlocks = root.value(QStringLiteral("compositeBlocks")).toObject();
     state.osteotomyPlan = root.value(QStringLiteral("osteotomyPlan")).toObject();
+    state.guidesPlan = root.value(QStringLiteral("guidesPlan")).toObject();
 
     const QJsonObject assets = root[QStringLiteral("assets")].toObject();
 

@@ -1,5 +1,7 @@
 #include "OsteotomyCore.h"
 
+#include <QJsonArray>
+
 #include "CompositeBlockCore.h"
 
 #include <vtkCellArray.h>
@@ -524,6 +526,44 @@ std::vector<OsteotomyLandmark> Landmarks(OsteotomyType type)
         };
     }
     return {};
+}
+
+namespace
+{
+QJsonArray pointJson(const OstPoint3& p) { return QJsonArray{p[0], p[1], p[2]}; }
+
+OstPoint3 pointFromJson(const QJsonArray& a, const OstPoint3& fallback)
+{
+    return a.size() == 3 ? OstPoint3{a[0].toDouble(), a[1].toDouble(), a[2].toDouble()} : fallback;
+}
+} // namespace
+
+QJsonObject PathToJson(const OsteotomyPath& path)
+{
+    QJsonArray points;
+    for (const OstPoint3& p : path.points)
+        points.append(pointJson(p));
+    return QJsonObject{{QStringLiteral("points"), points},
+                       {QStringLiteral("depthAxis"), pointJson(path.depthAxis)},
+                       {QStringLiteral("upAxis"), pointJson(path.upAxis)},
+                       {QStringLiteral("widthMm"), path.widthMm},
+                       {QStringLiteral("thicknessMm"), path.thicknessMm},
+                       {QStringLiteral("extensionStartMm"), path.extensionStartMm},
+                       {QStringLiteral("extensionEndMm"), path.extensionEndMm}};
+}
+
+OsteotomyPath PathFromJson(const QJsonObject& object)
+{
+    OsteotomyPath path;
+    for (const QJsonValue& value : object.value(QStringLiteral("points")).toArray())
+        path.points.push_back(pointFromJson(value.toArray(), {0.0, 0.0, 0.0}));
+    path.depthAxis = pointFromJson(object.value(QStringLiteral("depthAxis")).toArray(), path.depthAxis);
+    path.upAxis = pointFromJson(object.value(QStringLiteral("upAxis")).toArray(), path.upAxis);
+    path.widthMm = object.value(QStringLiteral("widthMm")).toDouble(path.widthMm);
+    path.thicknessMm = object.value(QStringLiteral("thicknessMm")).toDouble(path.thicknessMm);
+    path.extensionStartMm = object.value(QStringLiteral("extensionStartMm")).toDouble(path.extensionStartMm);
+    path.extensionEndMm = object.value(QStringLiteral("extensionEndMm")).toDouble(path.extensionEndMm);
+    return CheckedPath(path);
 }
 
 OsteotomyPath CheckedPath(OsteotomyPath path)

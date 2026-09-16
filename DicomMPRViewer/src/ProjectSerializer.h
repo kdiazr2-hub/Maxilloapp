@@ -114,6 +114,7 @@ struct ProjectState
 
     // ── Osteotomy plan: type, landmarks and properties (optional) ─────────────
     QJsonObject osteotomyPlan;
+    QJsonObject guidesPlan; // surgical guides: wrap sources, marked region, slots, holes (optional)
 };
 
 class ProjectSerializer

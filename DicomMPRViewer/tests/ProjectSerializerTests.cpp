@@ -1,4 +1,6 @@
 #include "CompositeBlockCore.h"
+#include "GuidePlanCore.h"
+#include "OsteotomyCore.h"
 #include "ProjectSerializer.h"
 #include "SplintDesignCore.h"
 
@@ -115,6 +117,45 @@ void testCompositePartsAndBlocksRoundTrip()
             "stale part tags came back after saving an untagged composite");
 }
 
+void testGuidesPlanRoundTrip()
+{
+    QTemporaryDir dir;
+    require(dir.isValid(), "no temporary directory");
+    const QString path = dir.filePath(QStringLiteral("guias.maxilloproject"));
+
+    GuidePlan plan;
+    plan.name = QStringLiteral("Guía Le Fort");
+    plan.sourceLabels = {206};
+    plan.design.base.thicknessMm = 2.6;
+    plan.design.edgeMarginMm = 2.5;
+    plan.contour = {{-15.0, 0.0, 2.0}, {15.0, 0.0, 2.0}, {15.0, 0.0, 18.0}, {-15.0, 0.0, 18.0}};
+    GuideSlot slot;
+    slot.path = OsteotomyCore::LeFortPath({{{-10.0, 5.0, 9.4}, {10.0, 5.0, 9.6}, {-20.0, -5.0, 9.2},
+                                            {20.0, -5.0, 9.3}}});
+    slot.start = {-5.0, 1.4, 9.3};
+    slot.end = {5.0, 1.4, 9.5};
+    slot.hasExtent = true;
+    plan.slotPlan = {slot};
+    plan.holes = {{{-10.0, 0.0, 14.0}, {0.0, 1.0, 0.0}, 2.0}};
+
+    ProjectState state;
+    state.dicomFolder = QStringLiteral("C:/dicom/caso");
+    state.guidesPlan = GuidePlanCore::ToJson(plan);
+    QString error;
+    require(ProjectSerializer::save(path, state, &error), "save failed: " + error.toStdString());
+    ProjectState loaded;
+    require(ProjectSerializer::load(path, loaded, &error), "load failed: " + error.toStdString());
+    require(loaded.guidesPlan == state.guidesPlan, "the guides plan changed on disk");
+
+    const GuidePlan back = GuidePlanCore::FromJson(loaded.guidesPlan);
+    require(back.name == plan.name && back.sourceLabels == plan.sourceLabels && back.contour == plan.contour,
+            "the guide region or its sources were lost");
+    require(back.slotPlan.size() == 1 && back.slotPlan[0].hasExtent && back.slotPlan[0].path.valid,
+            "the placed slot was lost");
+    require(back.holes.size() == 1 && std::abs(back.design.edgeMarginMm - 2.5) < 1e-9,
+            "the holes or the edge margin were lost");
+}
+
 void testLegacyProjectWithoutDesigns()
 {
     QTemporaryDir dir;
@@ -138,7 +179,9 @@ void testLegacyProjectWithoutDesigns()
     require(ProjectSerializer::save(resaved, loaded, &error), "resave failed: " + error.toStdString());
     QFile check(resaved);
     require(check.open(QIODevice::ReadOnly), "cannot read resaved project");
-    require(!check.readAll().contains("splintDesigns"), "empty designs were written");
+    const QByteArray resavedText = check.readAll();
+    require(!resavedText.contains("splintDesigns"), "empty designs were written");
+    require(!resavedText.contains("guidesPlan"), "an empty guides plan was written");
 }
 } // namespace
 
@@ -147,6 +190,7 @@ int main()
     const std::vector<std::pair<const char*, std::function<void()>>> tests = {
         {"splint designs round trip", testSplintDesignsRoundTrip},
         {"composite parts and blocks round trip", testCompositePartsAndBlocksRoundTrip},
+        {"guides plan round trip", testGuidesPlanRoundTrip},
         {"legacy project without designs", testLegacyProjectWithoutDesigns},
     };
     int failures = 0;

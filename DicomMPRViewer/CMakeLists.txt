@@ -126,6 +126,7 @@ set(SOURCES
     src/GuideBaseCore.cpp
     src/CutSlotCore.cpp
     src/GuideDesignCore.cpp
+    src/GuidePlanCore.cpp
     src/CollisionCore.cpp
     src/SurfaceContourOverlay.cpp
     src/MainWindowComposite.cpp
@@ -189,6 +190,7 @@ set(HEADERS
     src/GuideBaseCore.h
     src/CutSlotCore.h
     src/GuideDesignCore.h
+    src/GuidePlanCore.h
     src/MeshRepairCore.h
     src/OsteotomyCore.h
     src/OsteotomyWizardPanel.h
@@ -296,7 +298,9 @@ add_core_test(SplintPreviewSchedulerTests tests/SplintPreviewSchedulerTests.cpp
     src/SplintPreviewScheduler.cpp src/SplintHeightmapGenerator.cpp)
 add_core_test(ProjectSerializerTests tests/ProjectSerializerTests.cpp
     src/ProjectSerializer.cpp src/NrrdVolumeExporter.cpp src/SegmentationImporter.cpp
-    src/SplintDesignCore.cpp src/SplintHeightmapGenerator.cpp src/CompositeBlockCore.cpp)
+    src/SplintDesignCore.cpp src/SplintHeightmapGenerator.cpp src/CompositeBlockCore.cpp
+    src/GuidePlanCore.cpp src/GuideDesignCore.cpp src/GuideBaseCore.cpp src/CutSlotCore.cpp
+    src/WrapCore.cpp src/OsteotomyCore.cpp src/ImplicitCore.cpp src/MeshRepairCore.cpp)
 add_core_test(CompositeBlockTests tests/CompositeBlockTests.cpp src/CompositeBlockCore.cpp)
 add_core_test(ImplicitCoreTests tests/ImplicitCoreTests.cpp src/ImplicitCore.cpp
     src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)
@@ -308,6 +312,9 @@ add_core_test(CutSlotTests tests/CutSlotTests.cpp src/CutSlotCore.cpp src/Osteot
     src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)
 add_core_test(GuideDesignTests tests/GuideDesignTests.cpp src/GuideDesignCore.cpp src/GuideBaseCore.cpp
     src/CutSlotCore.cpp src/OsteotomyCore.cpp src/ImplicitCore.cpp src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)
+add_core_test(GuidePlanTests tests/GuidePlanTests.cpp src/GuidePlanCore.cpp src/GuideDesignCore.cpp
+    src/GuideBaseCore.cpp src/CutSlotCore.cpp src/WrapCore.cpp src/OsteotomyCore.cpp src/ImplicitCore.cpp
+    src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)
 add_core_test(MeshRepairTests tests/MeshRepairTests.cpp src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)
 add_core_test(CollisionTests tests/CollisionTests.cpp src/CollisionCore.cpp)
 add_core_test(SegmentationProgressTests tests/SegmentationProgressTests.cpp src/SegmentationProgressCore.cpp
