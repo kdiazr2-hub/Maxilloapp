@@ -121,6 +121,7 @@ set(SOURCES
     src/MainWindowReposition.cpp
     src/MainWindowOrientation.cpp
     src/MainWindowOrthognathic.cpp
+    src/ImplicitCore.cpp
     src/CollisionCore.cpp
     src/SurfaceContourOverlay.cpp
     src/MainWindowComposite.cpp
@@ -179,6 +180,7 @@ set(HEADERS
     src/SplintDesignPanel.h
     src/ObjectLabels.h
     src/CompositeBlockCore.h
+    src/ImplicitCore.h
     src/MeshRepairCore.h
     src/OsteotomyCore.h
     src/OsteotomyWizardPanel.h
@@ -288,6 +290,8 @@ add_core_test(ProjectSerializerTests tests/ProjectSerializerTests.cpp
     src/ProjectSerializer.cpp src/NrrdVolumeExporter.cpp src/SegmentationImporter.cpp
     src/SplintDesignCore.cpp src/SplintHeightmapGenerator.cpp src/CompositeBlockCore.cpp)
 add_core_test(CompositeBlockTests tests/CompositeBlockTests.cpp src/CompositeBlockCore.cpp)
+add_core_test(ImplicitCoreTests tests/ImplicitCoreTests.cpp src/ImplicitCore.cpp
+    src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)
 add_core_test(MeshRepairTests tests/MeshRepairTests.cpp src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)
 add_core_test(CollisionTests tests/CollisionTests.cpp src/CollisionCore.cpp)
 add_core_test(SegmentationProgressTests tests/SegmentationProgressTests.cpp src/SegmentationProgressCore.cpp
