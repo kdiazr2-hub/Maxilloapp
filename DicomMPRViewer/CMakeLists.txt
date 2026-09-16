@@ -123,6 +123,7 @@ set(SOURCES
     src/MainWindowOrthognathic.cpp
     src/ImplicitCore.cpp
     src/WrapCore.cpp
+    src/GuideBaseCore.cpp
     src/CollisionCore.cpp
     src/SurfaceContourOverlay.cpp
     src/MainWindowComposite.cpp
@@ -183,6 +184,7 @@ set(HEADERS
     src/CompositeBlockCore.h
     src/ImplicitCore.h
     src/WrapCore.h
+    src/GuideBaseCore.h
     src/MeshRepairCore.h
     src/OsteotomyCore.h
     src/OsteotomyWizardPanel.h
@@ -295,6 +297,8 @@ add_core_test(CompositeBlockTests tests/CompositeBlockTests.cpp src/CompositeBlo
 add_core_test(ImplicitCoreTests tests/ImplicitCoreTests.cpp src/ImplicitCore.cpp
     src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)
 add_core_test(WrapCoreTests tests/WrapCoreTests.cpp src/WrapCore.cpp src/ImplicitCore.cpp
+    src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)
+add_core_test(GuideBaseTests tests/GuideBaseTests.cpp src/GuideBaseCore.cpp src/ImplicitCore.cpp
     src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)
 add_core_test(MeshRepairTests tests/MeshRepairTests.cpp src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)
 add_core_test(CollisionTests tests/CollisionTests.cpp src/CollisionCore.cpp)

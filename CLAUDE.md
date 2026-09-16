@@ -32,7 +32,7 @@ Tests (CTest):
 - `GeometryCoreTests`, `BoneCavityFillTests`, `MeshGeneratorTests` — plain C++ executables
 - `MaskToObjectTests` checks exact label extraction, committed cavity filling and immutable input.
 - `ModelWorkflowTests` checks guided MODELOS steps, paired point requirements, fine adjustment and mandatory acceptance.
-- `SplintHeightmapTests`, `SplintDesignTests`, `SplintContourEditTests`, `SplintPreviewSchedulerTests`, `ProjectSerializerTests`, `CompositeBlockTests`, `MeshRepairTests`, `OsteotomyCoreTests`, `CollisionTests`, `ImplicitCoreTests`, `WrapCoreTests`, `SegmentationProgressTests` — core tests declared with `add_core_test()`; synthetic arches in `tests/SplintTestGeometry.h`
+- `SplintHeightmapTests`, `SplintDesignTests`, `SplintContourEditTests`, `SplintPreviewSchedulerTests`, `ProjectSerializerTests`, `CompositeBlockTests`, `MeshRepairTests`, `OsteotomyCoreTests`, `CollisionTests`, `ImplicitCoreTests`, `WrapCoreTests`, `GuideBaseTests`, `SegmentationProgressTests` — core tests declared with `add_core_test()`; synthetic arches in `tests/SplintTestGeometry.h`
 - `SplintWorkspaceTests` also covers the composite block flow and the osteotomy wizard (Le Fort I → BSSO → genioplasty)
 - `RepositionWorkspaceTests`, `SplintWorkspaceTests` — instantiate `MainWindow` (declared `friend`), render offscreen, write PNGs to `build/workspace-test-artifacts`
 - `Mesh3DViewInteractionTests` — drives `Mesh3DView` offscreen with synthetic mouse events
@@ -86,6 +86,11 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   `smallestDetailMm`), dilate → fill → contour at iso −gap, then smooth and repair. Same four steps as
   `CompositeBlockCore::VoxelUnion`, which stays as it is because `MeshRepairCore`'s remesh calls it and a wrap that
   repairs its own output would loop back into the repair.
+- `GuideBaseCore::CreateBase` is 3-matic's Create Base: points marked on the wrap (same idiom as the composite
+  contour, any order) sweep a prism along the patch's outward normal, intersected with a layer of the wrap's real
+  signed distance (`clearance <= d <= clearance + thickness`, uniform on oblique walls, unlike an interval along an
+  axis) and with a half space just under the marked rim, or the prism would pick up the far wall too. Contour
+  persists via `ContourToJson`.
 - Object label constants and `objectActorKey` live in `ObjectLabels.h`.
 - Mask conversion uses `MaskToObjectCore` and `MainWindowSegmentation.cpp`: extract the current
   label without smoothing or new filling; update object actors only, leaving mask data and display intact.
