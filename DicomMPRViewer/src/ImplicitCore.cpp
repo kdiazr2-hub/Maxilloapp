@@ -868,6 +868,53 @@ std::shared_ptr<const BakedField> BakeMeshField(vtkPolyData* mesh, double spacin
     return SignedDistanceField(mask);
 }
 
+std::shared_ptr<const BakedField> BakeFunction(const std::function<double(const Vec3&)>& function,
+                                               const double bounds[6], double spacingMm, double paddingMm,
+                                               const std::atomic<bool>* cancel)
+{
+    if (!function || !bounds)
+        return nullptr;
+    double h = std::max(0.02, spacingMm);
+    const double pad = std::max(0.0, paddingMm) + 2.0 * h;
+    std::array<int, 3> dims{};
+    const auto computeGrid = [&] {
+        for (int a = 0; a < 3; ++a)
+            dims[static_cast<size_t>(a)] =
+                static_cast<int>(std::ceil((bounds[2 * a + 1] - bounds[2 * a] + 2.0 * pad) / h)) + 1;
+    };
+    computeGrid();
+    const double requested = static_cast<double>(dims[0]) * dims[1] * dims[2];
+    if (requested > kMaxVoxels) {
+        h *= std::cbrt(requested / kMaxVoxels) * 1.01;
+        computeGrid();
+    }
+    auto baked = std::make_shared<BakedField>();
+    baked->dims = dims;
+    baked->spacingMm = h;
+    baked->origin = {bounds[0] - pad, bounds[2] - pad, bounds[4] - pad};
+    baked->values.resize(static_cast<size_t>(dims[0]) * dims[1] * dims[2]);
+    std::atomic<bool> aborted{false};
+    parallelFor(dims[2], [&](int kBegin, int kEnd) {
+        for (int k = kBegin; k < kEnd; ++k) {
+            if ((k % 8) == 0 && (cancelled(cancel) || aborted.load(std::memory_order_relaxed))) {
+                aborted.store(true, std::memory_order_relaxed);
+                return;
+            }
+            for (int j = 0; j < dims[1]; ++j) {
+                const size_t row = static_cast<size_t>(j) * static_cast<size_t>(dims[0]) +
+                                   static_cast<size_t>(k) * static_cast<size_t>(dims[0]) * static_cast<size_t>(dims[1]);
+                for (int i = 0; i < dims[0]; ++i)
+                    baked->values[row + static_cast<size_t>(i)] =
+                        static_cast<float>(function(Vec3{baked->origin[0] + i * h, baked->origin[1] + j * h,
+                                                         baked->origin[2] + k * h}));
+            }
+        }
+    });
+    if (aborted.load() || cancelled(cancel))
+        return nullptr;
+    return baked;
+}
+
 NodePtr MeshField(vtkPolyData* mesh, double spacingMm, double paddingMm, const std::atomic<bool>* cancel,
                   QString* error)
 {

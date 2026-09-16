@@ -25,6 +25,7 @@
 #include <vtkType.h>
 
 #include <array>
+#include <memory>
 #include <vector>
 
 class vtkMatrix4x4;
@@ -161,8 +162,13 @@ OsteotomyPath CheckedPath(OsteotomyPath path);
 OsteotomyPath TransformPath(const OsteotomyPath& path, vtkMatrix4x4* matrix);
 BssoPlan TransformBsso(const BssoPlan& plan, vtkMatrix4x4* matrix, bool rightSide = true, bool leftSide = true);
 
-// Signed field (negative = caudal / segment side). Slow per call; for tests.
+// Signed field (negative = caudal / segment side). Slow per call (it rebuilds the frame); for tests.
 double PathField(const OsteotomyPath& path, const OstPoint3& point);
+// The same field with the frame built once, for sweeping a grid (the guide slots): prepare it and
+// call FieldAt per point. Returns nullptr on an invalid path.
+struct PreparedPathField;
+std::shared_ptr<const PreparedPathField> PreparePathField(const OsteotomyPath& path, QString* error = nullptr);
+double FieldAt(const PreparedPathField& prepared, const OstPoint3& point);
 BssoSidePlanes BssoPlanes(const BssoPlan& plan, bool leftSide);
 double BssoField(const BssoSidePlanes& planes, const OstPoint3& point);
 

@@ -606,10 +606,32 @@ BssoPlan TransformBsso(const BssoPlan& plan, vtkMatrix4x4* matrix, bool rightSid
     return out;
 }
 
+struct PreparedPathField
+{
+    PathFrame frame;
+};
+
+std::shared_ptr<const PreparedPathField> PreparePathField(const OsteotomyPath& path, QString* error)
+{
+    auto prepared = std::make_shared<PreparedPathField>();
+    prepared->frame = pathFrame(path);
+    if (!prepared->frame.valid) {
+        if (error)
+            *error = prepared->frame.error;
+        return nullptr;
+    }
+    return prepared;
+}
+
+double FieldAt(const PreparedPathField& prepared, const OstPoint3& point)
+{
+    return prepared.frame.valid ? pathFieldWorld(prepared.frame, point) : 0.0;
+}
+
 double PathField(const OsteotomyPath& path, const OstPoint3& point)
 {
-    const PathFrame frame = pathFrame(path);
-    return frame.valid ? pathFieldWorld(frame, point) : 0.0;
+    const auto prepared = PreparePathField(path);
+    return prepared ? FieldAt(*prepared, point) : 0.0;
 }
 
 BssoSidePlanes BssoPlanes(const BssoPlan& plan, bool leftSide)

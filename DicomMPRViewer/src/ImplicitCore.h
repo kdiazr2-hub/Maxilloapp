@@ -26,6 +26,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -124,6 +125,11 @@ NodePtr Transformed(const NodePtr& node, vtkMatrix4x4* childToWorld);
 std::shared_ptr<const BakedField> BakeMeshField(vtkPolyData* mesh, double spacingMm, double paddingMm,
                                                 const std::atomic<bool>* cancel = nullptr, QString* error = nullptr);
 NodePtr Field(const std::shared_ptr<const BakedField>& field);
+// Samples any field function onto a grid once, so a field that is not a node — an osteotomy path, for
+// instance — can join the tree and still be read back trilinearly instead of called per voxel.
+std::shared_ptr<const BakedField> BakeFunction(const std::function<double(const Vec3&)>& function,
+                                               const double bounds[6], double spacingMm, double paddingMm = 0.0,
+                                               const std::atomic<bool>* cancel = nullptr);
 NodePtr MeshField(vtkPolyData* mesh, double spacingMm, double paddingMm,
                   const std::atomic<bool>* cancel = nullptr, QString* error = nullptr);
 
