@@ -69,7 +69,7 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   kerf split by a signed field that keeps cell data, guide slabs from the same field). ProPlan-style wizard in
   `OsteotomyWizardPanel` + `MainWindowOsteotomy.cpp` (tipo → hueso → puntos → trayectoria → finalizar); results land in the
   existing segment members/labels (Le Fort 205/206, BSSO 208–211, genioplasty 212/213). The old ribbon osteotomy actions in `MainWindow.cpp` are hidden but kept.
-- Ribbon: only ARCHIVO, MEDIDAS and ORTOGNÁTICA are visible. The planning modules (SEGMENTACION → FERULA) keep
+- Ribbon: only ARCHIVO, MEDIDAS and ORTOGNÁTICA are visible. The planning modules (SEGMENTACION → GUIAS) keep
   hidden "MT" tabs (tests and code still click them by text) and are steps of the ORTOGNÁTICA step bar at the top of
   the ribbon, above the module's actions (`MainWindowOrthognathic.cpp`: step buttons with ✓ when done, ‹ ›). Every module switch shows its
   3D views in the frontal standard view (`showModuleViewsFrontal`); `Mesh3DView` frames its first mesh in the
@@ -105,7 +105,10 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   `edgeMarginMm`, so it never reaches the rim and the guide stays in one piece (user's decision, 2026-09-15). `GuidePlanCore`
   holds what the user decided (sources, region, slots with their ends, holes, parameters) and saves it under the
   optional `guidesPlan` project key; `OsteotomyCore::PathToJson` / `PathFromJson` persist the cut a slot follows.
-  Still to come: thickness map + STL export, GUIAS step and its panel.
+  The GUIAS module is the eighth ORTOGNÁTICA step: `MainWindowGuides.cpp` holds the side panel (pick the models →
+  wrap → mark the support region → tick which osteotomies get a slot and place its ends → fixation holes → build,
+  thickness map, STL export) and workspace page 7. Cuts are offered from `m_guideCuts`, filled by
+  `rememberOsteotomyCut` when the wizard executes a Le Fort or genioplasty and by the plan on reload.
 - Object label constants and `objectActorKey` live in `ObjectLabels.h`.
 - Mask conversion uses `MaskToObjectCore` and `MainWindowSegmentation.cpp`: extract the current
   label without smoothing or new filling; update object actors only, leaving mask data and display intact.

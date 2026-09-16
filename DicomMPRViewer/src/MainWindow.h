@@ -10,6 +10,7 @@
 #include "ProjectSerializer.h"
 #include "AppStateManager.h"
 #include "SplintDesignCore.h"
+#include "GuidePlanCore.h"
 #include "OsteotomyCore.h"
 #include <QPointer>
 #include "CompositeBlockCore.h"
@@ -214,6 +215,55 @@ private:
     bool m_orientationControlPopulated = false;
     QVector<QLabel*> m_orientationGuideSteps;
     QLabel* m_orientationGuideMessage = nullptr;
+    // GUIAS: surgical guides (MainWindowGuides.cpp).
+    QWidget* buildGuideControlPanel(QWidget* parent);
+    void setGuidesWorkspace(bool enabled);
+    void refreshGuideSources();
+    void refreshGuideCutList();
+    void computeGuideWrap();
+    void buildGuideMesh();
+    void exportGuideStl();
+    void clearGuideRegion();
+    void clearGuideSlotEnds();
+    void clearGuideHoles();
+    void setGuidePointMode(int mode); // 0 none, 1 region, 2 slot ends, 3 holes
+    void onGuidePointPicked(int actorLabel, double x, double y, double z);
+    void rebuildGuideMarkers();
+    void updateGuideUi();
+    void syncGuideView();
+    void applyGuideThicknessColors();
+    // Cuts the guide can carry a slot for: remembered when an osteotomy is executed.
+    void rememberOsteotomyCut(const QString& name, const OsteotomyPath& path);
+    QJsonObject guidePlanJson() const;
+    void restoreGuidePlan(const ProjectState& state);
+
+    Mesh3DView* m_guideView = nullptr;
+    QListWidget* m_guideSourceList = nullptr;
+    QListWidget* m_guideCutList = nullptr;
+    QPushButton* m_guideWrapButton = nullptr;
+    QPushButton* m_guideRegionButton = nullptr;
+    QPushButton* m_guideSlotEndsButton = nullptr;
+    QPushButton* m_guideHoleButton = nullptr;
+    QPushButton* m_guideBuildButton = nullptr;
+    QPushButton* m_guideExportButton = nullptr;
+    QCheckBox* m_guideThicknessCheck = nullptr;
+    QDoubleSpinBox* m_guideGapSpin = nullptr;
+    QDoubleSpinBox* m_guideDetailSpin = nullptr;
+    QDoubleSpinBox* m_guideThicknessSpin = nullptr;
+    QDoubleSpinBox* m_guideClearanceSpin = nullptr;
+    QDoubleSpinBox* m_guideBladeSpin = nullptr;
+    QDoubleSpinBox* m_guideMarginSpin = nullptr;
+    QDoubleSpinBox* m_guideHoleDiameterSpin = nullptr;
+    QLabel* m_guideHintLabel = nullptr;
+    QLabel* m_guideReportLabel = nullptr;
+    GuidePlan m_guidePlan;
+    GuidePreparation m_guidePrepared;
+    vtkSmartPointer<vtkPolyData> m_guideWrapMesh;
+    vtkSmartPointer<vtkPolyData> m_guideMesh;
+    std::vector<std::pair<QString, OsteotomyPath>> m_guideCuts;
+    std::vector<std::array<double, 3>> m_guidePendingEnds;
+    int m_guidePointMode = 0;
+
     // ORTOGNÁTICA: the planning modules are steps in a left rail; their ribbon tabs stay hidden
     // (MainWindowOrthognathic.cpp).
     static const QStringList& orthognathicStepTitles();

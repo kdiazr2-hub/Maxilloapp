@@ -121,6 +121,7 @@ set(SOURCES
     src/MainWindowReposition.cpp
     src/MainWindowOrientation.cpp
     src/MainWindowOrthognathic.cpp
+    src/MainWindowGuides.cpp
     src/ImplicitCore.cpp
     src/WrapCore.cpp
     src/GuideBaseCore.cpp

@@ -405,6 +405,8 @@ QString meshLabelName(int label)
         case kBiteScanLabel:       return "Escaneo de mordida";
         case kIntermediateSplintLabel: return "Ferula intermedia";
         case kFinalSplintLabel:        return "Ferula final";
+        case kGuideWrapLabel:      return "Envolvente de la guía";
+        case kGuideMeshLabel:      return "Guía quirúrgica";
         default: return QString("Label %1").arg(label);
     }
 }
@@ -801,12 +803,14 @@ void MainWindow::buildToolBar()
             const bool biteRegistration = title == tr("REGISTRO MORDIDA");
             const bool reposition = title == tr("REPOSICIÓN");
             const bool splint     = title == tr("FERULA");
+            const bool guides     = title == tr("GUIAS");
             setModelsWorkspace(models);
             setOrientationWorkspace(orientation);
             setOsteotomyWorkspace(osteotomy);
             setBiteRegistrationWorkspace(biteRegistration);
             setRepositionWorkspace(reposition);
             setSplintWorkspace(splint);
+            setGuidesWorkspace(guides);
             onModuleTabActivated(title);
         });
         if (idx == 0) { tab->setChecked(true); stack->setCurrentIndex(0); }
@@ -2020,6 +2024,17 @@ void MainWindow::buildToolBar()
         row->addStretch(1);
     }
 
+    // GUIAS - surgical guides built on the repositioned models
+    {
+        auto  mod  = addModule(tr("GUIAS"));
+        auto* page = mod.first;
+        // The GUIAS actions live in the guided panel on the left of the workspace (MainWindowGuides.cpp).
+        auto* guideHint = new QLabel(tr("Siga los pasos en el panel izquierdo de Guías."), page);
+        guideHint->setStyleSheet("color:#98989d; font-size:11px; padding-left:8px;");
+        mod.second->addWidget(guideHint);
+        mod.second->addStretch(1);
+    }
+
     // ORTOGNÁTICA: opens the step rail on the current planning module (MainWindowOrthognathic.cpp).
     m_orthoTab = new QToolButton(tabBar);
     m_orthoTab->setObjectName("MT");
@@ -2764,6 +2779,25 @@ void MainWindow::buildCentralWidget()
                 this, syncSplintControls);
 
         m_viewModeStack->addWidget(splintPanel);  // index 6
+    }
+
+    // GUIAS workspace - page 7
+    {
+        auto* guidePanel = new QWidget(m_viewModeStack);
+        auto* guideLayout = new QHBoxLayout(guidePanel);
+        guideLayout->setContentsMargins(0, 0, 0, 0);
+        guideLayout->setSpacing(0);
+        guideLayout->addWidget(buildGuideControlPanel(guidePanel));
+
+        m_guideView = new Mesh3DView(guidePanel);
+        m_guideView->setTitle(tr("GUÍAS QUIRÚRGICAS"));
+        guideLayout->addWidget(m_guideView, 1);
+
+        connect(m_guideView, &Mesh3DView::fullScreenToggleRequested, this,
+                [this](Mesh3DView* source) { toggleViewFullScreen(static_cast<QWidget*>(source)); });
+        connect(m_guideView, &Mesh3DView::pointPicked, this, &MainWindow::onGuidePointPicked);
+
+        m_viewModeStack->addWidget(guidePanel);  // index 7
     }
 
     hbox->addWidget(m_viewModeStack, 1);
@@ -6019,6 +6053,7 @@ ProjectState MainWindow::collectProjectState() const
     state.splintDesigns = SplintDesignCore::DesignsToJson(m_splintDesigns);
     state.compositeBlocks = compositeBlocksJson();
     state.osteotomyPlan = osteotomyPlanJson();
+    state.guidesPlan = guidePlanJson();
     if (m_activeSplintDesign >= 0 && m_activeSplintDesign < static_cast<int>(m_splintDesigns.size()))
         state.activeSplintDesignId = m_splintDesigns[static_cast<size_t>(m_activeSplintDesign)].id;
     return state;

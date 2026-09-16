@@ -133,9 +133,17 @@ public:
         window.m_orthoStepButtons[6]->click();
         settle();
         require(window.m_orthoStep == 6 && window.m_viewModeStack->currentIndex() == 6 &&
-                    !window.m_orthoNextButton->isEnabled(),
+                    window.m_orthoNextButton->isEnabled(),
                 "the step rail did not jump to FERULA");
         require(window.m_splintView->standardViewIndex() == 0, "FERULA does not open in the frontal view");
+        // GUIAS is the last step of the bar.
+        window.m_orthoStepButtons[7]->click();
+        settle();
+        require(window.m_orthoStep == 7 && window.m_viewModeStack->currentIndex() == 7 &&
+                    !window.m_orthoNextButton->isEnabled(),
+                "GUIAS is not the last step of the bar");
+        window.m_orthoStepButtons[6]->click();
+        settle();
         for (auto* tab : window.findChildren<QToolButton*>(QStringLiteral("MT")))
             if (tab->text() == QStringLiteral("MEDIDAS"))
                 tab->click();
@@ -816,6 +824,106 @@ public:
         std::cout << "Orientation with bones only OK\n";
     }
 
+    // GUIAS: pick the models, wrap them, mark the support region, slot the planned cut, build and save.
+    static void runGuidesWorkflow()
+    {
+        MainWindow window;
+        window.setAttribute(Qt::WA_DontShowOnScreen);
+        window.resize(1700, 950);
+        window.show();
+        settle();
+
+        // A repositioned Le Fort segment to sit on: a wall whose face looks forward (+y).
+        const auto wall = boxMesh({-25.0, 25.0, -8.0, 0.0, -5.0, 25.0}, false, false);
+        window.addObjectEntry(QStringLiteral("Segmento Le Fort I"), QColor(230, 220, 200), kLeFortSegLabel);
+        window.setRepositionMeshForLabel(kLeFortSegLabel, wall);
+        // A planned Le Fort cut, as the osteotomy wizard would leave it.
+        window.rememberOsteotomyCut(QStringLiteral("Le Fort I"),
+                                    OsteotomyCore::LeFortPath({{{-10.0, 5.0, 9.4}, {10.0, 5.0, 9.6},
+                                                                {-20.0, -5.0, 9.2}, {20.0, -5.0, 9.3}}}));
+
+        for (auto* tab : window.findChildren<QToolButton*>(QStringLiteral("MT")))
+            if (tab->text() == QStringLiteral("GUIAS"))
+                tab->click();
+        settle();
+        require(window.m_viewModeStack->currentIndex() == 7 && window.m_guideView != nullptr,
+                "GUIAS did not open its workspace");
+        require(window.m_orthoStep == 7, "GUIAS is not the eighth step of the bar");
+        require(window.findChild<QWidget*>(QStringLiteral("GuideControlPanel")) != nullptr,
+                "the guides side panel is missing");
+
+        // 1. The models on offer, with the visible one already ticked.
+        require(window.m_guideSourceList->count() > 0, "no models offered for the envelope");
+        bool leFortOffered = false;
+        for (int row = 0; row < window.m_guideSourceList->count(); ++row) {
+            auto* item = window.m_guideSourceList->item(row);
+            if (item->data(Qt::UserRole).toInt() == kLeFortSegLabel) {
+                item->setCheckState(Qt::Checked);
+                leFortOffered = true;
+            }
+        }
+        require(leFortOffered, "the repositioned segment is not offered for the envelope");
+        window.m_guideDetailSpin->setValue(0.5); // coarse: this is a wiring test, not a geometry one
+        window.computeGuideWrap();
+        settle();
+        require(window.m_guideWrapMesh && window.m_guideWrapMesh->GetNumberOfPolys() > 0, "the envelope was not built");
+
+        // 2. The support region, marked on the face of the wall.
+        window.m_guideRegionButton->setChecked(true);
+        require(window.m_guidePointMode == 1, "marking the region did not switch the picking mode");
+        for (const auto& p : std::vector<std::array<double, 3>>{{-15.0, 0.0, 2.0}, {15.0, 0.0, 2.0},
+                                                                {15.0, 0.0, 18.0}, {-15.0, 0.0, 18.0}})
+            window.onGuidePointPicked(0, p[0], p[1], p[2]);
+        window.m_guideRegionButton->setChecked(false);
+        require(window.m_guidePlan.contour.size() == 4, "the marked region was not collected");
+
+        // 3. The planned cut gets a slot, with the ends the user places.
+        require(window.m_guideCutList->count() == 1, "the planned osteotomy is not offered as a slot");
+        window.m_guideCutList->setCurrentRow(0);
+        window.m_guideSlotEndsButton->setChecked(true);
+        window.onGuidePointPicked(0, -6.0, 1.4, 9.3);
+        window.onGuidePointPicked(0, 6.0, 1.4, 9.5);
+        window.m_guideSlotEndsButton->setChecked(false);
+        require(window.m_guidePlan.slotPlan.size() == 1 && window.m_guidePlan.slotPlan[0].hasExtent,
+                "the slot ends were not recorded");
+        require(window.m_guideCutList->item(0)->checkState() == Qt::Checked,
+                "placing the ends did not tick the osteotomy");
+
+        // 4. A fixation hole, drilled along the surface normal.
+        window.m_guideHoleButton->setChecked(true);
+        window.onGuidePointPicked(0, 0.0, 0.0, 15.0);
+        window.m_guideHoleButton->setChecked(false);
+        require(window.m_guidePlan.holes.size() == 1, "the fixation hole was not recorded");
+
+        // 5. Build: one piece, shown in the view and listed as an object.
+        window.m_guideThicknessSpin->setValue(2.5);
+        window.buildGuideMesh();
+        settle();
+        require(window.m_guideMesh && window.m_guideMesh->GetNumberOfPolys() > 0, "the guide was not built");
+        require(window.objectEntryExists(kGuideMeshLabel), "the guide is not in the object list");
+        require(window.m_guideView->meshData(objectActorKey(kGuideMeshLabel)) != nullptr,
+                "the guide is not shown in the GUIAS view");
+        require(window.m_guideExportButton->isEnabled(), "the guide cannot be exported");
+        window.m_guideThicknessCheck->setChecked(true); // thickness map must not throw
+        settle();
+
+        // The plan travels with the project and comes back.
+        const QJsonObject saved = window.guidePlanJson();
+        require(!saved.isEmpty(), "the guide plan was not written");
+        ProjectState state;
+        state.guidesPlan = saved;
+        MainWindow reopened;
+        reopened.setAttribute(Qt::WA_DontShowOnScreen);
+        reopened.show();
+        settle();
+        reopened.restoreGuidePlan(state);
+        require(reopened.m_guidePlan.contour.size() == 4 && reopened.m_guidePlan.slotPlan.size() == 1 &&
+                    reopened.m_guidePlan.holes.size() == 1,
+                "the guide plan did not survive the project");
+        require(reopened.m_guideCutList->count() == 1, "the reloaded plan does not offer its cut again");
+        std::cout << "Guides workflow OK\n";
+    }
+
     // OSTEOTOMIA wizard: Le Fort I → BSSO (6 points, both sides) → genioplasty on the distal segment.
     static void runOsteotomyWorkflow(const QString& artifactsDir)
     {
@@ -1080,6 +1188,7 @@ int main(int argc, char** argv)
         SplintWorkspaceTests::runSplintFollowsReposition();
         SplintWorkspaceTests::runRepositionAnalysis();
         SplintWorkspaceTests::runOsteotomyWorkflow(artifacts);
+        SplintWorkspaceTests::runGuidesWorkflow();
         if (!unexpectedDialogs.isEmpty()) {
             std::cerr << "FAIL unexpected dialogs: " << unexpectedDialogs.join(QStringLiteral(" | ")).toStdString() << '\n';
             return 1;

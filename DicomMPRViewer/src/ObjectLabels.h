@@ -20,6 +20,8 @@ inline constexpr int kGenioSegmentLabel    = 213;   // chin segment after geniop
 inline constexpr int kBiteScanLabel        = 214;   // intraoperative/post-osteotomy bite scan
 inline constexpr int kIntermediateSplintLabel = 215; // Le Fort moved + initial mandible
 inline constexpr int kFinalSplintLabel        = 216; // Le Fort moved + final distal mandible
+inline constexpr int kGuideWrapLabel        = 217;   // envelope (wrap) the guide is built on
+inline constexpr int kGuideMeshLabel        = 218;   // surgical guide
 inline constexpr int kSplintInitialMandibleChoice = -1001;
 inline constexpr int kSplintFinalMandibleChoice   = -1002;
 inline constexpr int kSplintTestUpperChoice       = -1101; // "STL de prueba superior"
@@ -49,6 +51,8 @@ inline constexpr int kOrientationBoneReferenceKey = -160;
 
 // MODELOS composite contour wall (points method).
 inline constexpr int kCompositeContourActorKey = -522;
+inline constexpr int kGuideRegionOverlayKey = 3;     // marked region outline in GUIAS
+inline constexpr int kGuideWrapActorKey = -540;      // translucent envelope while designing
 
 // REPOSICIÓN analysis actors (key = base - label).
 inline constexpr int kRepositionHighlightBaseKey = -3000;
