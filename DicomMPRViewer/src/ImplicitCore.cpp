@@ -648,22 +648,32 @@ bool Bounds(const NodePtr& node, double bounds[6])
     return false;
 }
 
-// ── Mesh baked to a field ─────────────────────────────────────────────────────
-std::shared_ptr<const BakedField> BakeMeshField(vtkPolyData* mesh, double spacingMm, double paddingMm,
-                                                const std::atomic<bool>* cancel, QString* error)
+// ── Voxel grid steps ──────────────────────────────────────────────────────────
+VoxelMask RasterizeShells(const std::vector<vtkPolyData*>& meshes, double spacingMm, double paddingMm,
+                          const std::atomic<bool>* cancel, QString* error)
 {
-    const auto fail = [error](const QString& message) -> std::shared_ptr<const BakedField> {
+    const auto fail = [error](const QString& message) {
         if (error)
             *error = message;
-        return nullptr;
+        return VoxelMask{};
     };
-    if (!mesh || mesh->GetNumberOfPolys() == 0)
+    double meshBounds[6] = {};
+    resetBounds(meshBounds);
+    bool any = false;
+    for (vtkPolyData* mesh : meshes) {
+        if (!mesh || mesh->GetNumberOfPolys() == 0)
+            continue;
+        double b[6] = {};
+        mesh->GetBounds(b);
+        growBounds(meshBounds, {b[0], b[2], b[4]});
+        growBounds(meshBounds, {b[1], b[3], b[5]});
+        any = true;
+    }
+    if (!any)
         return fail(QStringLiteral("La malla está vacía."));
 
-    double meshBounds[6] = {};
-    mesh->GetBounds(meshBounds);
     double h = std::max(0.05, spacingMm);
-    double pad = std::max(0.0, paddingMm) + 3.0 * h;
+    double pad = 0.0;
     std::array<int, 3> dims{};
     const auto computeGrid = [&] {
         pad = std::max(0.0, paddingMm) + 3.0 * h;
@@ -677,51 +687,79 @@ std::shared_ptr<const BakedField> BakeMeshField(vtkPolyData* mesh, double spacin
         h *= std::cbrt(requested / kMaxVoxels) * 1.01;
         computeGrid();
     }
-    const size_t nx = static_cast<size_t>(dims[0]), ny = static_cast<size_t>(dims[1]), nz = static_cast<size_t>(dims[2]);
-    const size_t total = nx * ny * nz;
-    const Vec3 origin{meshBounds[0] - pad, meshBounds[2] - pad, meshBounds[4] - pad};
+
+    VoxelMask mask;
+    mask.dims = dims;
+    mask.spacingMm = h;
+    mask.origin = {meshBounds[0] - pad, meshBounds[2] - pad, meshBounds[4] - pad};
+    const size_t nx = static_cast<size_t>(dims[0]), ny = static_cast<size_t>(dims[1]);
+    mask.solid.assign(nx * ny * static_cast<size_t>(dims[2]), 0);
     const auto index = [nx, ny](size_t i, size_t j, size_t k) { return i + nx * (j + ny * k); };
 
-    // Shell: every triangle sampled at half-voxel steps.
-    std::vector<uint8_t> solid(total, 0);
-    const auto tri = triangulated(mesh);
-    auto it = vtk::TakeSmartPointer(tri->GetPolys()->NewIterator());
-    vtkIdType counter = 0;
-    double a[3] = {}, b[3] = {}, c[3] = {};
-    for (it->GoToFirstCell(); !it->IsDoneWithTraversal(); it->GoToNextCell()) {
-        if ((++counter % 20000) == 0 && cancelled(cancel))
-            return fail(QStringLiteral("Cálculo cancelado."));
-        vtkIdType npts = 0;
-        const vtkIdType* ids = nullptr;
-        it->GetCurrentCell(npts, ids);
-        if (npts != 3)
+    for (vtkPolyData* mesh : meshes) {
+        if (!mesh || mesh->GetNumberOfPolys() == 0)
             continue;
-        tri->GetPoint(ids[0], a);
-        tri->GetPoint(ids[1], b);
-        tri->GetPoint(ids[2], c);
-        const double edge = std::max({std::sqrt(vtkMath::Distance2BetweenPoints(a, b)),
-                                      std::sqrt(vtkMath::Distance2BetweenPoints(b, c)),
-                                      std::sqrt(vtkMath::Distance2BetweenPoints(c, a))});
-        const int steps = std::max(1, static_cast<int>(std::ceil(edge / (0.5 * h))));
-        for (int s = 0; s <= steps; ++s)
-            for (int t = 0; s + t <= steps; ++t) {
-                const double u = static_cast<double>(s) / steps;
-                const double v = static_cast<double>(t) / steps;
-                const long i = std::lround((a[0] + (b[0] - a[0]) * u + (c[0] - a[0]) * v - origin[0]) / h);
-                const long j = std::lround((a[1] + (b[1] - a[1]) * u + (c[1] - a[1]) * v - origin[1]) / h);
-                const long k = std::lround((a[2] + (b[2] - a[2]) * u + (c[2] - a[2]) * v - origin[2]) / h);
-                if (i >= 0 && j >= 0 && k >= 0 && i < dims[0] && j < dims[1] && k < dims[2])
-                    solid[index(static_cast<size_t>(i), static_cast<size_t>(j), static_cast<size_t>(k))] = 1;
-            }
+        const auto tri = triangulated(mesh);
+        auto it = vtk::TakeSmartPointer(tri->GetPolys()->NewIterator());
+        vtkIdType counter = 0;
+        double a[3] = {}, b[3] = {}, c[3] = {};
+        for (it->GoToFirstCell(); !it->IsDoneWithTraversal(); it->GoToNextCell()) {
+            if ((++counter % 20000) == 0 && cancelled(cancel))
+                return fail(QStringLiteral("Cálculo cancelado."));
+            vtkIdType npts = 0;
+            const vtkIdType* ids = nullptr;
+            it->GetCurrentCell(npts, ids);
+            if (npts != 3)
+                continue;
+            tri->GetPoint(ids[0], a);
+            tri->GetPoint(ids[1], b);
+            tri->GetPoint(ids[2], c);
+            const double edge = std::max({std::sqrt(vtkMath::Distance2BetweenPoints(a, b)),
+                                          std::sqrt(vtkMath::Distance2BetweenPoints(b, c)),
+                                          std::sqrt(vtkMath::Distance2BetweenPoints(c, a))});
+            const int steps = std::max(1, static_cast<int>(std::ceil(edge / (0.5 * h))));
+            for (int s = 0; s <= steps; ++s)
+                for (int t = 0; s + t <= steps; ++t) {
+                    const double u = static_cast<double>(s) / steps;
+                    const double v = static_cast<double>(t) / steps;
+                    const long i = std::lround((a[0] + (b[0] - a[0]) * u + (c[0] - a[0]) * v - mask.origin[0]) / h);
+                    const long j = std::lround((a[1] + (b[1] - a[1]) * u + (c[1] - a[1]) * v - mask.origin[1]) / h);
+                    const long k = std::lround((a[2] + (b[2] - a[2]) * u + (c[2] - a[2]) * v - mask.origin[2]) / h);
+                    if (i >= 0 && j >= 0 && k >= 0 && i < dims[0] && j < dims[1] && k < dims[2])
+                        mask.solid[index(static_cast<size_t>(i), static_cast<size_t>(j), static_cast<size_t>(k))] = 1;
+                }
+        }
     }
+    return mask;
+}
 
-    // Whatever the border cannot reach without crossing the shell is inside.
-    std::vector<uint8_t> outside(total, 0);
+void DilateMask(VoxelMask& mask, double radiusMm)
+{
+    if (mask.Empty() || !(radiusMm > 0.0))
+        return;
+    std::vector<double> distance(mask.solid.size());
+    for (size_t id = 0; id < mask.solid.size(); ++id)
+        distance[id] = mask.solid[id] ? 0.0 : kInf;
+    squaredDistanceTransform(distance, mask.dims);
+    const double limit = (radiusMm / mask.spacingMm) * (radiusMm / mask.spacingMm);
+    for (size_t id = 0; id < mask.solid.size(); ++id)
+        if (distance[id] <= limit)
+            mask.solid[id] = 1;
+}
+
+void FillInteriorFromOutside(VoxelMask& mask)
+{
+    if (mask.Empty())
+        return;
+    const size_t nx = static_cast<size_t>(mask.dims[0]), ny = static_cast<size_t>(mask.dims[1]),
+                 nz = static_cast<size_t>(mask.dims[2]);
+    const auto index = [nx, ny](size_t i, size_t j, size_t k) { return i + nx * (j + ny * k); };
+    std::vector<uint8_t> outside(mask.solid.size(), 0);
     std::vector<size_t> stack;
-    stack.reserve(total / 8);
+    stack.reserve(mask.solid.size() / 8);
     const auto push = [&](size_t i, size_t j, size_t k) {
         const size_t id = index(i, j, k);
-        if (!outside[id] && !solid[id]) {
+        if (!outside[id] && !mask.solid[id]) {
             outside[id] = 1;
             stack.push_back(id);
         }
@@ -754,29 +792,80 @@ std::shared_ptr<const BakedField> BakeMeshField(vtkPolyData* mesh, double spacin
         if (k > 0) push(i, j, k - 1);
         if (k + 1 < nz) push(i, j, k + 1);
     }
-    if (cancelled(cancel))
-        return fail(QStringLiteral("Cálculo cancelado."));
+    for (size_t id = 0; id < mask.solid.size(); ++id)
+        mask.solid[id] = outside[id] ? 0 : 1;
+}
 
-    // Distance to the surface itself (the rasterised shell, whose voxel centres sit on it), signed by
-    // the flood fill. Measuring between the inside and outside sets instead would put the zero crossing
-    // half a voxel out and inflate the solid.
-    std::vector<double> distance(total);
-    for (size_t id = 0; id < total; ++id)
-        distance[id] = solid[id] ? 0.0 : kInf;
-    squaredDistanceTransform(distance, dims);
-    if (cancelled(cancel))
-        return fail(QStringLiteral("Cálculo cancelado."));
+std::shared_ptr<const BakedField> SignedDistanceField(const VoxelMask& mask)
+{
+    if (mask.Empty())
+        return nullptr;
+    const size_t nx = static_cast<size_t>(mask.dims[0]), ny = static_cast<size_t>(mask.dims[1]),
+                 nz = static_cast<size_t>(mask.dims[2]);
+    const size_t total = mask.solid.size();
+    const auto index = [nx, ny](size_t i, size_t j, size_t k) { return i + nx * (j + ny * k); };
+
+    // Distance is measured from the boundary voxels, whose centres sit on the surface. Measuring
+    // between the inside and outside sets instead would put the zero crossing half a voxel out.
+    std::vector<double> distance(total, kInf);
+    for (size_t k = 0; k < nz; ++k)
+        for (size_t j = 0; j < ny; ++j)
+            for (size_t i = 0; i < nx; ++i) {
+                const size_t id = index(i, j, k);
+                if (!mask.solid[id])
+                    continue;
+                const bool boundary = i == 0 || j == 0 || k == 0 || i + 1 == nx || j + 1 == ny || k + 1 == nz ||
+                                      !mask.solid[index(i - 1, j, k)] || !mask.solid[index(i + 1, j, k)] ||
+                                      !mask.solid[index(i, j - 1, k)] || !mask.solid[index(i, j + 1, k)] ||
+                                      !mask.solid[index(i, j, k - 1)] || !mask.solid[index(i, j, k + 1)];
+                if (boundary)
+                    distance[id] = 0.0;
+            }
+    squaredDistanceTransform(distance, mask.dims);
 
     auto baked = std::make_shared<BakedField>();
-    baked->dims = dims;
-    baked->origin = origin;
-    baked->spacingMm = h;
+    baked->dims = mask.dims;
+    baked->origin = mask.origin;
+    baked->spacingMm = mask.spacingMm;
     baked->values.resize(total);
     for (size_t id = 0; id < total; ++id) {
-        const double d = std::sqrt(distance[id]) * h;
-        baked->values[id] = static_cast<float>(outside[id] ? d : -d);
+        const double d = std::sqrt(distance[id]) * mask.spacingMm;
+        baked->values[id] = static_cast<float>(mask.solid[id] ? -d : d);
     }
     return baked;
+}
+
+vtkSmartPointer<vtkImageData> ToImage(const BakedField& field)
+{
+    if (field.values.empty())
+        return nullptr;
+    auto image = vtkSmartPointer<vtkImageData>::New();
+    image->SetDimensions(field.dims[0], field.dims[1], field.dims[2]);
+    image->SetSpacing(field.spacingMm, field.spacingMm, field.spacingMm);
+    image->SetOrigin(field.origin[0], field.origin[1], field.origin[2]);
+    auto values = vtkSmartPointer<vtkFloatArray>::New();
+    values->SetName("ImplicitField");
+    values->SetNumberOfComponents(1);
+    values->SetNumberOfTuples(static_cast<vtkIdType>(field.values.size()));
+    std::copy(field.values.begin(), field.values.end(), values->GetPointer(0));
+    image->GetPointData()->SetScalars(values);
+    return image;
+}
+
+// ── Mesh baked to a field ─────────────────────────────────────────────────────
+std::shared_ptr<const BakedField> BakeMeshField(vtkPolyData* mesh, double spacingMm, double paddingMm,
+                                                const std::atomic<bool>* cancel, QString* error)
+{
+    VoxelMask mask = RasterizeShells({mesh}, spacingMm, paddingMm, cancel, error);
+    if (mask.Empty())
+        return nullptr;
+    FillInteriorFromOutside(mask);
+    if (cancelled(cancel)) {
+        if (error)
+            *error = QStringLiteral("Cálculo cancelado.");
+        return nullptr;
+    }
+    return SignedDistanceField(mask);
 }
 
 NodePtr MeshField(vtkPolyData* mesh, double spacingMm, double paddingMm, const std::atomic<bool>* cancel,

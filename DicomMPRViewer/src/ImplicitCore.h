@@ -25,6 +25,7 @@
 
 #include <array>
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -125,6 +126,29 @@ std::shared_ptr<const BakedField> BakeMeshField(vtkPolyData* mesh, double spacin
 NodePtr Field(const std::shared_ptr<const BakedField>& field);
 NodePtr MeshField(vtkPolyData* mesh, double spacingMm, double paddingMm,
                   const std::atomic<bool>* cancel = nullptr, QString* error = nullptr);
+
+// ── Voxel grid steps ──────────────────────────────────────────────────────────
+// The stages a mesh goes through on its way to a field, exposed so the wrap can insert its own
+// morphology between them: rasterise the shells, close gaps, fill the interior, measure distances.
+struct VoxelMask
+{
+    std::vector<std::uint8_t> solid;
+    std::array<int, 3> dims{0, 0, 0};
+    Vec3 origin{0.0, 0.0, 0.0};
+    double spacingMm = 1.0;
+    bool Empty() const { return solid.empty(); }
+};
+
+// Every triangle sampled at half-voxel steps; the grid covers the meshes plus `paddingMm`.
+VoxelMask RasterizeShells(const std::vector<vtkPolyData*>& meshes, double spacingMm, double paddingMm,
+                          const std::atomic<bool>* cancel = nullptr, QString* error = nullptr);
+// Grows the marked set by a real distance (exact EDT, not a count of voxel steps).
+void DilateMask(VoxelMask& mask, double radiusMm);
+// Marks everything the border cannot reach without crossing the mask.
+void FillInteriorFromOutside(VoxelMask& mask);
+// Distance to the boundary voxels of the mask, negative inside.
+std::shared_ptr<const BakedField> SignedDistanceField(const VoxelMask& mask);
+vtkSmartPointer<vtkImageData> ToImage(const BakedField& field);
 
 // ── Evaluation ────────────────────────────────────────────────────────────────
 double Value(const ImplicitNode& node, const Vec3& p);
