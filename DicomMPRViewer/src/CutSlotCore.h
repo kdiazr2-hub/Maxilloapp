@@ -20,6 +20,7 @@
 // No Qt Widgets.
 // ─────────────────────────────────────────────────────────────────────────────
 
+#include "ImplicitCore.h"
 #include "OsteotomyCore.h"
 
 #include <QString>
@@ -52,4 +53,9 @@ namespace CutSlotCore
 {
 CutSlotResult CutSlots(vtkPolyData* base, const std::vector<OsteotomyPath>& paths, const CutSlotParams& params = {},
                        const std::atomic<bool>* cancel = nullptr);
+
+// One slot as a field node over `bounds`, for carving base, slots and holes into a single field
+// (`GuideDesignCore`). Returns nullptr on an invalid path or when cancelled.
+ImplicitCore::NodePtr SlotNode(const OsteotomyPath& path, const double bounds[6], const CutSlotParams& params,
+                               const std::atomic<bool>* cancel = nullptr, QString* error = nullptr);
 }

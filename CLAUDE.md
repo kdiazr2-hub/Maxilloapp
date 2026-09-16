@@ -32,7 +32,7 @@ Tests (CTest):
 - `GeometryCoreTests`, `BoneCavityFillTests`, `MeshGeneratorTests` — plain C++ executables
 - `MaskToObjectTests` checks exact label extraction, committed cavity filling and immutable input.
 - `ModelWorkflowTests` checks guided MODELOS steps, paired point requirements, fine adjustment and mandatory acceptance.
-- `SplintHeightmapTests`, `SplintDesignTests`, `SplintContourEditTests`, `SplintPreviewSchedulerTests`, `ProjectSerializerTests`, `CompositeBlockTests`, `MeshRepairTests`, `OsteotomyCoreTests`, `CollisionTests`, `ImplicitCoreTests`, `WrapCoreTests`, `GuideBaseTests`, `CutSlotTests`, `SegmentationProgressTests` — core tests declared with `add_core_test()`; synthetic arches in `tests/SplintTestGeometry.h`
+- `SplintHeightmapTests`, `SplintDesignTests`, `SplintContourEditTests`, `SplintPreviewSchedulerTests`, `ProjectSerializerTests`, `CompositeBlockTests`, `MeshRepairTests`, `OsteotomyCoreTests`, `CollisionTests`, `ImplicitCoreTests`, `WrapCoreTests`, `GuideBaseTests`, `CutSlotTests`, `GuideDesignTests`, `SegmentationProgressTests` — core tests declared with `add_core_test()`; synthetic arches in `tests/SplintTestGeometry.h`
 - `SplintWorkspaceTests` also covers the composite block flow and the osteotomy wizard (Le Fort I → BSSO → genioplasty)
 - `RepositionWorkspaceTests`, `SplintWorkspaceTests` — instantiate `MainWindow` (declared `friend`), render offscreen, write PNGs to `build/workspace-test-artifacts`
 - `Mesh3DViewInteractionTests` — drives `Mesh3DView` offscreen with synthetic mouse events
@@ -96,6 +96,12 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   sweeps (the older `PathField` rebuilds it per call); the field is baked with `ImplicitCore::BakeFunction`. The
   field extends past the ends of the path, so a slot across the base separates it — `CutSlotResult::pieces` says
   how many parts came out. Careful: `slots` is a Qt keyword macro, never a variable name.
+- `GuideDesignCore` assembles the guide: `Prepare` bakes the wrap once (slow), `Build` carves base
+  (`GuideBaseCore::BaseNode`), saw slots (`CutSlotCore::SlotNode`) and fixation-hole cylinders into ONE field and
+  contours it once — building the base, meshing it and re-baking to cut slots would resample twice. Split like
+  `SplintHeightmapGenerator`'s Prepare/Build, ready for `SplintPreviewScheduler`. `GuideFixationHole` mirrors
+  `SplintWireHole`; `SurfaceNormalAt` gives the drilling axis. Still to come: thickness map + export, `guidesPlan`
+  project key, GUIAS step and its panel.
 - Object label constants and `objectActorKey` live in `ObjectLabels.h`.
 - Mask conversion uses `MaskToObjectCore` and `MainWindowSegmentation.cpp`: extract the current
   label without smoothing or new filling; update object actors only, leaving mask data and display intact.

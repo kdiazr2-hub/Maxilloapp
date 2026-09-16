@@ -125,6 +125,7 @@ set(SOURCES
     src/WrapCore.cpp
     src/GuideBaseCore.cpp
     src/CutSlotCore.cpp
+    src/GuideDesignCore.cpp
     src/CollisionCore.cpp
     src/SurfaceContourOverlay.cpp
     src/MainWindowComposite.cpp
@@ -187,6 +188,7 @@ set(HEADERS
     src/WrapCore.h
     src/GuideBaseCore.h
     src/CutSlotCore.h
+    src/GuideDesignCore.h
     src/MeshRepairCore.h
     src/OsteotomyCore.h
     src/OsteotomyWizardPanel.h
@@ -304,6 +306,8 @@ add_core_test(GuideBaseTests tests/GuideBaseTests.cpp src/GuideBaseCore.cpp src/
     src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)
 add_core_test(CutSlotTests tests/CutSlotTests.cpp src/CutSlotCore.cpp src/OsteotomyCore.cpp src/ImplicitCore.cpp
     src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)
+add_core_test(GuideDesignTests tests/GuideDesignTests.cpp src/GuideDesignCore.cpp src/GuideBaseCore.cpp
+    src/CutSlotCore.cpp src/OsteotomyCore.cpp src/ImplicitCore.cpp src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)
 add_core_test(MeshRepairTests tests/MeshRepairTests.cpp src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)
 add_core_test(CollisionTests tests/CollisionTests.cpp src/CollisionCore.cpp)
 add_core_test(SegmentationProgressTests tests/SegmentationProgressTests.cpp src/SegmentationProgressCore.cpp

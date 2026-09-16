@@ -23,6 +23,27 @@ int shellsOf(vtkPolyData* mesh)
 
 namespace CutSlotCore
 {
+ImplicitCore::NodePtr SlotNode(const OsteotomyPath& path, const double bounds[6], const CutSlotParams& params,
+                               const std::atomic<bool>* cancel, QString* error)
+{
+    const double blade = std::clamp(params.bladeThicknessMm, 0.2, 3.0);
+    const double detail = std::clamp(params.smallestDetailMm, 0.05, 2.0);
+    const double extension = std::clamp(params.extensionMm, 0.0, 20.0);
+    const auto prepared = OsteotomyCore::PreparePathField(path, error);
+    if (!prepared)
+        return nullptr;
+    // The osteotomy field baked once over the base: the same field that cuts the bone.
+    const auto field = ImplicitCore::BakeFunction(
+        [prepared](const ImplicitCore::Vec3& p) { return OsteotomyCore::FieldAt(*prepared, {p[0], p[1], p[2]}); },
+        bounds, detail, extension + 2.0, cancel);
+    if (!field) {
+        if (error)
+            *error = QStringLiteral("Cálculo cancelado.");
+        return nullptr;
+    }
+    return ImplicitCore::Layer(ImplicitCore::Field(field), -0.5 * blade, 0.5 * blade);
+}
+
 CutSlotResult CutSlots(vtkPolyData* base, const std::vector<OsteotomyPath>& paths, const CutSlotParams& params,
                        const std::atomic<bool>* cancel)
 {
@@ -38,7 +59,6 @@ CutSlotResult CutSlots(vtkPolyData* base, const std::vector<OsteotomyPath>& path
     const double blade = std::clamp(params.bladeThicknessMm, 0.2, 3.0);
     const double detail = std::clamp(params.smallestDetailMm, 0.05, 2.0);
     const double extension = std::clamp(params.extensionMm, 0.0, 20.0);
-
     QString error;
     const auto baseField = ImplicitCore::MeshField(base, detail, blade + extension + 2.0, cancel, &error);
     if (!baseField) {
@@ -52,20 +72,12 @@ CutSlotResult CutSlots(vtkPolyData* base, const std::vector<OsteotomyPath>& path
     std::vector<ImplicitCore::NodePtr> slotNodes; // not "slots": Qt defines that as a keyword macro
     for (const OsteotomyPath& path : paths) {
         QString pathError;
-        const auto prepared = OsteotomyCore::PreparePathField(path, &pathError);
-        if (!prepared) {
+        const auto node = SlotNode(path, bounds, params, cancel, &pathError);
+        if (!node) {
             result.error = pathError.isEmpty() ? QStringLiteral("Trayectoria de corte no válida.") : pathError;
             return result;
         }
-        // The osteotomy field baked once over the base: the same field that cuts the bone.
-        const auto field = ImplicitCore::BakeFunction(
-            [prepared](const ImplicitCore::Vec3& p) { return OsteotomyCore::FieldAt(*prepared, {p[0], p[1], p[2]}); },
-            bounds, detail, extension + 2.0, cancel);
-        if (!field) {
-            result.error = QStringLiteral("Cálculo cancelado.");
-            return result;
-        }
-        slotNodes.push_back(ImplicitCore::Layer(ImplicitCore::Field(field), -0.5 * blade, 0.5 * blade));
+        slotNodes.push_back(node);
     }
 
     const auto solid = ImplicitCore::Subtract(baseField, ImplicitCore::Union(slotNodes));

@@ -20,6 +20,8 @@
 // No Qt Widgets.
 // ─────────────────────────────────────────────────────────────────────────────
 
+#include "ImplicitCore.h"
+
 #include <QJsonArray>
 #include <QString>
 #include <vtkSmartPointer.h>
@@ -64,6 +66,14 @@ vtkSmartPointer<vtkPolyData> ContourPolyline(const GuideContour& contour);
 
 GuideBaseResult CreateBase(vtkPolyData* wrap, const GuideContour& contour, const GuideBaseParams& params = {},
                            const std::atomic<bool>* cancel = nullptr);
+
+// The same base as a field node, so slots and holes can be carved into one field and contoured once
+// (`GuideDesignCore`). `spanMm` is how far the region prism reaches through the anatomy.
+ImplicitCore::NodePtr BaseNode(const std::shared_ptr<const ImplicitCore::BakedField>& wrapField,
+                               const GuideContour& contour, const GuideBaseParams& params,
+                               const std::array<double, 3>& projectionAxis, double spanMm);
+// Outward normal of the wrap at a point, from an already baked field.
+std::array<double, 3> NormalAt(const ImplicitCore::BakedField& field, const std::array<double, 3>& point);
 
 QJsonArray ContourToJson(const GuideContour& contour);
 GuideContour ContourFromJson(const QJsonArray& array);

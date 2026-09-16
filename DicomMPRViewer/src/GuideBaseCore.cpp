@@ -48,29 +48,68 @@ bool ContourValid(const GuideContour& contour, QString* error)
     return true;
 }
 
+std::array<double, 3> NormalAt(const ImplicitCore::BakedField& field, const std::array<double, 3>& point)
+{
+    // Gradient of the distance field: the outward normal of the wrap there.
+    const Vec3 fallback{0.0, 0.0, 1.0};
+    const Vec3 p{point[0], point[1], point[2]};
+    const double step = std::max(0.2, field.spacingMm);
+    Vec3 gradient{};
+    for (int a = 0; a < 3; ++a) {
+        Vec3 plus = p, minus = p;
+        plus[static_cast<size_t>(a)] += step;
+        minus[static_cast<size_t>(a)] -= step;
+        gradient[static_cast<size_t>(a)] = field.At(plus) - field.At(minus);
+    }
+    return normalized(gradient, fallback);
+}
+
+namespace
+{
+std::array<double, 3> axisFromField(const ImplicitCore::BakedField& field, const GuideContour& contour)
+{
+    Vec3 sum{0.0, 0.0, 0.0};
+    for (const auto& point : contour)
+        sum = add(sum, NormalAt(field, point));
+    return normalized(sum, {0.0, 0.0, 1.0});
+}
+} // namespace
+
+ImplicitCore::NodePtr BaseNode(const std::shared_ptr<const ImplicitCore::BakedField>& wrapField,
+                               const GuideContour& contour, const GuideBaseParams& params,
+                               const std::array<double, 3>& projectionAxis, double spanMm)
+{
+    const auto field = ImplicitCore::Field(wrapField);
+    if (!field || static_cast<int>(contour.size()) < MinContourPoints)
+        return nullptr;
+    const double thickness = std::clamp(params.thicknessMm, 0.3, 20.0);
+    const double clearance = std::clamp(params.clearanceMm, 0.0, 5.0);
+
+    std::vector<Vec3> polygon;
+    polygon.reserve(contour.size());
+    for (const auto& p : contour)
+        polygon.push_back({p[0], p[1], p[2]});
+    const auto prism = ImplicitCore::Prism(polygon, projectionAxis, spanMm);
+
+    // The prism runs right through the anatomy and would pick up the far wall as well, so the region
+    // is closed off just under the marked rim, deep enough to leave the wall its full thickness.
+    double deepest = std::numeric_limits<double>::max();
+    for (const Vec3& p : polygon)
+        deepest = std::min(deepest, dot(p, projectionAxis));
+    const Vec3 cutOrigin = mul(projectionAxis, deepest - (clearance + thickness + 0.5));
+    const auto nearSide = ImplicitCore::HalfSpace(cutOrigin, mul(projectionAxis, -1.0));
+
+    // The layer is measured as a real distance, so the wall keeps its thickness on oblique surfaces.
+    const auto layer = ImplicitCore::Layer(field, clearance, clearance + thickness);
+    return ImplicitCore::Intersect({prism, layer, nearSide});
+}
+
 std::array<double, 3> ProjectionAxis(vtkPolyData* wrap, const GuideContour& contour, double detailMm)
 {
-    const Vec3 fallback{0.0, 0.0, 1.0};
     if (!wrap || contour.empty())
-        return fallback;
+        return {0.0, 0.0, 1.0};
     const auto field = ImplicitCore::BakeMeshField(wrap, std::max(0.1, detailMm), 4.0);
-    if (!field)
-        return fallback;
-    // Gradient of the distance field: the outward normal of the wrap at each marked point.
-    const double step = std::max(0.2, field->spacingMm);
-    Vec3 sum{0.0, 0.0, 0.0};
-    for (const auto& point : contour) {
-        const Vec3 p{point[0], point[1], point[2]};
-        Vec3 gradient{};
-        for (int a = 0; a < 3; ++a) {
-            Vec3 plus = p, minus = p;
-            plus[static_cast<size_t>(a)] += step;
-            minus[static_cast<size_t>(a)] -= step;
-            gradient[static_cast<size_t>(a)] = field->At(plus) - field->At(minus);
-        }
-        sum = add(sum, normalized(gradient, fallback));
-    }
-    return normalized(sum, fallback);
+    return field ? axisFromField(*field, contour) : std::array<double, 3>{0.0, 0.0, 1.0};
 }
 
 vtkSmartPointer<vtkPolyData> ContourPolyline(const GuideContour& contour)
@@ -112,9 +151,8 @@ GuideBaseResult CreateBase(vtkPolyData* wrap, const GuideContour& contour, const
         result.error = error.isEmpty() ? QStringLiteral("No se pudo medir la envolvente.") : error;
         return result;
     }
-    const auto wrapField = ImplicitCore::Field(field);
     result.spacingMm = field->spacingMm;
-    result.projectionAxis = ProjectionAxis(wrap, contour, std::max(detail, 0.4));
+    result.projectionAxis = axisFromField(*field, contour);
 
     // Region prism, long enough to cross the whole envelope.
     double wrapBounds[6] = {};
@@ -122,23 +160,10 @@ GuideBaseResult CreateBase(vtkPolyData* wrap, const GuideContour& contour, const
     const double diagonal = std::sqrt(std::pow(wrapBounds[1] - wrapBounds[0], 2.0) +
                                       std::pow(wrapBounds[3] - wrapBounds[2], 2.0) +
                                       std::pow(wrapBounds[5] - wrapBounds[4], 2.0));
-    std::vector<Vec3> polygon;
-    polygon.reserve(contour.size());
-    for (const auto& p : contour)
-        polygon.push_back({p[0], p[1], p[2]});
-    const auto prism = ImplicitCore::Prism(polygon, result.projectionAxis, diagonal);
-
-    // The prism runs right through the anatomy and would pick up the far wall as well, so the region
-    // is closed off just under the marked rim, deep enough to leave the wall its full thickness.
-    double deepest = std::numeric_limits<double>::max();
-    for (const Vec3& p : polygon)
-        deepest = std::min(deepest, dot(p, result.projectionAxis));
-    const Vec3 cutOrigin = mul(result.projectionAxis, deepest - (clearance + thickness + 0.5));
-    const auto nearSide = ImplicitCore::HalfSpace(cutOrigin, mul(result.projectionAxis, -1.0));
-
-    // The layer is measured as a real distance, so the wall keeps its thickness on oblique surfaces.
-    const auto layer = ImplicitCore::Layer(wrapField, clearance, clearance + thickness);
-    const auto solid = ImplicitCore::Intersect({prism, layer, nearSide});
+    GuideBaseParams clamped = params;
+    clamped.thicknessMm = thickness;
+    clamped.clearanceMm = clearance;
+    const auto solid = BaseNode(field, contour, clamped, result.projectionAxis, diagonal);
 
     ImplicitCore::PolygonizeOptions options;
     options.smoothingIterations = params.smoothingIterations;
