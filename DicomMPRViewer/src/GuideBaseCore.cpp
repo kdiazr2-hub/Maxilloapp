@@ -75,6 +75,16 @@ std::array<double, 3> axisFromField(const ImplicitCore::BakedField& field, const
 }
 } // namespace
 
+ImplicitCore::NodePtr RegionPrism(const GuideContour& contour, const std::array<double, 3>& projectionAxis,
+                                  double spanMm)
+{
+    std::vector<Vec3> polygon;
+    polygon.reserve(contour.size());
+    for (const auto& p : contour)
+        polygon.push_back({p[0], p[1], p[2]});
+    return ImplicitCore::Prism(polygon, projectionAxis, spanMm);
+}
+
 ImplicitCore::NodePtr BaseNode(const std::shared_ptr<const ImplicitCore::BakedField>& wrapField,
                                const GuideContour& contour, const GuideBaseParams& params,
                                const std::array<double, 3>& projectionAxis, double spanMm)
@@ -89,7 +99,7 @@ ImplicitCore::NodePtr BaseNode(const std::shared_ptr<const ImplicitCore::BakedFi
     polygon.reserve(contour.size());
     for (const auto& p : contour)
         polygon.push_back({p[0], p[1], p[2]});
-    const auto prism = ImplicitCore::Prism(polygon, projectionAxis, spanMm);
+    const auto prism = RegionPrism(contour, projectionAxis, spanMm);
 
     // The prism runs right through the anatomy and would pick up the far wall as well, so the region
     // is closed off just under the marked rim, deep enough to leave the wall its full thickness.

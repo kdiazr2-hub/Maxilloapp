@@ -59,7 +59,7 @@ std::array<double, 3> SurfaceNormalAt(const GuidePreparation& prepared, const st
 }
 
 GuideDesignResult Build(const GuidePreparation& prepared, const GuideContour& contour,
-                        const std::vector<OsteotomyPath>& paths, const std::vector<GuideFixationHole>& holes,
+                        const std::vector<GuideSlot>& slotPlan, const std::vector<GuideFixationHole>& holes,
                         const GuideDesignParams& params, const std::atomic<bool>* cancel)
 {
     GuideDesignResult result;
@@ -94,15 +94,33 @@ GuideDesignResult Build(const GuidePreparation& prepared, const GuideContour& co
     }
 
     // Slots and holes are carved into the same field as the base, and the whole guide is contoured once.
+    // Every slot is clipped to the marked region shrunk by the edge margin, so material is always left
+    // around it and the guide comes out in one piece.
+    const double edgeMargin = std::clamp(params.edgeMarginMm, 0.0, 20.0);
+    const auto insideRegion =
+        ImplicitCore::Offset(GuideBaseCore::RegionPrism(contour, result.projectionAxis, prepared.spanMm), -edgeMargin);
     std::vector<ImplicitCore::NodePtr> cutters;
-    for (const OsteotomyPath& path : paths) {
+    for (const GuideSlot& slot : slotPlan) {
         QString pathError;
-        const auto node = CutSlotCore::SlotNode(path, bounds, params.slot, cancel, &pathError);
-        if (!node) {
+        const auto slab = CutSlotCore::SlotNode(slot.path, bounds, params.slot, cancel, &pathError);
+        if (!slab) {
             result.error = pathError.isEmpty() ? QStringLiteral("Trayectoria de corte no válida.") : pathError;
             return result;
         }
-        cutters.push_back(node);
+        std::vector<ImplicitCore::NodePtr> limits{slab, insideRegion};
+        if (slot.hasExtent) {
+            // Between the two ends the user placed: a half space at each, facing along the slot.
+            const Vec3 along{slot.end[0] - slot.start[0], slot.end[1] - slot.start[1], slot.end[2] - slot.start[2]};
+            const double length = std::sqrt(along[0] * along[0] + along[1] * along[1] + along[2] * along[2]);
+            if (length < 1e-6) {
+                result.error = QStringLiteral("Los dos extremos de la ranura están en el mismo punto.");
+                return result;
+            }
+            const Vec3 direction{along[0] / length, along[1] / length, along[2] / length};
+            limits.push_back(ImplicitCore::HalfSpace(slot.start, {-direction[0], -direction[1], -direction[2]}));
+            limits.push_back(ImplicitCore::HalfSpace(slot.end, direction));
+        }
+        cutters.push_back(ImplicitCore::Intersect(limits));
     }
     const double holeLength = std::clamp(params.holeLengthMm, 1.0, 100.0);
     for (const GuideFixationHole& hole : holes) {
@@ -127,7 +145,7 @@ GuideDesignResult Build(const GuidePreparation& prepared, const GuideContour& co
                                    "%5 pieza(s), %6 triángulos.")
                         .arg(std::clamp(params.base.thicknessMm, 0.3, 20.0), 0, 'f', 2)
                         .arg(std::clamp(params.base.clearanceMm, 0.0, 5.0), 0, 'f', 2)
-                        .arg(paths.size())
+                        .arg(slotPlan.size())
                         .arg(holes.size())
                         .arg(result.pieces)
                         .arg(result.mesh->GetNumberOfPolys());

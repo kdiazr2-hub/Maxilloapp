@@ -40,11 +40,23 @@ struct GuideFixationHole
     double diameterMm = 2.0;
 };
 
+// One saw slot: which osteotomy it follows and, optionally, where along it the user placed its ends.
+// Without ends the slot runs the whole marked region; either way it is clipped to the region shrunk by
+// `edgeMarginMm`, so it never reaches the rim and the guide stays in one piece.
+struct GuideSlot
+{
+    OsteotomyPath path;
+    std::array<double, 3> start{0.0, 0.0, 0.0};
+    std::array<double, 3> end{0.0, 0.0, 0.0};
+    bool hasExtent = false; // true once the user has placed both ends
+};
+
 struct GuideDesignParams
 {
     GuideBaseParams base;
     CutSlotParams slot;
     double holeLengthMm = 30.0; // cylinder length, through the wall either way
+    double edgeMarginMm = 2.0;  // material left between any slot and the edge of the guide
 };
 
 // The slow half: the wrap measured once.
@@ -73,7 +85,7 @@ namespace GuideDesignCore
 GuidePreparation Prepare(vtkPolyData* wrap, const GuideDesignParams& params = {},
                          const std::atomic<bool>* cancel = nullptr);
 GuideDesignResult Build(const GuidePreparation& prepared, const GuideContour& contour,
-                        const std::vector<OsteotomyPath>& paths, const std::vector<GuideFixationHole>& holes,
+                        const std::vector<GuideSlot>& slotPlan, const std::vector<GuideFixationHole>& holes,
                         const GuideDesignParams& params = {}, const std::atomic<bool>* cancel = nullptr);
 // Outward normal of the wrap, to drill a hole along it where the user clicked.
 std::array<double, 3> SurfaceNormalAt(const GuidePreparation& prepared, const std::array<double, 3>& point);

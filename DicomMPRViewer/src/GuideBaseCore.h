@@ -72,6 +72,10 @@ GuideBaseResult CreateBase(vtkPolyData* wrap, const GuideContour& contour, const
 ImplicitCore::NodePtr BaseNode(const std::shared_ptr<const ImplicitCore::BakedField>& wrapField,
                                const GuideContour& contour, const GuideBaseParams& params,
                                const std::array<double, 3>& projectionAxis, double spanMm);
+// The region prism on its own: the marked polygon swept along the axis. Shrinking it (a negative
+// offset) is what keeps the saw slots away from the rim so the guide stays in one piece.
+ImplicitCore::NodePtr RegionPrism(const GuideContour& contour, const std::array<double, 3>& projectionAxis,
+                                  double spanMm);
 // Outward normal of the wrap at a point, from an already baked field.
 std::array<double, 3> NormalAt(const ImplicitCore::BakedField& field, const std::array<double, 3>& point);
 
