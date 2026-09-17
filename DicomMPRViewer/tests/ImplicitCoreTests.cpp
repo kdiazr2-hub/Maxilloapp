@@ -205,6 +205,34 @@ void testCancellation()
     QString error;
     require(BakeMeshField(cube, 0.3, 1.0, &cancel, &error) == nullptr, "baking ignored the cancel flag");
 }
+
+void testPlanarFields()
+{
+    // A disc of radius 6 baked as a 2D signed distance, in a frame looking along +z.
+    auto disc = std::make_shared<BakedPlanarField>();
+    disc->spacingMm = 0.2;
+    disc->u0 = disc->v0 = -10.0;
+    disc->nu = disc->nv = 101;
+    disc->values.resize(static_cast<size_t>(disc->nu) * disc->nv);
+    for (int j = 0; j < disc->nv; ++j)
+        for (int i = 0; i < disc->nu; ++i)
+            disc->values[static_cast<size_t>(i) + static_cast<size_t>(disc->nu) * j] =
+                static_cast<float>(std::hypot(disc->u0 + i * 0.2, disc->v0 + j * 0.2) - 6.0);
+    requireVolume(PlanarPrism(disc, 5.0), kPiValue * 36.0 * 10.0, 0.02, "planar prism of a disc");
+    require(!Bounds(PlanarPrism(disc, 0.0), std::array<double, 6>{}.data()), "an infinite planar prism was bounded");
+
+    // Height limiter: a sphere kept only above a flat height map at z = 0, lowered by 2 mm.
+    auto flat = std::make_shared<BakedPlanarField>(*disc);
+    std::fill(flat->values.begin(), flat->values.end(), 0.0f);
+    const auto above = PlanarHeight(flat, 2.0);
+    require(Value(above, {0.0, 0.0, -1.0}) < 0.0 && Value(above, {0.0, 0.0, -3.0}) > 0.0,
+            "the height limiter does not cut at height - offset");
+    const double sphere = 4.0 / 3.0 * kPiValue * 1000.0;
+    // Kept: everything above z = -2, i.e. the sphere minus a cap of height 8 at the bottom.
+    const double removedCap = kPiValue * 8.0 * 8.0 * (3.0 * 10.0 - 8.0) / 3.0;
+    requireVolume(Intersect(Sphere({0.0, 0.0, 0.0}, 10.0), above), sphere - removedCap, 0.03,
+                  "sphere above a height map");
+}
 } // namespace
 
 int main()
@@ -217,6 +245,7 @@ int main()
         {"mesh field", testMeshField},
         {"repaired output", testRepairedOutput},
         {"cancellation", testCancellation},
+        {"planar fields", testPlanarFields},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {

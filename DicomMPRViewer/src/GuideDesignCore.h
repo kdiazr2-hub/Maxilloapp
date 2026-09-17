@@ -3,17 +3,23 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // GuideDesignCore
 //
-// The whole guide in one field: base, saw slots and fixation holes carved
-// together and contoured once, which is what keeps the splint generator from
-// ever producing broken meshes and what the guide inherits here. Building the
-// base, meshing it, then re-baking that mesh to cut the slots would resample
-// twice and round the wall a second time.
+// The whole guide in one field: base, saw slots, fixation holes and the user's
+// figures carved together and contoured once, which is what keeps the splint
+// generator from ever producing broken meshes and what the guide inherits here.
+// Building the base, meshing it, then re-baking that mesh to cut the slots would
+// resample twice and round the wall a second time.
 //
-//   base = region prism ∧ layer of the wrap distance ∧ near side
-//   guide = base − saw slots (the osteotomy's own field) − hole cylinders
+//   base  = rounded region prism ∧ layer of the wrap distance ∧ in front of the marked surface
+//   guide = (base ∪ added figures) − saw slots − hole cylinders − subtracted figures
+//
+// Figures are the Boolean tools of the module: cylinders, boxes and spheres with
+// exact measurements, or imported STL shapes, each placed with a local frame and
+// either added to the guide or subtracted from it (a thin box makes a straight
+// saw slot, a cylinder a drill sleeve's bore). They are fields like everything
+// else, so a subtraction can never leave a broken mesh.
 //
 // Split as `SplintHeightmapGenerator` is: Prepare bakes the wrap once (slow),
-// Build reruns on every change of contour, thickness, slots or holes.
+// Build reruns on every change of contour, thickness, slots, holes or figures.
 // No Qt Widgets.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -51,6 +57,36 @@ struct GuideSlot
     bool hasExtent = false; // true once the user has placed both ends
 };
 
+enum class GuideFigureShape
+{
+    Cylinder, // diameter, length along local z
+    Box,      // width (x), height (y), depth (z)
+    Sphere,   // diameter
+    Mesh      // imported STL, in local coordinates
+};
+
+enum class GuideFigureOperation
+{
+    Subtract,
+    Add
+};
+
+// A Boolean tool placed on the guide. Its geometry is centred on the local origin; `matrix` (row-major,
+// local → world) puts it in place, so moving it with the gizmo only changes the matrix.
+struct GuideFigure
+{
+    GuideFigureShape shape = GuideFigureShape::Cylinder;
+    GuideFigureOperation operation = GuideFigureOperation::Subtract;
+    std::array<double, 16> matrix{1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0};
+    double diameterMm = 3.0;
+    double lengthMm = 12.0;
+    double widthMm = 12.0;
+    double heightMm = 1.0;
+    double depthMm = 12.0;
+    vtkSmartPointer<vtkPolyData> mesh; // Mesh shape only
+    QString sourcePath;                // Mesh shape: the imported file, kept in the project
+};
+
 struct GuideDesignParams
 {
     GuideBaseParams base;
@@ -75,7 +111,7 @@ struct GuideDesignResult
     QString error;
     QString report;
     vtkSmartPointer<vtkPolyData> mesh;
-    int pieces = 0; // a slot across the guide separates it
+    int pieces = 0; // a slot or a figure across the guide separates it
     std::array<double, 3> projectionAxis{0.0, 0.0, 1.0};
     double spacingMm = 0.0;
 };
@@ -86,7 +122,19 @@ GuidePreparation Prepare(vtkPolyData* wrap, const GuideDesignParams& params = {}
                          const std::atomic<bool>* cancel = nullptr);
 GuideDesignResult Build(const GuidePreparation& prepared, const GuideContour& contour,
                         const std::vector<GuideSlot>& slotPlan, const std::vector<GuideFixationHole>& holes,
+                        const std::vector<GuideFigure>& figures, const GuideDesignParams& params = {},
+                        const std::atomic<bool>* cancel = nullptr);
+// Without figures.
+GuideDesignResult Build(const GuidePreparation& prepared, const GuideContour& contour,
+                        const std::vector<GuideSlot>& slotPlan, const std::vector<GuideFixationHole>& holes,
                         const GuideDesignParams& params = {}, const std::atomic<bool>* cancel = nullptr);
-// Outward normal of the wrap, to drill a hole along it where the user clicked.
+// Outward normal of the wrap, to drill a hole or seat a figure along it where the user clicked.
 std::array<double, 3> SurfaceNormalAt(const GuidePreparation& prepared, const std::array<double, 3>& point);
+
+// A local frame at `center` whose z axis is `zAxis` (a figure placed on the surface points out of it).
+std::array<double, 16> FrameAt(const std::array<double, 3>& center, const std::array<double, 3>& zAxis);
+// The figure as a field node in world coordinates; nullptr (and `error`) when it has no geometry.
+ImplicitCore::NodePtr FigureNode(const GuideFigure& figure, double detailMm, QString* error = nullptr);
+// The figure as a mesh in world coordinates, for display and the gizmo.
+vtkSmartPointer<vtkPolyData> FigurePreview(const GuideFigure& figure);
 }

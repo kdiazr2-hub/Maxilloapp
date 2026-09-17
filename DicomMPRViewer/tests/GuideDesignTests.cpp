@@ -213,6 +213,86 @@ void testRejectsBadInput()
     require(!GuideDesignCore::Build(prepared, patchContour(), {wholeRegionSlot()}, {}, params(2.0, 0.0), &cancel).ok,
             "Build ignored the cancel flag");
 }
+
+void testFiguresAddAndSubtract()
+{
+    const auto wrap = wrapWall();
+    const double thickness = 2.5, clearance = 0.2;
+    const double midWall = clearance + 0.5 * thickness;
+    const GuidePreparation prepared = GuideDesignCore::Prepare(wrap, params(thickness, clearance));
+    require(prepared.ok, "the wrap could not be prepared: " + prepared.error.toStdString());
+    const GuideDesignResult plain = GuideDesignCore::Build(prepared, patchContour(), {}, {}, params(thickness, clearance));
+    require(plain.ok, "the plain guide failed: " + plain.error.toStdString());
+    const double plainVolume = volumeOf(plain.mesh);
+
+    // A placed frame points its z axis out of the surface.
+    const auto normal = GuideDesignCore::SurfaceNormalAt(prepared, {0.0, 0.0, 10.0});
+    const auto frame = GuideDesignCore::FrameAt({0.0, midWall, 10.0}, normal);
+    require(std::abs(frame[2] * normal[0] + frame[6] * normal[1] + frame[10] * normal[2] - 1.0) < 1e-9 &&
+                std::abs(frame[3]) < 1e-9 && std::abs(frame[7] - midWall) < 1e-9 && std::abs(frame[11] - 10.0) < 1e-9,
+            "the figure frame is not centred on the point with z along the normal");
+
+    // A thin box through the wall: a straight saw slot of exact measurements.
+    GuideFigure slotBox;
+    slotBox.shape = GuideFigureShape::Box;
+    slotBox.operation = GuideFigureOperation::Subtract;
+    slotBox.widthMm = 8.0;
+    slotBox.heightMm = 1.0;
+    slotBox.depthMm = 10.0; // along the normal: longer than the wall, so it goes through
+    slotBox.matrix = frame;
+    const GuideDesignResult cut =
+        GuideDesignCore::Build(prepared, patchContour(), {}, {}, {slotBox}, params(thickness, clearance));
+    require(cut.ok, "the guide with a box cut failed: " + cut.error.toStdString());
+    require(MeshRepairCore::Analyze(cut.mesh).Valid(), "the box cut left an invalid solid");
+    const double removed = plainVolume - volumeOf(cut.mesh);
+    require(removed > 0.5 * 8.0 * 1.0 * thickness && removed < 2.0 * 8.0 * 1.0 * thickness,
+            "the box removed " + std::to_string(removed) + " mm³, expected about " + std::to_string(8.0 * thickness));
+    const auto cutSolid = ImplicitCore::BakeMeshField(cut.mesh, 0.15, 3.0);
+    require(cutSolid->At({0.0, midWall, 10.0}) > 0.0, "the box did not open the wall at its centre");
+    require(cutSolid->At({0.0, midWall, 12.0}) < 0.0, "the box cut more than its height");
+
+    // A cylinder added on the face: material grows, and the guide stays one piece.
+    GuideFigure boss;
+    boss.shape = GuideFigureShape::Cylinder;
+    boss.operation = GuideFigureOperation::Add;
+    boss.diameterMm = 4.0;
+    boss.lengthMm = 6.0;
+    boss.matrix = GuideDesignCore::FrameAt({8.0, clearance + thickness + 1.0, 14.0}, normal);
+    const GuideDesignResult grown =
+        GuideDesignCore::Build(prepared, patchContour(), {}, {}, {boss}, params(thickness, clearance));
+    require(grown.ok && grown.pieces == 1, "the added cylinder did not join the guide");
+    require(volumeOf(grown.mesh) > plainVolume + 20.0, "the added cylinder did not grow the guide");
+    require(grown.report.contains(QStringLiteral("1 figura(s) sumada(s)")),
+            "the report does not count the added figure: " + grown.report.toStdString());
+
+    // An imported shape works the same way as a primitive: here, the same box as a mesh.
+    GuideFigure imported = slotBox;
+    imported.shape = GuideFigureShape::Mesh;
+    imported.mesh = boxMesh({-4.0, 4.0, -0.5, 0.5, -5.0, 5.0}, false, false);
+    const GuideDesignResult meshCut =
+        GuideDesignCore::Build(prepared, patchContour(), {}, {}, {imported}, params(thickness, clearance));
+    require(meshCut.ok, "the imported figure failed: " + meshCut.error.toStdString());
+    const double meshRemoved = plainVolume - volumeOf(meshCut.mesh);
+    require(std::abs(meshRemoved - removed) < 0.5 * removed, "the imported box did not cut like the primitive box");
+
+    // The preview is the figure where it will act.
+    GuideFigure probe;
+    probe.shape = GuideFigureShape::Cylinder;
+    probe.diameterMm = 3.0;
+    probe.lengthMm = 12.0;
+    probe.matrix = GuideDesignCore::FrameAt({5.0, 6.0, 7.0}, {0.0, 0.0, 1.0});
+    double b[6] = {};
+    GuideDesignCore::FigurePreview(probe)->GetBounds(b);
+    require(std::abs((b[5] - b[4]) - 12.0) < 1e-3 && std::abs((b[1] - b[0]) - 3.0) < 0.1 &&
+                std::abs(0.5 * (b[4] + b[5]) - 7.0) < 1e-3,
+            "the cylinder preview does not match its measurements and place");
+
+    // An imported figure without geometry is reported.
+    GuideFigure empty;
+    empty.shape = GuideFigureShape::Mesh;
+    require(!GuideDesignCore::Build(prepared, patchContour(), {}, {}, {empty}, params(thickness, clearance)).ok,
+            "an empty imported figure was accepted");
+}
 } // namespace
 
 int main()
@@ -222,6 +302,7 @@ int main()
         {"slot ends where it is placed", testSlotEndsWhereItIsPlaced},
         {"preparation is reused", testPreparationIsReused},
         {"rejects bad input", testRejectsBadInput},
+        {"figures add and subtract", testFiguresAddAndSubtract},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {

@@ -39,6 +39,21 @@ GuidePlan samplePlan()
     plan.slotPlan = {placed, wholeRegion};
 
     plan.holes = {{{-10.0, 0.0, 14.0}, {0.0, 1.0, 0.0}, 2.0}, {{10.0, 0.0, 14.0}, {0.0, 1.0, 0.0}, 2.5}};
+
+    plan.type = GuideType::Chin;
+    plan.design.base.cornerRadiusMm = 4.5;
+    GuideFigure box;
+    box.shape = GuideFigureShape::Box;
+    box.operation = GuideFigureOperation::Subtract;
+    box.widthMm = 8.0;
+    box.heightMm = 0.8;
+    box.depthMm = 10.0;
+    box.matrix = GuideDesignCore::FrameAt({1.0, 2.0, 3.0}, {0.0, 1.0, 0.0});
+    GuideFigure stl;
+    stl.shape = GuideFigureShape::Mesh;
+    stl.operation = GuideFigureOperation::Add;
+    stl.sourcePath = QStringLiteral("C:/casos/tope.stl");
+    plan.figures = {box, stl};
     return plan;
 }
 
@@ -70,6 +85,18 @@ void testRoundTrip()
                 "the reloaded slot does not follow the same cut");
     require(back.slotPlan[0].path.valid, "the reloaded path is not valid");
 
+    require(back.type == GuideType::Chin, "the guide type was lost");
+    require(std::abs(back.design.base.cornerRadiusMm - 4.5) < 1e-9, "the outline rounding was lost");
+    require(back.figures.size() == 2 && back.figures[0].shape == GuideFigureShape::Box &&
+                back.figures[0].operation == GuideFigureOperation::Subtract &&
+                back.figures[0].matrix == plan.figures[0].matrix && std::abs(back.figures[0].heightMm - 0.8) < 1e-9,
+            "the box figure was lost");
+    require(back.figures[1].shape == GuideFigureShape::Mesh && back.figures[1].operation == GuideFigureOperation::Add &&
+                back.figures[1].sourcePath == plan.figures[1].sourcePath,
+            "the imported figure's file was lost");
+    require(GuidePlanCore::SourceLabelsFor(GuideType::LeFort) == std::vector<int>{206, 205} &&
+                GuidePlanCore::SourceLabelsFor(GuideType::Chin) == std::vector<int>{213, 212},
+            "the guide types do not wrap their own models");
     require(back.holes.size() == 2 && back.holes[0].center == plan.holes[0].center &&
                 back.holes[1].axis == plan.holes[1].axis && std::abs(back.holes[1].diameterMm - 2.5) < 1e-9,
             "the fixation holes were lost");
@@ -79,7 +106,9 @@ void testEmptyAndDefaults()
 {
     // An empty object gives a usable plan with the defaults, so an older project just opens without guides.
     const GuidePlan empty = GuidePlanCore::FromJson({});
-    require(empty.contour.empty() && empty.slotPlan.empty() && empty.holes.empty(), "an empty plan is not empty");
+    require(empty.contour.empty() && empty.slotPlan.empty() && empty.holes.empty() && empty.figures.empty(),
+            "an empty plan is not empty");
+    require(empty.type == GuideType::LeFort, "an older plan did not default to a Le Fort guide");
     require(empty.design.base.thicknessMm > 0.0 && empty.design.edgeMarginMm > 0.0,
             "the defaults were lost on an empty plan");
 

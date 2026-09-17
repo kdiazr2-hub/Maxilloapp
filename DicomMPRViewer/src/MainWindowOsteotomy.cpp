@@ -803,7 +803,7 @@ bool MainWindow::applyOsteotomyCut()
         commit(kLeFortCranialLabel, m_leFortCranialMesh);
         commit(kLeFortSegLabel, m_leFortSegmentMesh);
         m_segmentReferences[kLeFortSegLabel] = OsteotomyCore::CaptureSegmentReference(m_leFortSegmentMesh, m_ostWizard.path.points);
-        rememberOsteotomyCut(tr("Le Fort I"), m_ostWizard.path); // offered as a saw slot in GUIAS
+        rememberOsteotomyCut(tr("Le Fort I"), m_ostWizard.path, GuideType::LeFort); // offered as a saw slot in GUIAS
         if (m_leFortExportAct)
             m_leFortExportAct->setEnabled(true);
     } else if (type == OsteotomyType::Bsso) {
@@ -851,7 +851,7 @@ bool MainWindow::applyOsteotomyCut()
         commit(kGenioBodyLabel, m_genioBodyMesh);
         commit(kGenioSegmentLabel, m_genioSegmentMesh);
         m_segmentReferences[kGenioSegmentLabel] = OsteotomyCore::CaptureSegmentReference(m_genioSegmentMesh, m_ostWizard.path.points);
-        rememberOsteotomyCut(tr("Mentoplastia"), m_ostWizard.path); // offered as a saw slot in GUIAS
+        rememberOsteotomyCut(tr("Mentoplastia"), m_ostWizard.path, GuideType::Chin); // offered as a saw slot in GUIAS
     }
 
     m_ostWizard.planReady = false;

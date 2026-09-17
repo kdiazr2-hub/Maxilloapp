@@ -86,11 +86,15 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   `smallestDetailMm`), dilate → fill → contour at iso −gap, then smooth and repair. Same four steps as
   `CompositeBlockCore::VoxelUnion`, which stays as it is because `MeshRepairCore`'s remesh calls it and a wrap that
   repairs its own output would loop back into the repair.
-- `GuideBaseCore::CreateBase` is 3-matic's Create Base: points marked on the wrap (same idiom as the composite
-  contour, any order) sweep a prism along the patch's outward normal, intersected with a layer of the wrap's real
-  signed distance (`clearance <= d <= clearance + thickness`, uniform on oblique walls, unlike an interval along an
-  axis) and with a half space just under the marked rim, or the prism would pick up the far wall too. Contour
-  persists via `ContourToJson`.
+- `GuideBaseCore::CreateBase` is 3-matic's Create Base. `MakeRegion` turns the marked points into a `GuideRegion`:
+  the projection axis is the normal of the best-fit plane of the points, turned outward by the field (averaging
+  surface normals tilts it when a point sits on an edge); the polygon is rounded by a 2D opening + closing of
+  `cornerRadiusMm` (exact EDT, `ImplicitCore::SquaredDistanceTransform` on a {nu, nv, 1} grid) and kept as a 2D signed
+  distance (`PlanarPrism`); and a height map of the first surface seen along the axis (`PlanarHeight`) keeps the wall
+  on the marked face — strictly in front where the surface is seen, and past the silhouette only down to the wall's
+  own thickness, so it never runs behind a thin wall or down the far side. Base = prism ∧ layer of the wrap's real
+  signed distance (`clearance <= d <= clearance + thickness`, uniform on oblique walls) ∧ that height limit.
+  `RegionOutline` lays the rounded outline on the surface for display. Contour persists via `ContourToJson`.
 - `CutSlotCore::CutSlots` subtracts a slab of `OsteotomyCore`'s own path field from the base, so slot and planned
   osteotomy coincide by construction. `OsteotomyCore::PreparePathField` / `FieldAt` build the frame once for grid
   sweeps (the older `PathField` rebuilds it per call); the field is baked with `ImplicitCore::BakeFunction`. The
@@ -105,10 +109,16 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   `edgeMarginMm`, so it never reaches the rim and the guide stays in one piece (user's decision, 2026-09-15). `GuidePlanCore`
   holds what the user decided (sources, region, slots with their ends, holes, parameters) and saves it under the
   optional `guidesPlan` project key; `OsteotomyCore::PathToJson` / `PathFromJson` persist the cut a slot follows.
-  The GUIAS module is the eighth ORTOGNÁTICA step: `MainWindowGuides.cpp` holds the side panel (pick the models →
-  wrap → mark the support region → tick which osteotomies get a slot and place its ends → fixation holes → build,
-  thickness map, STL export) and workspace page 7. Cuts are offered from `m_guideCuts`, filled by
-  `rememberOsteotomyCut` when the wizard executes a Le Fort or genioplasty and by the plan on reload.
+  `GuideFigure`s are the Boolean tools (cylinder, box, sphere with exact measurements, or an imported STL centred on
+  its middle): a local frame (`FrameAt`, z along the surface normal) and Add/Subtract, carved into the same field
+  (guide = (base ∪ added) − slots − holes − subtracted); `FigurePreview` draws them.
+  The GUIAS module is the eighth ORTOGNÁTICA step: `MainWindowGuides.cpp` holds the side panel (guide type → wrap →
+  mark the support region, drawn rounded on the surface → tick which osteotomies get a slot and place its ends →
+  figures placed by click and moved with the gizmo → fixation holes → build, thickness map, STL export) and workspace
+  page 7. `GuideType` decides the envelope (user's rule, 2026-09-16): Le Fort I = Le Fort segment + cranial base,
+  chin = chin segment + post-genioplasty mandible, always in their planned position; the slot list only shows that
+  type's cuts (`m_guideCuts`, filled by `rememberOsteotomyCut` when the wizard executes a Le Fort or genioplasty and by
+  the plan on reload). Imported figures are saved by file path and reloaded from it.
 - Object label constants and `objectActorKey` live in `ObjectLabels.h`.
 - Mask conversion uses `MaskToObjectCore` and `MainWindowSegmentation.cpp`: extract the current
   label without smoothing or new filling; update object actors only, leaving mask data and display intact.

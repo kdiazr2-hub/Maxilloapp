@@ -455,6 +455,47 @@ NodePtr Transformed(const NodePtr& child, vtkMatrix4x4* childToWorld)
     return node;
 }
 
+double BakedPlanarField::At(double u, double v) const
+{
+    if (values.empty())
+        return kInf;
+    const double gu = std::clamp((u - u0) / spacingMm, 0.0, nu - 1.000001);
+    const double gv = std::clamp((v - v0) / spacingMm, 0.0, nv - 1.000001);
+    const int i = static_cast<int>(gu), j = static_cast<int>(gv);
+    const double tu = gu - i, tv = gv - j;
+    const auto at = [&](int a, int b) {
+        return static_cast<double>(values[static_cast<size_t>(a) + static_cast<size_t>(nu) * static_cast<size_t>(b)]);
+    };
+    if (nu == 1 || nv == 1)
+        return at(std::min(i, nu - 1), std::min(j, nv - 1));
+    return (at(i, j) * (1 - tu) + at(i + 1, j) * tu) * (1 - tv) + (at(i, j + 1) * (1 - tu) + at(i + 1, j + 1) * tu) * tv;
+}
+
+NodePtr PlanarPrism(const std::shared_ptr<const BakedPlanarField>& profile, double halfHeightMm)
+{
+    if (!profile || profile->values.empty())
+        return nullptr;
+    auto node = makeNode(NodeType::PlanarPrism);
+    mutableNode(node).planar = profile;
+    mutableNode(node).halfHeight = halfHeightMm;
+    return node;
+}
+
+NodePtr PlanarHeight(const std::shared_ptr<const BakedPlanarField>& heights, double offsetMm)
+{
+    if (!heights || heights->values.empty())
+        return nullptr;
+    auto node = makeNode(NodeType::PlanarHeight);
+    mutableNode(node).planar = heights;
+    mutableNode(node).value = offsetMm;
+    return node;
+}
+
+void SquaredDistanceTransform(std::vector<double>& squared, const std::array<int, 3>& dims)
+{
+    squaredDistanceTransform(squared, dims);
+}
+
 NodePtr Field(const std::shared_ptr<const BakedField>& field)
 {
     if (!field || field->values.empty())
@@ -511,6 +552,22 @@ double Value(const ImplicitNode& node, const Vec3& p)
     }
     case NodeType::MeshField:
         return node.field ? node.field->At(p) : kInf;
+    case NodeType::PlanarPrism: {
+        if (!node.planar)
+            return kInf;
+        const Vec3 d = sub(p, node.planar->origin);
+        const double planar = node.planar->At(dot(d, node.planar->uAxis), dot(d, node.planar->vAxis));
+        if (!(node.halfHeight > 0.0))
+            return planar;
+        return extrude(planar, std::abs(dot(d, node.planar->axis)) - node.halfHeight);
+    }
+    case NodeType::PlanarHeight: {
+        if (!node.planar)
+            return kInf;
+        const Vec3 d = sub(p, node.planar->origin);
+        const double height = node.planar->At(dot(d, node.planar->uAxis), dot(d, node.planar->vAxis));
+        return (height - node.value) - dot(d, node.planar->axis);
+    }
     case NodeType::Union: {
         double best = kInf;
         for (const NodePtr& child : node.children)
@@ -575,6 +632,19 @@ bool Bounds(const NodePtr& node, double bounds[6])
             return false;
         sphereBounds(bounds, n.center, std::hypot(n.radius, n.halfHeight));
         return true;
+    case NodeType::PlanarPrism: {
+        if (!n.planar || !(n.halfHeight > 0.0))
+            return false;
+        const BakedPlanarField& f = *n.planar;
+        resetBounds(bounds);
+        for (double u : {f.u0, f.u0 + (f.nu - 1) * f.spacingMm})
+            for (double v : {f.v0, f.v0 + (f.nv - 1) * f.spacingMm})
+                for (double a : {-n.halfHeight, n.halfHeight})
+                    growBounds(bounds, add(f.origin, add(mul(f.uAxis, u), add(mul(f.vAxis, v), mul(f.axis, a)))));
+        return true;
+    }
+    case NodeType::PlanarHeight:
+        return false;
     case NodeType::MeshField: {
         if (!n.field)
             return false;

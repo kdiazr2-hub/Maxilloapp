@@ -226,19 +226,46 @@ private:
     void clearGuideRegion();
     void clearGuideSlotEnds();
     void clearGuideHoles();
-    void setGuidePointMode(int mode); // 0 none, 1 region, 2 slot ends, 3 holes
+    void setGuidePointMode(int mode); // 0 none, 1 region, 2 slot ends, 3 holes, 4 place a figure
     void onGuidePointPicked(int actorLabel, double x, double y, double z);
     void rebuildGuideMarkers();
     void updateGuideUi();
     void syncGuideView();
     void applyGuideThicknessColors();
+    void setGuideType(GuideType type);
+    void updateGuideFigureInputs();
+    GuideFigure guideFigureFromInputs() const;
+    void refreshGuideFigureList();
+    void importGuideFigure();
+    void removeGuideFigure();
+    void setGuideFigureGizmo(bool active);
+    void onGuideGizmoUpdated(int label, vtkSmartPointer<vtkPolyData> mesh);
     // Cuts the guide can carry a slot for: remembered when an osteotomy is executed.
-    void rememberOsteotomyCut(const QString& name, const OsteotomyPath& path);
+    void rememberOsteotomyCut(const QString& name, const OsteotomyPath& path, GuideType type);
     QJsonObject guidePlanJson() const;
     void restoreGuidePlan(const ProjectState& state);
 
+    struct GuideCutOption
+    {
+        QString name;
+        OsteotomyPath path;
+        GuideType type = GuideType::LeFort;
+    };
+
     Mesh3DView* m_guideView = nullptr;
-    QListWidget* m_guideSourceList = nullptr;
+    QComboBox* m_guideTypeCombo = nullptr;
+    QLabel* m_guideSourcesLabel = nullptr;
+    QDoubleSpinBox* m_guideCornerSpin = nullptr;
+    QComboBox* m_guideFigureShapeCombo = nullptr;
+    QComboBox* m_guideFigureOperationCombo = nullptr;
+    QDoubleSpinBox* m_guideFigureDiameterSpin = nullptr;
+    QDoubleSpinBox* m_guideFigureLengthSpin = nullptr;
+    QDoubleSpinBox* m_guideFigureWidthSpin = nullptr;
+    QDoubleSpinBox* m_guideFigureHeightSpin = nullptr;
+    QDoubleSpinBox* m_guideFigureDepthSpin = nullptr;
+    QListWidget* m_guideFigureList = nullptr;
+    QPushButton* m_guidePlaceFigureButton = nullptr;
+    QPushButton* m_guideMoveFigureButton = nullptr;
     QListWidget* m_guideCutList = nullptr;
     QPushButton* m_guideWrapButton = nullptr;
     QPushButton* m_guideRegionButton = nullptr;
@@ -260,7 +287,7 @@ private:
     GuidePreparation m_guidePrepared;
     vtkSmartPointer<vtkPolyData> m_guideWrapMesh;
     vtkSmartPointer<vtkPolyData> m_guideMesh;
-    std::vector<std::pair<QString, OsteotomyPath>> m_guideCuts;
+    std::vector<GuideCutOption> m_guideCuts; // all remembered cuts; the list shows those of the guide type
     std::vector<std::array<double, 3>> m_guidePendingEnds;
     int m_guidePointMode = 0;
 

@@ -1,7 +1,14 @@
 #include "GuideDesignCore.h"
 
+#include <vtkCubeSource.h>
+#include <vtkCylinderSource.h>
+#include <vtkMatrix4x4.h>
 #include <vtkPolyData.h>
 #include <vtkPolyDataConnectivityFilter.h>
+#include <vtkSphereSource.h>
+#include <vtkTransform.h>
+#include <vtkTransformPolyDataFilter.h>
+#include <vtkTriangleFilter.h>
 
 #include <algorithm>
 #include <cmath>
@@ -20,6 +27,24 @@ int shellsOf(vtkPolyData* mesh)
     connectivity->Update();
     return connectivity->GetNumberOfExtractedRegions();
 }
+
+vtkSmartPointer<vtkMatrix4x4> toMatrix(const std::array<double, 16>& m)
+{
+    auto matrix = vtkSmartPointer<vtkMatrix4x4>::New();
+    matrix->DeepCopy(m.data());
+    return matrix;
+}
+
+Vec3 normalized(const Vec3& v, const Vec3& fallback)
+{
+    const double len = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    return len > 1e-9 ? Vec3{v[0] / len, v[1] / len, v[2] / len} : fallback;
+}
+
+Vec3 cross(const Vec3& a, const Vec3& b)
+{
+    return {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
+}
 } // namespace
 
 namespace GuideDesignCore
@@ -37,7 +62,8 @@ GuidePreparation Prepare(vtkPolyData* wrap, const GuideDesignParams& params, con
 
     QString error;
     // The field must reach past the far face of the wall and past the slots.
-    prepared.wrapField = ImplicitCore::BakeMeshField(wrap, detail, clearance + thickness + 3.0, cancel, &error);
+    prepared.wrapField =
+        ImplicitCore::BakeMeshField(wrap, detail, std::max(6.0, clearance + thickness + 3.0), cancel, &error);
     if (!prepared.wrapField) {
         prepared.error = error.isEmpty() ? QStringLiteral("No se pudo medir la envolvente.") : error;
         return prepared;
@@ -58,9 +84,113 @@ std::array<double, 3> SurfaceNormalAt(const GuidePreparation& prepared, const st
     return GuideBaseCore::NormalAt(*prepared.wrapField, point);
 }
 
+std::array<double, 16> FrameAt(const std::array<double, 3>& center, const std::array<double, 3>& zAxis)
+{
+    const Vec3 z = normalized(zAxis, {0.0, 0.0, 1.0});
+    const Vec3 helper = std::abs(z[2]) < 0.9 ? Vec3{0.0, 0.0, 1.0} : Vec3{1.0, 0.0, 0.0};
+    const Vec3 x = normalized(cross(helper, z), {1.0, 0.0, 0.0});
+    const Vec3 y = cross(z, x);
+    return {x[0], y[0], z[0], center[0], x[1], y[1], z[1], center[1], x[2], y[2], z[2], center[2], 0.0, 0.0, 0.0, 1.0};
+}
+
+ImplicitCore::NodePtr FigureNode(const GuideFigure& figure, double detailMm, QString* error)
+{
+    ImplicitCore::NodePtr local;
+    switch (figure.shape) {
+    case GuideFigureShape::Cylinder:
+        local = ImplicitCore::Cylinder({0.0, 0.0, 0.0}, {0.0, 0.0, 1.0}, 0.5 * std::max(0.05, figure.diameterMm),
+                                       0.5 * std::max(0.05, figure.lengthMm));
+        break;
+    case GuideFigureShape::Box:
+        local = ImplicitCore::Box({0.0, 0.0, 0.0}, {0.5 * std::max(0.05, figure.widthMm),
+                                                   0.5 * std::max(0.05, figure.heightMm),
+                                                   0.5 * std::max(0.05, figure.depthMm)});
+        break;
+    case GuideFigureShape::Sphere:
+        local = ImplicitCore::Sphere({0.0, 0.0, 0.0}, 0.5 * std::max(0.05, figure.diameterMm));
+        break;
+    case GuideFigureShape::Mesh:
+        if (!figure.mesh || figure.mesh->GetNumberOfPolys() == 0) {
+            if (error)
+                *error = QStringLiteral("La figura importada no tiene geometría.");
+            return nullptr;
+        }
+        local = ImplicitCore::MeshField(figure.mesh, std::max(0.1, detailMm), 2.0, nullptr, error);
+        break;
+    }
+    if (!local)
+        return nullptr;
+    return ImplicitCore::Transformed(local, toMatrix(figure.matrix));
+}
+
+vtkSmartPointer<vtkPolyData> FigurePreview(const GuideFigure& figure)
+{
+    vtkSmartPointer<vtkPolyData> local;
+    switch (figure.shape) {
+    case GuideFigureShape::Cylinder: {
+        // vtkCylinderSource runs along y; the figure's length is along local z.
+        auto source = vtkSmartPointer<vtkCylinderSource>::New();
+        source->SetRadius(0.5 * figure.diameterMm);
+        source->SetHeight(figure.lengthMm);
+        source->SetResolution(40);
+        source->Update();
+        auto toZ = vtkSmartPointer<vtkTransform>::New();
+        toZ->RotateX(90.0);
+        auto filter = vtkSmartPointer<vtkTransformPolyDataFilter>::New();
+        filter->SetInputConnection(source->GetOutputPort());
+        filter->SetTransform(toZ);
+        filter->Update();
+        local = filter->GetOutput();
+        break;
+    }
+    case GuideFigureShape::Box: {
+        auto source = vtkSmartPointer<vtkCubeSource>::New();
+        source->SetXLength(figure.widthMm);
+        source->SetYLength(figure.heightMm);
+        source->SetZLength(figure.depthMm);
+        source->Update();
+        local = source->GetOutput();
+        break;
+    }
+    case GuideFigureShape::Sphere: {
+        auto source = vtkSmartPointer<vtkSphereSource>::New();
+        source->SetRadius(0.5 * figure.diameterMm);
+        source->SetThetaResolution(32);
+        source->SetPhiResolution(24);
+        source->Update();
+        local = source->GetOutput();
+        break;
+    }
+    case GuideFigureShape::Mesh:
+        local = figure.mesh;
+        break;
+    }
+    if (!local)
+        return nullptr;
+    auto triangles = vtkSmartPointer<vtkTriangleFilter>::New();
+    triangles->SetInputData(local);
+    auto place = vtkSmartPointer<vtkTransform>::New();
+    place->SetMatrix(toMatrix(figure.matrix));
+    auto filter = vtkSmartPointer<vtkTransformPolyDataFilter>::New();
+    filter->SetInputConnection(triangles->GetOutputPort());
+    filter->SetTransform(place);
+    filter->Update();
+    auto out = vtkSmartPointer<vtkPolyData>::New();
+    out->DeepCopy(filter->GetOutput());
+    return out;
+}
+
 GuideDesignResult Build(const GuidePreparation& prepared, const GuideContour& contour,
                         const std::vector<GuideSlot>& slotPlan, const std::vector<GuideFixationHole>& holes,
                         const GuideDesignParams& params, const std::atomic<bool>* cancel)
+{
+    return Build(prepared, contour, slotPlan, holes, {}, params, cancel);
+}
+
+GuideDesignResult Build(const GuidePreparation& prepared, const GuideContour& contour,
+                        const std::vector<GuideSlot>& slotPlan, const std::vector<GuideFixationHole>& holes,
+                        const std::vector<GuideFigure>& figures, const GuideDesignParams& params,
+                        const std::atomic<bool>* cancel)
 {
     GuideDesignResult result;
     if (!prepared.ok || !prepared.wrapField) {
@@ -71,24 +201,40 @@ GuideDesignResult Build(const GuidePreparation& prepared, const GuideContour& co
         return result;
 
     const double detail = std::clamp(params.base.smallestDetailMm, 0.05, 2.0);
-    Vec3 axis{0.0, 0.0, 0.0};
-    for (const auto& point : contour) {
-        const auto normal = GuideBaseCore::NormalAt(*prepared.wrapField, point);
-        axis = {axis[0] + normal[0], axis[1] + normal[1], axis[2] + normal[2]};
+    const GuideRegion region = GuideBaseCore::MakeRegion(prepared.wrapField, contour, params.base);
+    if (!region.valid) {
+        result.error = region.error;
+        return result;
     }
-    const double axisLength = std::sqrt(axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]);
-    result.projectionAxis = axisLength > 1e-9
-                                ? Vec3{axis[0] / axisLength, axis[1] / axisLength, axis[2] / axisLength}
-                                : Vec3{0.0, 0.0, 1.0};
-
-    const auto base = GuideBaseCore::BaseNode(prepared.wrapField, contour, params.base, result.projectionAxis,
-                                              prepared.spanMm);
+    result.projectionAxis = region.axis;
+    const auto base = GuideBaseCore::BaseNode(prepared.wrapField, region, params.base, prepared.spanMm);
     if (!base) {
         result.error = QStringLiteral("No se pudo construir la base de la guía.");
         return result;
     }
+
+    // Added figures grow the guide before anything is cut from it.
+    std::vector<ImplicitCore::NodePtr> solids{base};
+    std::vector<ImplicitCore::NodePtr> cutters;
+    int added = 0, subtracted = 0;
+    for (const GuideFigure& figure : figures) {
+        QString figureError;
+        const auto node = FigureNode(figure, detail, &figureError);
+        if (!node) {
+            result.error = figureError.isEmpty() ? QStringLiteral("Una figura no tiene geometría.") : figureError;
+            return result;
+        }
+        if (figure.operation == GuideFigureOperation::Add) {
+            solids.push_back(node);
+            ++added;
+        } else {
+            cutters.push_back(node);
+            ++subtracted;
+        }
+    }
+    const auto grown = ImplicitCore::Union(solids);
     double bounds[6] = {};
-    if (!ImplicitCore::Bounds(base, bounds)) {
+    if (!ImplicitCore::Bounds(grown, bounds)) {
         result.error = QStringLiteral("La base de la guía no está acotada.");
         return result;
     }
@@ -97,9 +243,7 @@ GuideDesignResult Build(const GuidePreparation& prepared, const GuideContour& co
     // Every slot is clipped to the marked region shrunk by the edge margin, so material is always left
     // around it and the guide comes out in one piece.
     const double edgeMargin = std::clamp(params.edgeMarginMm, 0.0, 20.0);
-    const auto insideRegion =
-        ImplicitCore::Offset(GuideBaseCore::RegionPrism(contour, result.projectionAxis, prepared.spanMm), -edgeMargin);
-    std::vector<ImplicitCore::NodePtr> cutters;
+    const auto insideRegion = ImplicitCore::Offset(GuideBaseCore::RegionPrism(region, prepared.spanMm), -edgeMargin);
     for (const GuideSlot& slot : slotPlan) {
         QString pathError;
         const auto slab = CutSlotCore::SlotNode(slot.path, bounds, params.slot, cancel, &pathError);
@@ -129,7 +273,7 @@ GuideDesignResult Build(const GuidePreparation& prepared, const GuideContour& co
         cutters.push_back(ImplicitCore::Cylinder(hole.center, hole.axis, 0.5 * hole.diameterMm, 0.5 * holeLength));
     }
 
-    const auto solid = cutters.empty() ? base : ImplicitCore::Subtract(base, ImplicitCore::Union(cutters));
+    const auto solid = cutters.empty() ? grown : ImplicitCore::Subtract(grown, ImplicitCore::Union(cutters));
     ImplicitCore::PolygonizeOptions options;
     options.smoothingIterations = params.base.smoothingIterations;
     options.repair = true;
@@ -142,11 +286,13 @@ GuideDesignResult Build(const GuidePreparation& prepared, const GuideContour& co
     result.spacingMm = detail;
     result.pieces = shellsOf(result.mesh);
     result.report = QStringLiteral("Guía: espesor %1 mm, holgura %2 mm, %3 ranura(s), %4 agujero(s), "
-                                   "%5 pieza(s), %6 triángulos.")
+                                   "%5 figura(s) sumada(s), %6 restada(s), %7 pieza(s), %8 triángulos.")
                         .arg(std::clamp(params.base.thicknessMm, 0.3, 20.0), 0, 'f', 2)
                         .arg(std::clamp(params.base.clearanceMm, 0.0, 5.0), 0, 'f', 2)
                         .arg(slotPlan.size())
                         .arg(holes.size())
+                        .arg(added)
+                        .arg(subtracted)
                         .arg(result.pieces)
                         .arg(result.mesh->GetNumberOfPolys());
     result.ok = true;

@@ -824,7 +824,8 @@ public:
         std::cout << "Orientation with bones only OK\n";
     }
 
-    // GUIAS: pick the models, wrap them, mark the support region, slot the planned cut, build and save.
+    // GUIAS: choose the guide, wrap its models, mark the support region, slot the planned cut, add a Boolean
+    // figure, build and save.
     static void runGuidesWorkflow()
     {
         MainWindow window;
@@ -833,14 +834,19 @@ public:
         window.show();
         settle();
 
-        // A repositioned Le Fort segment to sit on: a wall whose face looks forward (+y).
+        // The Le Fort segment in its planned position, a wall whose face looks forward (+y), and the cranial base
+        // above it.
         const auto wall = boxMesh({-25.0, 25.0, -8.0, 0.0, -5.0, 25.0}, false, false);
+        const auto cranium = boxMesh({-30.0, 30.0, -20.0, -2.0, 26.0, 45.0}, false, false);
         window.addObjectEntry(QStringLiteral("Segmento Le Fort I"), QColor(230, 220, 200), kLeFortSegLabel);
         window.setRepositionMeshForLabel(kLeFortSegLabel, wall);
+        window.addObjectEntry(QStringLiteral("Base craneal"), QColor(220, 210, 190), kLeFortCranialLabel);
+        window.setRepositionMeshForLabel(kLeFortCranialLabel, cranium);
         // A planned Le Fort cut, as the osteotomy wizard would leave it.
         window.rememberOsteotomyCut(QStringLiteral("Le Fort I"),
                                     OsteotomyCore::LeFortPath({{{-10.0, 5.0, 9.4}, {10.0, 5.0, 9.6},
-                                                                {-20.0, -5.0, 9.2}, {20.0, -5.0, 9.3}}}));
+                                                                {-20.0, -5.0, 9.2}, {20.0, -5.0, 9.3}}}),
+                                    GuideType::LeFort);
 
         for (auto* tab : window.findChildren<QToolButton*>(QStringLiteral("MT")))
             if (tab->text() == QStringLiteral("GUIAS"))
@@ -852,23 +858,21 @@ public:
         require(window.findChild<QWidget*>(QStringLiteral("GuideControlPanel")) != nullptr,
                 "the guides side panel is missing");
 
-        // 1. The models on offer, with the visible one already ticked.
-        require(window.m_guideSourceList->count() > 0, "no models offered for the envelope");
-        bool leFortOffered = false;
-        for (int row = 0; row < window.m_guideSourceList->count(); ++row) {
-            auto* item = window.m_guideSourceList->item(row);
-            if (item->data(Qt::UserRole).toInt() == kLeFortSegLabel) {
-                item->setCheckState(Qt::Checked);
-                leFortOffered = true;
-            }
-        }
-        require(leFortOffered, "the repositioned segment is not offered for the envelope");
+        // 1. A Le Fort guide always wraps the Le Fort segment and the cranial base.
+        require(window.m_guideTypeCombo->currentData().toInt() == static_cast<int>(GuideType::LeFort),
+                "the guide does not start as a Le Fort guide");
+        require(window.m_guideSourcesLabel->text().contains(QStringLiteral("Segmento Le Fort I")) &&
+                    window.m_guideSourcesLabel->text().contains(QStringLiteral("Base craneal")),
+                "the Le Fort guide does not name its two models: " + window.m_guideSourcesLabel->text().toStdString());
         window.m_guideDetailSpin->setValue(0.5); // coarse: this is a wiring test, not a geometry one
         window.computeGuideWrap();
         settle();
         require(window.m_guideWrapMesh && window.m_guideWrapMesh->GetNumberOfPolys() > 0, "the envelope was not built");
+        require(window.m_guidePlan.sourceLabels == std::vector<int>({kLeFortSegLabel, kLeFortCranialLabel}),
+                "the envelope was not built from the Le Fort segment and the cranial base");
+        require(window.m_guidePrepared.ok, "the envelope was not measured for marking");
 
-        // 2. The support region, marked on the face of the wall.
+        // 2. The support region, marked on the face of the wall, is drawn rounded on the surface.
         window.m_guideRegionButton->setChecked(true);
         require(window.m_guidePointMode == 1, "marking the region did not switch the picking mode");
         for (const auto& p : std::vector<std::array<double, 3>>{{-15.0, 0.0, 2.0}, {15.0, 0.0, 2.0},
@@ -876,6 +880,7 @@ public:
             window.onGuidePointPicked(0, p[0], p[1], p[2]);
         window.m_guideRegionButton->setChecked(false);
         require(window.m_guidePlan.contour.size() == 4, "the marked region was not collected");
+        require(window.m_guideView->hasOverlay(kGuideRegionOverlayKey), "the rounded outline is not drawn");
 
         // 3. The planned cut gets a slot, with the ends the user places.
         require(window.m_guideCutList->count() == 1, "the planned osteotomy is not offered as a slot");
@@ -889,13 +894,37 @@ public:
         require(window.m_guideCutList->item(0)->checkState() == Qt::Checked,
                 "placing the ends did not tick the osteotomy");
 
-        // 4. A fixation hole, drilled along the surface normal.
+        // 4. A Boolean figure: a thin box subtracted through the wall, placed on the surface with exact measurements.
+        window.m_guideFigureShapeCombo->setCurrentIndex(
+            window.m_guideFigureShapeCombo->findData(static_cast<int>(GuideFigureShape::Box)));
+        window.m_guideFigureOperationCombo->setCurrentIndex(
+            window.m_guideFigureOperationCombo->findData(static_cast<int>(GuideFigureOperation::Subtract)));
+        require(window.m_guideFigureWidthSpin->isVisibleTo(&window) && !window.m_guideFigureDiameterSpin->isVisibleTo(&window),
+                "the box does not show its own measurements");
+        window.m_guideFigureWidthSpin->setValue(6.0);
+        window.m_guideFigureHeightSpin->setValue(1.0);
+        window.m_guideFigureDepthSpin->setValue(10.0);
+        window.m_guidePlaceFigureButton->setChecked(true);
+        window.onGuidePointPicked(0, 8.0, 0.0, 5.0);
+        window.m_guidePlaceFigureButton->setChecked(false);
+        require(window.m_guidePlan.figures.size() == 1 && window.m_guideFigureList->count() == 1,
+                "the figure was not placed");
+        require(window.m_guideView->meshData(-560) != nullptr, "the figure is not previewed in the view");
+        // Moving it with the gizmo and fixing it again keeps it in the plan.
+        window.m_guideFigureList->setCurrentRow(0);
+        window.m_guideMoveFigureButton->setChecked(true);
+        require(window.m_guideView->hasGizmo(), "the gizmo did not start on the figure");
+        window.m_guideMoveFigureButton->setChecked(false);
+        require(!window.m_guideView->hasGizmo() && window.m_guidePlan.figures.size() == 1,
+                "fixing the figure lost it");
+
+        // 5. A fixation hole, drilled along the surface normal.
         window.m_guideHoleButton->setChecked(true);
         window.onGuidePointPicked(0, 0.0, 0.0, 15.0);
         window.m_guideHoleButton->setChecked(false);
         require(window.m_guidePlan.holes.size() == 1, "the fixation hole was not recorded");
 
-        // 5. Build: one piece, shown in the view and listed as an object.
+        // 6. Build: one piece, shown in the view and listed as an object.
         window.m_guideThicknessSpin->setValue(2.5);
         window.buildGuideMesh();
         settle();
@@ -903,6 +932,8 @@ public:
         require(window.objectEntryExists(kGuideMeshLabel), "the guide is not in the object list");
         require(window.m_guideView->meshData(objectActorKey(kGuideMeshLabel)) != nullptr,
                 "the guide is not shown in the GUIAS view");
+        require(window.m_guideReportLabel->text().contains(QStringLiteral("1 restada")),
+                "the report does not count the subtracted figure: " + window.m_guideReportLabel->text().toStdString());
         require(window.m_guideExportButton->isEnabled(), "the guide cannot be exported");
         window.m_guideThicknessCheck->setChecked(true); // thickness map must not throw
         settle();
@@ -918,9 +949,20 @@ public:
         settle();
         reopened.restoreGuidePlan(state);
         require(reopened.m_guidePlan.contour.size() == 4 && reopened.m_guidePlan.slotPlan.size() == 1 &&
-                    reopened.m_guidePlan.holes.size() == 1,
+                    reopened.m_guidePlan.holes.size() == 1 && reopened.m_guidePlan.figures.size() == 1,
                 "the guide plan did not survive the project");
         require(reopened.m_guideCutList->count() == 1, "the reloaded plan does not offer its cut again");
+        require(reopened.m_guideFigureList->count() == 1, "the reloaded plan does not list its figure");
+
+        // A chin guide wraps other models and only offers the genioplasty: the Le Fort cut disappears from the list.
+        window.m_guideTypeCombo->setCurrentIndex(window.m_guideTypeCombo->findData(static_cast<int>(GuideType::Chin)));
+        settle();
+        require(window.m_guidePlan.type == GuideType::Chin && window.m_guidePlan.contour.empty() &&
+                    !window.m_guideWrapMesh,
+                "switching to a chin guide did not start its envelope and region again");
+        require(window.m_guideCutList->count() == 0, "a chin guide offers the Le Fort cut");
+        require(window.m_guideSourcesLabel->text().contains(QStringLiteral("falta")),
+                "the chin guide does not say its models are missing");
         std::cout << "Guides workflow OK\n";
     }
 

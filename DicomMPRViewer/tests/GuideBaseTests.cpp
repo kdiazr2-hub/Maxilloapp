@@ -165,6 +165,64 @@ void testRejectsBadInput()
             "the contour did not survive the JSON round trip");
     require(GuideBaseCore::ContourPolyline(contour)->GetNumberOfLines() == 1, "the contour polyline is missing");
 }
+
+void testStaysOnTheMarkedFace()
+{
+    // A thin wall, 2 mm thick: the marked face is its top. Anything behind it — under the back face — is not the
+    // tissue the user selected, even though it lies within the region and within the wall's reach.
+    const auto plate = boxMesh({-20.0, 20.0, -20.0, 20.0, -2.0, 0.0}, false, false);
+    const GuideContour square = {{-12.0, -12.0, 0.0}, {12.0, -12.0, 0.0}, {12.0, 12.0, 0.0}, {-12.0, 12.0, 0.0}};
+    const GuideBaseResult result = GuideBaseCore::CreateBase(plate, square, params(2.5, 0.3, 0.25));
+    require(result.ok, "the base on the thin wall failed: " + result.error.toStdString());
+    require(result.projectionAxis[2] > 0.95, "the axis does not point out of the marked face");
+    double b[6] = {};
+    result.mesh->GetBounds(b);
+    require(b[4] > -0.6, "the base grew behind the marked face, down to z = " + std::to_string(b[4]));
+
+    // Marked past the edge of the wall: the rim wraps the edge by no more than the wall, never down the back.
+    const GuideContour pastEdge = {{-26.0, -12.0, 0.0}, {12.0, -12.0, 0.0}, {12.0, 12.0, 0.0}, {-26.0, 12.0, 0.0}};
+    const GuideBaseResult lip = GuideBaseCore::CreateBase(plate, pastEdge, params(2.5, 0.3, 0.25));
+    require(lip.ok, "the base marked past the edge failed: " + lip.error.toStdString());
+    lip.mesh->GetBounds(b);
+    const double wallReach = 0.3 + 2.5 + 0.7;
+    require(b[4] > -wallReach, "the rim ran down the side past its own thickness, to z = " + std::to_string(b[4]));
+}
+
+void testRoundedOutline()
+{
+    const auto plate = boxMesh({-20.0, 20.0, -20.0, 20.0, -2.0, 0.0}, false, false);
+    const GuideContour square = {{-12.0, -12.0, 0.0}, {12.0, -12.0, 0.0}, {12.0, 12.0, 0.0}, {-12.0, 12.0, 0.0}};
+    GuideBaseParams rounded = params(2.5, 0.0, 0.25);
+    rounded.cornerRadiusMm = 4.0;
+    const GuideBaseResult result = GuideBaseCore::CreateBase(plate, square, rounded);
+    require(result.ok, "the rounded base failed: " + result.error.toStdString());
+    // The square's corners are cut by the radius: nothing reaches the exact corner, but the edges keep their place.
+    double p[3] = {};
+    double nearestCorner = 1e9, farthestEdge = 0.0;
+    for (vtkIdType i = 0; i < result.mesh->GetNumberOfPoints(); ++i) {
+        result.mesh->GetPoint(i, p);
+        nearestCorner = std::min(nearestCorner, std::hypot(12.0 - std::abs(p[0]), 12.0 - std::abs(p[1])));
+        farthestEdge = std::max(farthestEdge, std::abs(p[0]));
+    }
+    require(nearestCorner > 0.3 * rounded.cornerRadiusMm, "the corners of the marked outline were not rounded");
+    require(farthestEdge > 11.0 && farthestEdge < 12.8, "rounding moved the straight edges: " + std::to_string(farthestEdge));
+
+    // The outline shown while marking is the rounded one, laid on the surface.
+    const auto field = ImplicitCore::BakeMeshField(plate, 0.25, 6.0);
+    const GuideRegion region = GuideBaseCore::MakeRegion(field, square, rounded);
+    require(region.valid, "the region could not be made: " + region.error.toStdString());
+    const auto outline = GuideBaseCore::RegionOutline(region, 0.3);
+    require(outline->GetNumberOfPoints() > 20 && outline->GetNumberOfLines() >= 1, "the rounded outline is missing");
+    double ob[6] = {};
+    outline->GetBounds(ob);
+    require(std::abs(ob[4] - 0.3) < 0.4 && std::abs(ob[5] - 0.3) < 0.4, "the outline does not lie on the surface");
+    require(ob[1] < 12.5 && ob[1] > 11.0, "the outline does not follow the marked edge");
+
+    // A region smaller than the rounding is refused with a reason.
+    const GuideContour tiny = {{-1.0, -1.0, 0.0}, {1.0, -1.0, 0.0}, {1.0, 1.0, 0.0}, {-1.0, 1.0, 0.0}};
+    const GuideRegion none = GuideBaseCore::MakeRegion(field, tiny, rounded);
+    require(!none.valid && !none.error.isEmpty(), "a region smaller than the rounding was accepted");
+}
 } // namespace
 
 int main()
@@ -173,6 +231,8 @@ int main()
         {"base follows the anatomy", testBaseFollowsTheAnatomy},
         {"uniform on an oblique wall", testUniformOnAnObliqueWall},
         {"rejects bad input", testRejectsBadInput},
+        {"stays on the marked face", testStaysOnTheMarkedFace},
+        {"rounded outline", testRoundedOutline},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {

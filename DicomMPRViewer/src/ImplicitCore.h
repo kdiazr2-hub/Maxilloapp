@@ -50,6 +50,8 @@ enum class NodeType
     HalfSpace,
     Prism,     // polygon swept along an axis
     MeshField, // baked signed distance grid
+    PlanarPrism,  // 2D baked profile (in its own frame) swept along the frame's axis
+    PlanarHeight, // below a 2D baked height map along the frame's axis (heights - offset - axial)
     Union,
     Intersect,
     Subtract,
@@ -68,6 +70,23 @@ struct BakedField
     double At(const Vec3& p) const;
 };
 
+// A 2D grid in its own frame: a profile's signed distance, or the height of a surface seen along the axis.
+// Read back bilinearly, clamped at the grid edge.
+struct BakedPlanarField
+{
+    std::vector<float> values; // nu * nv
+    int nu = 0;
+    int nv = 0;
+    double u0 = 0.0;
+    double v0 = 0.0;
+    double spacingMm = 1.0;
+    Vec3 origin{0.0, 0.0, 0.0};
+    Vec3 uAxis{1.0, 0.0, 0.0};
+    Vec3 vAxis{0.0, 1.0, 0.0};
+    Vec3 axis{0.0, 0.0, 1.0};
+    double At(double u, double v) const;
+};
+
 struct ImplicitNode;
 using NodePtr = std::shared_ptr<const ImplicitNode>;
 
@@ -84,6 +103,7 @@ struct ImplicitNode
     double value = 0.0;           // offset distance
     std::vector<UV> profile;      // revolved: (radial, axial); prism: polygon in the axis frame
     std::shared_ptr<const BakedField> field;
+    std::shared_ptr<const BakedPlanarField> planar;
     vtkSmartPointer<vtkMatrix4x4> worldToChild; // transform nodes
 };
 
@@ -125,6 +145,11 @@ NodePtr Transformed(const NodePtr& node, vtkMatrix4x4* childToWorld);
 std::shared_ptr<const BakedField> BakeMeshField(vtkPolyData* mesh, double spacingMm, double paddingMm,
                                                 const std::atomic<bool>* cancel = nullptr, QString* error = nullptr);
 NodePtr Field(const std::shared_ptr<const BakedField>& field);
+// The 2D profile swept along the frame's axis, `halfHeightMm` each way (<= 0: infinite).
+NodePtr PlanarPrism(const std::shared_ptr<const BakedPlanarField>& profile, double halfHeightMm);
+// Everything above a height map lowered by `offsetMm`, seen along the frame's axis. Not a true distance,
+// only a limiter: use it inside an intersection.
+NodePtr PlanarHeight(const std::shared_ptr<const BakedPlanarField>& heights, double offsetMm);
 // Samples any field function onto a grid once, so a field that is not a node — an osteotomy path, for
 // instance — can join the tree and still be read back trilinearly instead of called per voxel.
 std::shared_ptr<const BakedField> BakeFunction(const std::function<double(const Vec3&)>& function,
@@ -150,6 +175,9 @@ VoxelMask RasterizeShells(const std::vector<vtkPolyData*>& meshes, double spacin
                           const std::atomic<bool>* cancel = nullptr, QString* error = nullptr);
 // Grows the marked set by a real distance (exact EDT, not a count of voxel steps).
 void DilateMask(VoxelMask& mask, double radiusMm);
+// Exact squared euclidean distance transform, in voxels: `squared` holds 0 on the source set and a large
+// value elsewhere. Works for 2D grids too (dims[2] = 1).
+void SquaredDistanceTransform(std::vector<double>& squared, const std::array<int, 3>& dims);
 // Marks everything the border cannot reach without crossing the mask.
 void FillInteriorFromOutside(VoxelMask& mask);
 // Distance to the boundary voxels of the mask, negative inside.
