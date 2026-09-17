@@ -199,11 +199,23 @@ GuideDesignResult Build(const GuidePreparation& prepared, const GuideContour& co
     }
     if (!GuideBaseCore::ContourValid(contour, &result.error))
         return result;
+    return Build(prepared, GuideBaseCore::MakeRegion(prepared.wrapField, contour, params.base), slotPlan, holes,
+                 figures, params, cancel);
+}
 
+GuideDesignResult Build(const GuidePreparation& prepared, const GuideRegion& region,
+                        const std::vector<GuideSlot>& slotPlan, const std::vector<GuideFixationHole>& holes,
+                        const std::vector<GuideFigure>& figures, const GuideDesignParams& params,
+                        const std::atomic<bool>* cancel)
+{
+    GuideDesignResult result;
+    if (!prepared.ok || !prepared.wrapField) {
+        result.error = prepared.error.isEmpty() ? QStringLiteral("La envolvente no está preparada.") : prepared.error;
+        return result;
+    }
     const double detail = std::clamp(params.base.smallestDetailMm, 0.05, 2.0);
-    const GuideRegion region = GuideBaseCore::MakeRegion(prepared.wrapField, contour, params.base);
     if (!region.valid) {
-        result.error = region.error;
+        result.error = region.error.isEmpty() ? QStringLiteral("Marque la zona de apoyo de la guía.") : region.error;
         return result;
     }
     result.projectionAxis = region.axis;

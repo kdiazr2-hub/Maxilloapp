@@ -104,6 +104,7 @@ QJsonObject ToJson(const GuidePlan& plan)
                      {QStringLiteral("holeLengthMm"), plan.design.holeLengthMm},
                      {QStringLiteral("edgeMarginMm"), plan.design.edgeMarginMm}}},
         {QStringLiteral("contour"), GuideBaseCore::ContourToJson(plan.contour)},
+        {QStringLiteral("paint"), GuideBaseCore::PaintToJson(plan.paint)},
         {QStringLiteral("slots"), slotArray},
         {QStringLiteral("holes"), holes},
         {QStringLiteral("figures"), figures}};
@@ -141,6 +142,7 @@ GuidePlan FromJson(const QJsonObject& object)
     plan.design.edgeMarginMm = design.value(QStringLiteral("edgeMarginMm")).toDouble(plan.design.edgeMarginMm);
 
     plan.contour = GuideBaseCore::ContourFromJson(object.value(QStringLiteral("contour")).toArray());
+    plan.paint = GuideBaseCore::PaintFromJson(object.value(QStringLiteral("paint")).toArray());
 
     for (const QJsonValue& value : object.value(QStringLiteral("slots")).toArray()) {
         const QJsonObject o = value.toObject();

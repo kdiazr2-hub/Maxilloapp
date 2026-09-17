@@ -124,6 +124,11 @@ GuideDesignResult Build(const GuidePreparation& prepared, const GuideContour& co
                         const std::vector<GuideSlot>& slotPlan, const std::vector<GuideFixationHole>& holes,
                         const std::vector<GuideFigure>& figures, const GuideDesignParams& params = {},
                         const std::atomic<bool>* cancel = nullptr);
+// With the region already made — brushed (`GuideBaseCore::MakeBrushRegion`) or marked with points.
+GuideDesignResult Build(const GuidePreparation& prepared, const GuideRegion& region,
+                        const std::vector<GuideSlot>& slotPlan, const std::vector<GuideFixationHole>& holes,
+                        const std::vector<GuideFigure>& figures, const GuideDesignParams& params = {},
+                        const std::atomic<bool>* cancel = nullptr);
 // Without figures.
 GuideDesignResult Build(const GuidePreparation& prepared, const GuideContour& contour,
                         const std::vector<GuideSlot>& slotPlan, const std::vector<GuideFixationHole>& holes,

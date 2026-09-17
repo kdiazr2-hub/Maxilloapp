@@ -223,6 +223,80 @@ void testRoundedOutline()
     const GuideRegion none = GuideBaseCore::MakeRegion(field, tiny, rounded);
     require(!none.valid && !none.error.isEmpty(), "a region smaller than the rounding was accepted");
 }
+
+// Builds the base of a brushed region on its own, as GuideDesignCore does.
+vtkSmartPointer<vtkPolyData> brushedBase(vtkPolyData* wrap, const GuideBrushPaint& paint, const GuideBaseParams& p,
+                                        GuideRegion* regionOut = nullptr)
+{
+    const auto field = ImplicitCore::BakeMeshField(wrap, p.smallestDetailMm, 6.0);
+    const GuideRegion region = GuideBaseCore::MakeBrushRegion(field, paint, p);
+    if (regionOut)
+        *regionOut = region;
+    if (!region.valid)
+        return nullptr;
+    const auto node = GuideBaseCore::BaseNode(field, region, p, 80.0);
+    double bounds[6] = {};
+    if (!ImplicitCore::Bounds(node, bounds))
+        return nullptr;
+    ImplicitCore::PolygonizeOptions options;
+    options.smoothingIterations = 0;
+    options.repair = false; // volumes are compared
+    const ImplicitCore::BuildResult built = ImplicitCore::Build(node, bounds, p.smallestDetailMm, options);
+    return built.ok ? built.mesh : nullptr;
+}
+
+void testBrushedRegion()
+{
+    // A thin wall: the brush paints its top face only.
+    const auto plate = boxMesh({-25.0, 25.0, -25.0, 25.0, -2.0, 0.0}, false, false);
+    GuideBaseParams p = params(2.5, 0.2, 0.25);
+    const double radius = 4.0;
+    GuideBrushPaint paint;
+    for (double x = -8.0; x <= 8.0; x += 2.0) // a stroke along x, painted in two passes
+        for (double y : {-2.0, 2.0})
+            paint.push_back({{x, y, 0.0}, radius, false});
+
+    GuideRegion region;
+    const auto base = brushedBase(plate, paint, p, &region);
+    require(region.valid, "the brushed region was refused: " + region.error.toStdString());
+    require(region.axis[2] > 0.95, "the brushed patch does not face out of the wall");
+    require(base && base->GetNumberOfPolys() > 0, "the brushed base is empty");
+    double b[6] = {};
+    base->GetBounds(b);
+    require(b[4] > -0.6, "the brushed base grew behind the wall, down to z = " + std::to_string(b[4]));
+    require(b[5] < 0.2 + 2.5 + 0.6, "the brushed base is thicker than the wall");
+    // It covers the painted band — the dabs' discs — and not more.
+    require(b[0] > -8.0 - radius - 0.8 && b[1] < 8.0 + radius + 0.8 && b[2] > -2.0 - radius - 0.8 &&
+                b[3] < 2.0 + radius + 0.8,
+            "the brushed base spills past the painted dabs");
+    require(b[1] > 8.0 + radius - 1.0 && b[3] > 2.0 + radius - 1.0, "the brushed base does not reach the painted edge");
+    // Area of a stadium 16 mm long, 4 + 2r wide, walled at 2.5 mm.
+    const double area = 16.0 * (4.0 + 2.0 * radius) + kPiValue * (2.0 + radius) * (2.0 + radius);
+    const double volume = volumeOf(base);
+    require(volume > 0.7 * area * 2.5 && volume < 1.2 * area * 2.5,
+            "the brushed base volume " + std::to_string(volume) + " does not match the painted band");
+
+    // Erasing with the brush takes the material away where it passes.
+    GuideBrushPaint erased = paint;
+    erased.push_back({{0.0, 0.0, 0.0}, 3.0, true});
+    const auto withHole = brushedBase(plate, erased, p);
+    require(withHole && volumeOf(withHole) < volume - 0.5 * kPiValue * 9.0 * 2.5,
+            "erasing with the brush did not remove material");
+    const auto holeField = ImplicitCore::BakeMeshField(withHole, 0.15, 3.0);
+    require(holeField->At({0.0, 0.0, 1.45}) > 0.0, "the erased spot is still solid");
+
+    // Painting the same dabs in another order gives the same guide.
+    GuideBrushPaint reversed(paint.rbegin(), paint.rend());
+    const auto again = brushedBase(plate, reversed, p);
+    require(again && std::abs(volumeOf(again) - volume) < 0.01 * volume, "the painting order changed the guide");
+
+    // Only erasing is not a region; the paint survives JSON.
+    require(!GuideBaseCore::PaintValid({{{0.0, 0.0, 0.0}, 3.0, true}}), "a region made only of erasing was accepted");
+    const GuideBrushPaint back = GuideBaseCore::PaintFromJson(GuideBaseCore::PaintToJson(erased));
+    require(back.size() == erased.size() && back.back().erase && back.back().center == erased.back().center &&
+                std::abs(back.front().radiusMm - radius) < 1e-9,
+            "the brush paint did not survive JSON");
+}
 } // namespace
 
 int main()
@@ -233,6 +307,7 @@ int main()
         {"rejects bad input", testRejectsBadInput},
         {"stays on the marked face", testStaysOnTheMarkedFace},
         {"rounded outline", testRoundedOutline},
+        {"brushed region", testBrushedRegion},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {

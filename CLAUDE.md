@@ -95,6 +95,11 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   own thickness, so it never runs behind a thin wall or down the far side. Base = prism ∧ layer of the wrap's real
   signed distance (`clearance <= d <= clearance + thickness`, uniform on oblique walls) ∧ that height limit.
   `RegionOutline` lays the rounded outline on the surface for display. Contour persists via `ContourToJson`.
+  The UI marks the region with a brush instead (user's request, 2026-09-16: the point polygon depended on click
+  order and self-intersected): `MakeBrushRegion` takes `GuideBrushStroke` dabs (centre, radius, erase) applied in
+  order; the outline is the dabs seen along the axis, and each dab is also a column along the local surface normal
+  through the whole wall, baked into `GuideRegion::paint` and intersected in `BaseNode`, so the base covers exactly
+  the painted surface. Saved as `paint` in the plan.
 - `CutSlotCore::CutSlots` subtracts a slab of `OsteotomyCore`'s own path field from the base, so slot and planned
   osteotomy coincide by construction. `OsteotomyCore::PreparePathField` / `FieldAt` build the frame once for grid
   sweeps (the older `PathField` rebuilds it per call); the field is baked with `ImplicitCore::BakeFunction`. The
@@ -113,7 +118,9 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   its middle): a local frame (`FrameAt`, z along the surface normal) and Add/Subtract, carved into the same field
   (guide = (base ∪ added) − slots − holes − subtracted); `FigurePreview` draws them.
   The GUIAS module is the eighth ORTOGNÁTICA step: `MainWindowGuides.cpp` holds the side panel (guide type → wrap →
-  mark the support region, drawn rounded on the surface → tick which osteotomies get a slot and place its ends →
+  paint the support region (drag; Ctrl erases; Alt + vertical drag resizes; the envelope is its own teal layer with
+  the painted patch in blue, and CAPAS toggles models / envelope / guide / figures) → tick which osteotomies get a
+  slot and place its ends →
   figures placed by click and moved with the gizmo → fixation holes → build, thickness map, STL export) and workspace
   page 7. `GuideType` decides the envelope (user's rule, 2026-09-16): Le Fort I = Le Fort segment + cranial base,
   chin = chin segment + post-genioplasty mandible, always in their planned position; the slot list only shows that

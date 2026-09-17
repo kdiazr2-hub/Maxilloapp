@@ -1,5 +1,7 @@
 #include "GuideBaseCore.h"
 
+#include <QJsonObject>
+
 #include <vtkCellArray.h>
 #include <vtkContourFilter.h>
 #include <vtkFloatArray.h>
@@ -198,86 +200,86 @@ vtkSmartPointer<vtkPolyData> ContourPolyline(const GuideContour& contour)
     return polyline;
 }
 
-GuideRegion MakeRegion(const std::shared_ptr<const ImplicitCore::BakedField>& wrapField, const GuideContour& contour,
-                       const GuideBaseParams& params)
+namespace
 {
-    GuideRegion region;
-    if (!wrapField) {
-        region.error = QStringLiteral("La envolvente no está medida.");
-        return region;
+// A projection frame and the grid laid over it.
+struct RegionGrid
+{
+    Vec3 origin{0.0, 0.0, 0.0};
+    Vec3 uAxis{1.0, 0.0, 0.0};
+    Vec3 vAxis{0.0, 1.0, 0.0};
+    Vec3 axis{0.0, 0.0, 1.0};
+    double u0 = 0.0, v0 = 0.0, h = 1.0;
+    int nu = 0, nv = 0;
+    size_t cells() const { return static_cast<size_t>(nu) * static_cast<size_t>(nv); }
+    size_t index(int i, int j) const { return static_cast<size_t>(i) + static_cast<size_t>(nu) * static_cast<size_t>(j); }
+};
+
+RegionGrid gridFor(const Vec3& axis, const Vec3& origin, const std::vector<std::array<double, 2>>& footprint,
+                   double margin, double h)
+{
+    RegionGrid g;
+    g.axis = axis;
+    g.origin = origin;
+    const Vec3 helper = std::abs(axis[2]) < 0.9 ? Vec3{0.0, 0.0, 1.0} : Vec3{1.0, 0.0, 0.0};
+    g.uAxis = normalized(cross(helper, axis), {1.0, 0.0, 0.0});
+    g.vAxis = cross(axis, g.uAxis);
+    g.h = h;
+    if (footprint.empty())
+        return g; // the frame only, to project points into it
+    double uMin = kFar, uMax = -kFar, vMin = kFar, vMax = -kFar;
+    for (const auto& uv : footprint) {
+        uMin = std::min(uMin, uv[0]);
+        uMax = std::max(uMax, uv[0]);
+        vMin = std::min(vMin, uv[1]);
+        vMax = std::max(vMax, uv[1]);
     }
-    if (!ContourValid(contour, &region.error))
-        return region;
-    const ImplicitCore::BakedField& field = *wrapField;
-    const double h = std::max(0.2, field.spacingMm);
-    const double radius = std::clamp(params.cornerRadiusMm, 0.0, 20.0);
+    g.h = h;
+    g.nu = static_cast<int>(std::ceil((uMax - uMin + 2.0 * margin) / h)) + 1;
+    g.nv = static_cast<int>(std::ceil((vMax - vMin + 2.0 * margin) / h)) + 1;
+    g.u0 = uMin - margin;
+    g.v0 = vMin - margin;
+    return g;
+}
+
+std::array<double, 2> project(const RegionGrid& g, const Vec3& p)
+{
+    const Vec3 d = sub(p, g.origin);
+    return {dot(d, g.uAxis), dot(d, g.vAxis)};
+}
+
+// Outline (2D signed distance of the mask) and the height of the surface in front, shared by the point and brush
+// regions.
+bool completeRegion(GuideRegion& region, const ImplicitCore::BakedField& field, const RegionGrid& g,
+                    const std::vector<uint8_t>& mask, const GuideBaseParams& params)
+{
     const double thickness = std::clamp(params.thicknessMm, 0.3, 20.0);
     const double clearance = std::clamp(params.clearanceMm, 0.0, 5.0);
+    const size_t cells = g.cells();
+    const int nu = g.nu, nv = g.nv;
+    const double h = g.h;
 
-    // Frame of the projection axis, centred on the marked points.
-    region.axis = axisFromField(field, contour);
-    const Vec3 n = region.axis;
-    const Vec3 helper = std::abs(n[2]) < 0.9 ? Vec3{0.0, 0.0, 1.0} : Vec3{1.0, 0.0, 0.0};
-    const Vec3 uAxis = normalized(cross(helper, n), {1.0, 0.0, 0.0});
-    const Vec3 vAxis = cross(n, uAxis);
-    Vec3 origin{0.0, 0.0, 0.0};
-    for (const auto& p : contour)
-        origin = add(origin, mul(p, 1.0 / static_cast<double>(contour.size())));
-
-    std::vector<std::array<double, 2>> polygon;
-    double uMin = kFar, uMax = -kFar, vMin = kFar, vMax = -kFar;
-    for (const auto& p : contour) {
-        const Vec3 d = sub(p, origin);
-        polygon.push_back({dot(d, uAxis), dot(d, vAxis)});
-        uMin = std::min(uMin, polygon.back()[0]);
-        uMax = std::max(uMax, polygon.back()[0]);
-        vMin = std::min(vMin, polygon.back()[1]);
-        vMax = std::max(vMax, polygon.back()[1]);
-    }
-    // Room for the rounding and for the wall to wrap past the rim.
-    const double margin = radius + clearance + thickness + 4.0 * h;
-    const int nu = static_cast<int>(std::ceil((uMax - uMin + 2.0 * margin) / h)) + 1;
-    const int nv = static_cast<int>(std::ceil((vMax - vMin + 2.0 * margin) / h)) + 1;
-    const double u0 = uMin - margin, v0 = vMin - margin;
-    const size_t cells = static_cast<size_t>(nu) * static_cast<size_t>(nv);
-    const auto index = [nu](int i, int j) { return static_cast<size_t>(i) + static_cast<size_t>(nu) * j; };
-
-    // Rounded outline: opening then closing by the corner radius, so convex and concave corners both round.
-    std::vector<uint8_t> inside(cells);
-    for (int j = 0; j < nv; ++j)
-        for (int i = 0; i < nu; ++i)
-            inside[index(i, j)] = insidePolygon(polygon, u0 + i * h, v0 + j * h) ? 1 : 0;
-    const double radiusCells = radius / h;
-    std::vector<uint8_t> rounded = inside;
-    if (radiusCells > 0.0) {
-        rounded = dilate(erode(rounded, nu, nv, radiusCells), nu, nv, radiusCells);
-        rounded = erode(dilate(rounded, nu, nv, radiusCells), nu, nv, radiusCells);
-    }
-    if (std::none_of(rounded.begin(), rounded.end(), [](uint8_t c) { return c != 0; })) {
-        region.error = QStringLiteral("La zona marcada es más pequeña que el redondeo: amplíela o reduzca el redondeo.");
-        return region;
-    }
     std::vector<double> toInside(cells), toOutside(cells);
     for (size_t c = 0; c < cells; ++c) {
-        toInside[c] = rounded[c] ? 0.0 : kFar;
-        toOutside[c] = rounded[c] ? kFar : 0.0;
+        toInside[c] = mask[c] ? 0.0 : kFar;
+        toOutside[c] = mask[c] ? kFar : 0.0;
     }
     ImplicitCore::SquaredDistanceTransform(toInside, {nu, nv, 1});
     ImplicitCore::SquaredDistanceTransform(toOutside, {nu, nv, 1});
     auto outline = std::make_shared<BakedPlanarField>();
     outline->nu = nu;
     outline->nv = nv;
-    outline->u0 = u0;
-    outline->v0 = v0;
+    outline->u0 = g.u0;
+    outline->v0 = g.v0;
     outline->spacingMm = h;
-    outline->origin = origin;
-    outline->uAxis = uAxis;
-    outline->vAxis = vAxis;
-    outline->axis = n;
+    outline->origin = g.origin;
+    outline->uAxis = g.uAxis;
+    outline->vAxis = g.vAxis;
+    outline->axis = g.axis;
     outline->values.resize(cells);
     for (size_t c = 0; c < cells; ++c)
-        outline->values[c] = static_cast<float>(
-            (rounded[c] ? -(std::sqrt(toOutside[c]) - 0.5) : (std::sqrt(toInside[c]) - 0.5)) * h);
+        outline->values[c] =
+            static_cast<float>((mask[c] ? -(std::sqrt(toOutside[c]) - 0.5) : (std::sqrt(toInside[c]) - 0.5)) * h);
 
     // Height of the first surface met coming in along -axis, over the whole grid.
     double aTop = -kFar, aBottom = kFar;
@@ -285,7 +287,7 @@ GuideRegion MakeRegion(const std::shared_ptr<const ImplicitCore::BakedField>& wr
         const Vec3 p{field.origin[0] + ((corner & 1) ? (field.dims[0] - 1) * field.spacingMm : 0.0),
                      field.origin[1] + ((corner & 2) ? (field.dims[1] - 1) * field.spacingMm : 0.0),
                      field.origin[2] + ((corner & 4) ? (field.dims[2] - 1) * field.spacingMm : 0.0)};
-        const double a = dot(sub(p, origin), n);
+        const double a = dot(sub(p, g.origin), g.axis);
         aTop = std::max(aTop, a);
         aBottom = std::min(aBottom, a);
     }
@@ -293,13 +295,13 @@ GuideRegion MakeRegion(const std::shared_ptr<const ImplicitCore::BakedField>& wr
     rows(nv, [&](int jBegin, int jEnd) {
         for (int j = jBegin; j < jEnd; ++j)
             for (int i = 0; i < nu; ++i) {
-                const Vec3 base = add(origin, add(mul(uAxis, u0 + i * h), mul(vAxis, v0 + j * h)));
-                double previous = field.At(add(base, mul(n, aTop)));
+                const Vec3 base = add(g.origin, add(mul(g.uAxis, g.u0 + i * h), mul(g.vAxis, g.v0 + j * h)));
+                double previous = field.At(add(base, mul(g.axis, aTop)));
                 for (double a = aTop - h; a >= aBottom; a -= h) {
-                    const double value = field.At(add(base, mul(n, a)));
+                    const double value = field.At(add(base, mul(g.axis, a)));
                     if (value <= 0.0) {
                         const double t = previous > value ? previous / (previous - value) : 0.0;
-                        surface[index(i, j)] = (a + h) - t * h;
+                        surface[g.index(i, j)] = (a + h) - t * h;
                         break;
                     }
                     previous = value;
@@ -316,25 +318,25 @@ GuideRegion MakeRegion(const std::shared_ptr<const ImplicitCore::BakedField>& wr
     std::deque<std::pair<int, int>> queue;
     for (int j = 0; j < nv; ++j)
         for (int i = 0; i < nu; ++i)
-            if (surface[index(i, j)] < kFar) {
-                heights[index(i, j)] = surface[index(i, j)] - tolerance;
+            if (surface[g.index(i, j)] < kFar) {
+                heights[g.index(i, j)] = surface[g.index(i, j)] - tolerance;
                 queue.emplace_back(i, j);
             }
     if (queue.empty()) {
         region.error = QStringLiteral("La zona marcada no toca la envolvente.");
-        return region;
+        return false;
     }
     std::vector<double> nearest = surface; // height of the nearest seen surface, spread outward
     while (!queue.empty()) {
         const auto [i, j] = queue.front();
         queue.pop_front();
-        const double source = nearest[index(i, j)];
+        const double source = nearest[g.index(i, j)];
         for (const auto& [di, dj] : {std::pair{1, 0}, std::pair{-1, 0}, std::pair{0, 1}, std::pair{0, -1}}) {
             const int ni = i + di, nj = j + dj;
-            if (ni < 0 || nj < 0 || ni >= nu || nj >= nv || nearest[index(ni, nj)] < kFar)
+            if (ni < 0 || nj < 0 || ni >= nu || nj >= nv || nearest[g.index(ni, nj)] < kFar)
                 continue;
-            nearest[index(ni, nj)] = source;
-            heights[index(ni, nj)] = source - wrapPast;
+            nearest[g.index(ni, nj)] = source;
+            heights[g.index(ni, nj)] = source - wrapPast;
             queue.emplace_back(ni, nj);
         }
     }
@@ -344,7 +346,190 @@ GuideRegion MakeRegion(const std::shared_ptr<const ImplicitCore::BakedField>& wr
     region.outline = outline;
     region.front = front;
     region.valid = true;
+    return true;
+}
+} // namespace
+
+GuideRegion MakeRegion(const std::shared_ptr<const ImplicitCore::BakedField>& wrapField, const GuideContour& contour,
+                       const GuideBaseParams& params)
+{
+    GuideRegion region;
+    if (!wrapField) {
+        region.error = QStringLiteral("La envolvente no está medida.");
+        return region;
+    }
+    if (!ContourValid(contour, &region.error))
+        return region;
+    const ImplicitCore::BakedField& field = *wrapField;
+    const double h = std::max(0.2, field.spacingMm);
+    const double radius = std::clamp(params.cornerRadiusMm, 0.0, 20.0);
+    const double margin =
+        radius + std::clamp(params.clearanceMm, 0.0, 5.0) + std::clamp(params.thicknessMm, 0.3, 20.0) + 4.0 * h;
+
+    // Frame of the projection axis, centred on the marked points.
+    region.axis = axisFromField(field, contour);
+    Vec3 origin{0.0, 0.0, 0.0};
+    for (const auto& p : contour)
+        origin = add(origin, mul(p, 1.0 / static_cast<double>(contour.size())));
+    RegionGrid g = gridFor(region.axis, origin, {}, 0.0, h);
+    std::vector<std::array<double, 2>> polygon;
+    for (const auto& p : contour)
+        polygon.push_back(project(g, p));
+    g = gridFor(region.axis, origin, polygon, margin, h);
+
+    // Rounded outline: opening then closing by the corner radius, so convex and concave corners both round.
+    std::vector<uint8_t> mask(g.cells());
+    for (int j = 0; j < g.nv; ++j)
+        for (int i = 0; i < g.nu; ++i)
+            mask[g.index(i, j)] = insidePolygon(polygon, g.u0 + i * h, g.v0 + j * h) ? 1 : 0;
+    const double radiusCells = radius / h;
+    if (radiusCells > 0.0) {
+        mask = dilate(erode(mask, g.nu, g.nv, radiusCells), g.nu, g.nv, radiusCells);
+        mask = erode(dilate(mask, g.nu, g.nv, radiusCells), g.nu, g.nv, radiusCells);
+    }
+    if (std::none_of(mask.begin(), mask.end(), [](uint8_t c) { return c != 0; })) {
+        region.error = QStringLiteral("La zona marcada es más pequeña que el redondeo: amplíela o reduzca el redondeo.");
+        return region;
+    }
+    completeRegion(region, field, g, mask, params);
     return region;
+}
+
+bool PaintValid(const GuideBrushPaint& paint, QString* error)
+{
+    const bool painted = std::any_of(paint.begin(), paint.end(), [](const GuideBrushStroke& s) { return !s.erase; });
+    if (!painted && error)
+        *error = QStringLiteral("Pinte con el pincel la zona de apoyo de la guía.");
+    return painted;
+}
+
+GuideRegion MakeBrushRegion(const std::shared_ptr<const ImplicitCore::BakedField>& wrapField,
+                            const GuideBrushPaint& paint, const GuideBaseParams& params)
+{
+    GuideRegion region;
+    if (!wrapField) {
+        region.error = QStringLiteral("La envolvente no está medida.");
+        return region;
+    }
+    if (!PaintValid(paint, &region.error))
+        return region;
+    const ImplicitCore::BakedField& field = *wrapField;
+    const double h = std::max(0.2, field.spacingMm);
+    const double thickness = std::clamp(params.thicknessMm, 0.3, 20.0);
+    const double clearance = std::clamp(params.clearanceMm, 0.0, 5.0);
+    double maxRadius = 0.0;
+    GuideContour centers;
+    for (const GuideBrushStroke& stroke : paint) {
+        maxRadius = std::max(maxRadius, stroke.radiusMm);
+        if (!stroke.erase)
+            centers.push_back(stroke.center);
+    }
+
+    // The direction the painted patch faces, as for marked points.
+    region.axis = axisFromField(field, centers);
+    Vec3 origin{0.0, 0.0, 0.0};
+    for (const auto& c : centers)
+        origin = add(origin, mul(c, 1.0 / static_cast<double>(centers.size())));
+    RegionGrid g = gridFor(region.axis, origin, {}, 0.0, h);
+    std::vector<std::array<double, 2>> footprint;
+    for (const auto& c : centers)
+        footprint.push_back(project(g, c));
+    g = gridFor(region.axis, origin, footprint, maxRadius + clearance + thickness + 4.0 * h, h);
+
+    // Outline: the dabs seen along the axis, in the order they were painted.
+    std::vector<uint8_t> mask(g.cells(), 0);
+    for (const GuideBrushStroke& stroke : paint) {
+        const auto uv = project(g, stroke.center);
+        const double r = std::max(0.1, stroke.radiusMm);
+        const int iMin = std::max(0, static_cast<int>(std::floor((uv[0] - r - g.u0) / h)));
+        const int iMax = std::min(g.nu - 1, static_cast<int>(std::ceil((uv[0] + r - g.u0) / h)));
+        const int jMin = std::max(0, static_cast<int>(std::floor((uv[1] - r - g.v0) / h)));
+        const int jMax = std::min(g.nv - 1, static_cast<int>(std::ceil((uv[1] + r - g.v0) / h)));
+        for (int j = jMin; j <= jMax; ++j)
+            for (int i = iMin; i <= iMax; ++i)
+                if (std::hypot(g.u0 + i * h - uv[0], g.v0 + j * h - uv[1]) <= r)
+                    mask[g.index(i, j)] = stroke.erase ? 0 : 1;
+    }
+    if (std::none_of(mask.begin(), mask.end(), [](uint8_t c) { return c != 0; })) {
+        region.error = QStringLiteral("La zona pintada quedó vacía: vuelva a pintarla.");
+        return region;
+    }
+    if (!completeRegion(region, field, g, mask, params))
+        return region;
+
+    // In space: each dab is a column along the surface normal, through the whole guide wall, so a small brush on a
+    // thick wall still paints the full thickness and a dab on a slope paints exactly the surface under it.
+    double bounds[6] = {kFar, -kFar, kFar, -kFar, kFar, -kFar};
+    const double reach = clearance + thickness + 1.0;
+    for (const GuideBrushStroke& stroke : paint)
+        for (int a = 0; a < 3; ++a) {
+            const double extent = stroke.radiusMm + reach + 1.0;
+            bounds[2 * a] = std::min(bounds[2 * a], stroke.center[static_cast<size_t>(a)] - extent);
+            bounds[2 * a + 1] = std::max(bounds[2 * a + 1], stroke.center[static_cast<size_t>(a)] + extent);
+        }
+    ImplicitCore::VoxelMask columns;
+    columns.spacingMm = h;
+    columns.origin = {bounds[0], bounds[2], bounds[4]};
+    for (int a = 0; a < 3; ++a)
+        columns.dims[static_cast<size_t>(a)] = static_cast<int>(std::ceil((bounds[2 * a + 1] - bounds[2 * a]) / h)) + 1;
+    columns.solid.assign(static_cast<size_t>(columns.dims[0]) * columns.dims[1] * columns.dims[2], 0);
+    const auto voxel = [&](int i, int j, int k) {
+        return static_cast<size_t>(i) +
+               static_cast<size_t>(columns.dims[0]) *
+                   (static_cast<size_t>(j) + static_cast<size_t>(columns.dims[1]) * static_cast<size_t>(k));
+    };
+    for (const GuideBrushStroke& stroke : paint) {
+        const Vec3 normal = NormalAt(field, stroke.center);
+        const Vec3 a = sub(stroke.center, mul(normal, 1.0));
+        const Vec3 b = add(stroke.center, mul(normal, reach));
+        const Vec3 ab = sub(b, a);
+        const double ab2 = dot(ab, ab);
+        const double r = std::max(0.1, stroke.radiusMm);
+        std::array<int, 3> lo{}, hi{};
+        for (int axisIndex = 0; axisIndex < 3; ++axisIndex) {
+            const size_t ai = static_cast<size_t>(axisIndex);
+            const double minCoord = std::min(a[ai], b[ai]) - r;
+            const double maxCoord = std::max(a[ai], b[ai]) + r;
+            lo[ai] = std::max(0, static_cast<int>(std::floor((minCoord - columns.origin[ai]) / h)));
+            hi[ai] = std::min(columns.dims[ai] - 1, static_cast<int>(std::ceil((maxCoord - columns.origin[ai]) / h)));
+        }
+        for (int k = lo[2]; k <= hi[2]; ++k)
+            for (int j = lo[1]; j <= hi[1]; ++j)
+                for (int i = lo[0]; i <= hi[0]; ++i) {
+                    const Vec3 p{columns.origin[0] + i * h, columns.origin[1] + j * h, columns.origin[2] + k * h};
+                    const Vec3 ap = sub(p, a);
+                    const double t = std::clamp(dot(ap, ab) / ab2, 0.0, 1.0);
+                    if (length(sub(ap, mul(ab, t))) <= r)
+                        columns.solid[voxel(i, j, k)] = stroke.erase ? 0 : 1;
+                }
+    }
+    region.paint = ImplicitCore::SignedDistanceField(columns);
+    return region;
+}
+
+QJsonArray PaintToJson(const GuideBrushPaint& paint)
+{
+    QJsonArray array;
+    for (const GuideBrushStroke& stroke : paint)
+        array.append(QJsonObject{{QStringLiteral("c"), QJsonArray{stroke.center[0], stroke.center[1], stroke.center[2]}},
+                                 {QStringLiteral("r"), stroke.radiusMm},
+                                 {QStringLiteral("erase"), stroke.erase}});
+    return array;
+}
+
+GuideBrushPaint PaintFromJson(const QJsonArray& array)
+{
+    GuideBrushPaint paint;
+    for (const QJsonValue& value : array) {
+        const QJsonObject o = value.toObject();
+        const QJsonArray c = o.value(QStringLiteral("c")).toArray();
+        if (c.size() != 3)
+            continue;
+        paint.push_back({{c[0].toDouble(), c[1].toDouble(), c[2].toDouble()},
+                         o.value(QStringLiteral("r")).toDouble(4.0),
+                         o.value(QStringLiteral("erase")).toBool(false)});
+    }
+    return paint;
 }
 
 vtkSmartPointer<vtkPolyData> RegionOutline(const GuideRegion& region, double liftMm)
@@ -403,8 +588,12 @@ ImplicitCore::NodePtr BaseNode(const std::shared_ptr<const ImplicitCore::BakedFi
     const double clearance = std::clamp(params.clearanceMm, 0.0, 5.0);
     // The layer is measured as a real distance, so the wall keeps its thickness on oblique surfaces; the
     // height limiter keeps it on the surface the user marked.
-    return ImplicitCore::Intersect({RegionPrism(region, spanMm), ImplicitCore::Layer(field, clearance, clearance + thickness),
-                                    ImplicitCore::PlanarHeight(region.front, 0.0)});
+    std::vector<ImplicitCore::NodePtr> parts{RegionPrism(region, spanMm),
+                                             ImplicitCore::Layer(field, clearance, clearance + thickness),
+                                             ImplicitCore::PlanarHeight(region.front, 0.0)};
+    if (region.paint)
+        parts.push_back(ImplicitCore::Field(region.paint)); // the columns actually brushed
+    return ImplicitCore::Intersect(parts);
 }
 
 GuideBaseResult CreateBase(vtkPolyData* wrap, const GuideContour& contour, const GuideBaseParams& params,

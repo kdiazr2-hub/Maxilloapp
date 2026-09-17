@@ -34,8 +34,12 @@
 #include <QStatusBar>
 #include <QVBoxLayout>
 
+#include <vtkIdList.h>
 #include <vtkMatrix4x4.h>
+#include <vtkPointData.h>
+#include <vtkPointLocator.h>
 #include <vtkPolyData.h>
+#include <vtkUnsignedCharArray.h>
 #include <vtkSTLReader.h>
 #include <vtkSTLWriter.h>
 #include <vtkTransform.h>
@@ -59,7 +63,8 @@ constexpr int kModeFigure = 4;
 constexpr int kGuideFigureActorBase = -560; // one actor per figure, counting down
 
 const QColor kGuideColor(214, 226, 240);
-const QColor kWrapColor(170, 180, 190);
+const QColor kWrapColor(120, 196, 214);  // the envelope: its own layer, teal so it is not mistaken for bone
+const QColor kPaintColor(10, 132, 255);  // the brushed region on the envelope
 const QColor kRegionColor(10, 132, 255);
 const QColor kSlotEndColor(255, 159, 10);
 const QColor kHoleColor(52, 199, 89);
@@ -184,19 +189,44 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
     connect(m_guideWrapButton, &QPushButton::clicked, this, &MainWindow::computeGuideWrap);
     layout->addWidget(m_guideWrapButton);
 
+    // ── Layers ────────────────────────────────────────────────────────────
+    section(tr("CAPAS"));
+    const auto layer = [&](const QString& text) {
+        auto* check = new QCheckBox(text, panel);
+        check->setChecked(true);
+        connect(check, &QCheckBox::toggled, this, [this](bool) { applyGuideLayers(); });
+        layout->addWidget(check);
+        return check;
+    };
+    m_guideShowModelsCheck = layer(tr("Modelos (hueso)"));
+    m_guideShowWrapCheck = layer(tr("Envolvente"));
+    m_guideShowGuideCheck = layer(tr("Guía"));
+    m_guideShowFiguresCheck = layer(tr("Figuras"));
+    auto* layerForm = new QFormLayout();
+    m_guideWrapOpacitySpin = new QDoubleSpinBox(panel);
+    m_guideWrapOpacitySpin->setRange(0.1, 1.0);
+    m_guideWrapOpacitySpin->setSingleStep(0.1);
+    m_guideWrapOpacitySpin->setValue(0.6);
+    connect(m_guideWrapOpacitySpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
+            [this](double) { applyGuideLayers(); });
+    layerForm->addRow(tr("Opacidad envolvente:"), m_guideWrapOpacitySpin);
+    layout->addLayout(layerForm);
+
     // ── 2. Support region ─────────────────────────────────────────────────
-    section(tr("2. ZONA DE APOYO"));
-    m_guideRegionButton = new QPushButton(tr("Marcar zona"), panel);
+    section(tr("2. ZONA DE APOYO (PINCEL)"));
+    m_guideRegionButton = new QPushButton(tr("Pintar zona"), panel);
     m_guideRegionButton->setCheckable(true);
     connect(m_guideRegionButton, &QPushButton::toggled, this,
             [this](bool on) { setGuidePointMode(on ? kModeRegion : kModeNone); });
     layout->addWidget(m_guideRegionButton);
     auto* regionForm = new QFormLayout();
-    m_guideCornerSpin = spin(3.0, 0.0, 10.0, 0.5);
-    connect(m_guideCornerSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
-            [this](double) { rebuildGuideMarkers(); });
-    regionForm->addRow(tr("Redondeo:"), m_guideCornerSpin);
+    m_guideBrushSpin = spin(4.0, 0.5, 15.0, 0.5);
+    regionForm->addRow(tr("Tamaño del pincel:"), m_guideBrushSpin);
     layout->addLayout(regionForm);
+    auto* brushHelp = new QLabel(tr("Arrastre para pintar · Ctrl + arrastre para borrar · Alt + arrastre vertical "
+                                    "cambia el tamaño"), panel);
+    brushHelp->setWordWrap(true);
+    layout->addWidget(brushHelp);
     auto* clearRegion = new QPushButton(tr("Borrar zona"), panel);
     connect(clearRegion, &QPushButton::clicked, this, &MainWindow::clearGuideRegion);
     layout->addWidget(clearRegion);
@@ -338,6 +368,7 @@ void MainWindow::setGuideType(GuideType type)
     m_guidePrepared = GuidePreparation{};
     m_guideMesh = nullptr;
     m_guidePlan.contour.clear();
+    m_guidePlan.paint.clear();
     m_guidePlan.slotPlan.clear();
     m_guidePendingEnds.clear();
     refreshGuideSources();
@@ -440,6 +471,7 @@ void MainWindow::computeGuideWrap()
     }
     m_guideWrapMesh = wrap.mesh;
     m_guidePrepared = prepared;
+    repaintGuideWrap();
     syncGuideView();
     updateGuideUi();
     if (m_guideReportLabel)
@@ -462,9 +494,114 @@ void MainWindow::setGuidePointMode(int mode)
         QSignalBlocker blocker(button);
         button->setChecked(mode == owned);
     }
-    if (m_guideView)
-        m_guideView->setPointPickMode(mode != kModeNone);
+    if (m_guideView) {
+        // The region is painted with the surface brush; the other modes pick points.
+        m_guideView->setSurfaceBrushMode(mode == kModeRegion);
+        m_guideView->setPointPickMode(mode != kModeNone && mode != kModeRegion);
+    }
     updateGuideUi();
+}
+
+void MainWindow::onGuideSurfaceBrushed(double x, double y, double z, Qt::KeyboardModifiers modifiers)
+{
+    if (m_guidePointMode != kModeRegion || !m_guideWrapMesh)
+        return;
+    GuideBrushStroke stroke;
+    stroke.center = {x, y, z};
+    stroke.radiusMm = m_guideBrushSpin ? m_guideBrushSpin->value() : 4.0;
+    stroke.erase = modifiers.testFlag(Qt::ControlModifier);
+    // Dragging reports many positions: a dab only when the brush has moved a fraction of its size.
+    if (!m_guidePlan.paint.empty()) {
+        const GuideBrushStroke& last = m_guidePlan.paint.back();
+        const double moved = std::hypot(std::hypot(x - last.center[0], y - last.center[1]), z - last.center[2]);
+        if (last.erase == stroke.erase && std::abs(last.radiusMm - stroke.radiusMm) < 1e-9 &&
+            moved < 0.3 * stroke.radiusMm)
+            return;
+    }
+    m_guidePlan.paint.push_back(stroke);
+
+    // Colour the envelope under the dab right away.
+    auto* colors = vtkUnsignedCharArray::SafeDownCast(m_guideWrapMesh->GetPointData()->GetArray("GuidePaint"));
+    if (!colors) {
+        repaintGuideWrap();
+    } else {
+        auto locator = vtkSmartPointer<vtkPointLocator>::New();
+        locator->SetDataSet(m_guideWrapMesh);
+        locator->BuildLocator();
+        auto ids = vtkSmartPointer<vtkIdList>::New();
+        locator->FindPointsWithinRadius(stroke.radiusMm, stroke.center.data(), ids);
+        const QColor color = stroke.erase ? kWrapColor : kPaintColor;
+        for (vtkIdType i = 0; i < ids->GetNumberOfIds(); ++i) {
+            const vtkIdType id = ids->GetId(i);
+            colors->SetTypedTuple(id, std::array<unsigned char, 3>{static_cast<unsigned char>(color.red()),
+                                                                   static_cast<unsigned char>(color.green()),
+                                                                   static_cast<unsigned char>(color.blue())}
+                                          .data());
+        }
+        colors->Modified();
+    }
+    if (m_guideView)
+        m_guideView->render();
+}
+
+void MainWindow::onGuideBrushRadiusDragged(double deltaYPixels)
+{
+    if (m_guidePointMode != kModeRegion || !m_guideBrushSpin)
+        return;
+    // Dragging up grows the brush.
+    m_guideBrushSpin->setValue(std::clamp(m_guideBrushSpin->value() - 0.05 * deltaYPixels, 0.5, 15.0));
+    statusBar()->showMessage(tr("Tamaño del pincel: %1 mm").arg(m_guideBrushSpin->value(), 0, 'f', 1));
+}
+
+void MainWindow::onGuideBrushFinished()
+{
+    updateGuideUi();
+}
+
+void MainWindow::repaintGuideWrap()
+{
+    if (!m_guideWrapMesh || m_guideWrapMesh->GetNumberOfPoints() == 0)
+        return;
+    auto colors = vtkSmartPointer<vtkUnsignedCharArray>::New();
+    colors->SetName("GuidePaint");
+    colors->SetNumberOfComponents(3);
+    colors->SetNumberOfTuples(m_guideWrapMesh->GetNumberOfPoints());
+    const std::array<unsigned char, 3> base{static_cast<unsigned char>(kWrapColor.red()),
+                                            static_cast<unsigned char>(kWrapColor.green()),
+                                            static_cast<unsigned char>(kWrapColor.blue())};
+    for (vtkIdType id = 0; id < m_guideWrapMesh->GetNumberOfPoints(); ++id)
+        colors->SetTypedTuple(id, base.data());
+    if (!m_guidePlan.paint.empty()) {
+        auto locator = vtkSmartPointer<vtkPointLocator>::New();
+        locator->SetDataSet(m_guideWrapMesh);
+        locator->BuildLocator();
+        auto ids = vtkSmartPointer<vtkIdList>::New();
+        const std::array<unsigned char, 3> painted{static_cast<unsigned char>(kPaintColor.red()),
+                                                   static_cast<unsigned char>(kPaintColor.green()),
+                                                   static_cast<unsigned char>(kPaintColor.blue())};
+        for (const GuideBrushStroke& stroke : m_guidePlan.paint) { // in order: erasing and repainting both count
+            locator->FindPointsWithinRadius(stroke.radiusMm, stroke.center.data(), ids);
+            for (vtkIdType i = 0; i < ids->GetNumberOfIds(); ++i)
+                colors->SetTypedTuple(ids->GetId(i), stroke.erase ? base.data() : painted.data());
+        }
+    }
+    m_guideWrapMesh->GetPointData()->RemoveArray("GuidePaint");
+    m_guideWrapMesh->GetPointData()->SetScalars(colors);
+}
+
+void MainWindow::applyGuideLayers()
+{
+    if (!m_guideView)
+        return;
+    const auto on = [](QCheckBox* check) { return !check || check->isChecked(); };
+    for (int label : GuidePlanCore::SourceLabelsFor(m_guidePlan.type))
+        m_guideView->setMeshVisible(objectActorKey(label), on(m_guideShowModelsCheck));
+    m_guideView->setMeshVisible(kGuideWrapActorKey, on(m_guideShowWrapCheck));
+    m_guideView->setMeshOpacity(kGuideWrapActorKey, m_guideWrapOpacitySpin ? m_guideWrapOpacitySpin->value() : 0.6);
+    m_guideView->setMeshVisible(objectActorKey(kGuideMeshLabel), on(m_guideShowGuideCheck));
+    for (size_t i = 0; i < m_guidePlan.figures.size(); ++i)
+        m_guideView->setMeshVisible(figureActorKey(i), on(m_guideShowFiguresCheck));
+    m_guideView->render();
 }
 
 void MainWindow::onGuidePointPicked(int, double x, double y, double z)
@@ -693,7 +830,7 @@ void MainWindow::rebuildGuideMarkers()
 
     // While marking, the outline is drawn the way the guide will be cut: rounded and laid on the surface.
     vtkSmartPointer<vtkPolyData> outline;
-    if (m_guidePrepared.ok && GuideBaseCore::ContourValid(m_guidePlan.contour)) {
+    if (m_guidePrepared.ok && m_guidePlan.paint.empty() && GuideBaseCore::ContourValid(m_guidePlan.contour)) {
         GuideBaseParams params = m_guidePlan.design.base;
         params.cornerRadiusMm = m_guideCornerSpin ? m_guideCornerSpin->value() : params.cornerRadiusMm;
         const GuideRegion region = GuideBaseCore::MakeRegion(m_guidePrepared.wrapField, m_guidePlan.contour, params);
@@ -713,6 +850,10 @@ void MainWindow::rebuildGuideMarkers()
 void MainWindow::clearGuideRegion()
 {
     m_guidePlan.contour.clear();
+    m_guidePlan.paint.clear();
+    repaintGuideWrap();
+    if (m_guideView)
+        m_guideView->render();
     rebuildGuideMarkers();
     updateGuideUi();
 }
@@ -739,8 +880,9 @@ void MainWindow::buildGuideMesh()
         return;
     }
     QString error;
-    if (!GuideBaseCore::ContourValid(m_guidePlan.contour, &error)) {
-        QMessageBox::warning(this, tr("Guías"), error);
+    const bool brushed = GuideBaseCore::PaintValid(m_guidePlan.paint);
+    if (!brushed && !GuideBaseCore::ContourValid(m_guidePlan.contour, &error)) {
+        QMessageBox::warning(this, tr("Guías"), tr("Pinte con el pincel la zona de apoyo de la guía."));
         return;
     }
     if (m_guideMoveFigureButton && m_guideMoveFigureButton->isChecked())
@@ -748,7 +890,8 @@ void MainWindow::buildGuideMesh()
     m_guidePlan.design.base.thicknessMm = m_guideThicknessSpin->value();
     m_guidePlan.design.base.clearanceMm = m_guideClearanceSpin->value();
     m_guidePlan.design.base.smallestDetailMm = m_guideDetailSpin->value();
-    m_guidePlan.design.base.cornerRadiusMm = m_guideCornerSpin->value();
+    if (m_guideCornerSpin)
+        m_guidePlan.design.base.cornerRadiusMm = m_guideCornerSpin->value();
     m_guidePlan.design.slot.bladeThicknessMm = m_guideBladeSpin->value();
     m_guidePlan.design.slot.smallestDetailMm = m_guideDetailSpin->value();
     m_guidePlan.design.edgeMarginMm = m_guideMarginSpin->value();
@@ -782,9 +925,13 @@ void MainWindow::buildGuideMesh()
     if (!m_guidePrepared.ok)
         m_guidePrepared = GuideDesignCore::Prepare(m_guideWrapMesh, m_guidePlan.design);
     GuideDesignResult result;
-    if (m_guidePrepared.ok)
-        result = GuideDesignCore::Build(m_guidePrepared, m_guidePlan.contour, chosen, m_guidePlan.holes,
-                                        m_guidePlan.figures, m_guidePlan.design);
+    if (m_guidePrepared.ok) {
+        const GuideRegion region =
+            brushed ? GuideBaseCore::MakeBrushRegion(m_guidePrepared.wrapField, m_guidePlan.paint, m_guidePlan.design.base)
+                    : GuideBaseCore::MakeRegion(m_guidePrepared.wrapField, m_guidePlan.contour, m_guidePlan.design.base);
+        result = GuideDesignCore::Build(m_guidePrepared, region, chosen, m_guidePlan.holes, m_guidePlan.figures,
+                                        m_guidePlan.design);
+    }
     QApplication::restoreOverrideCursor();
     if (!m_guidePrepared.ok) {
         QMessageBox::warning(this, tr("Guías"), m_guidePrepared.error);
@@ -877,9 +1024,12 @@ void MainWindow::syncGuideView()
         m_guideView->setMeshOpacity(key, 1.0);
     }
     if (m_guideWrapMesh && m_guideWrapMesh->GetNumberOfPolys() > 0) {
+        if (!m_guideWrapMesh->GetPointData()->GetArray("GuidePaint"))
+            repaintGuideWrap();
         m_guideView->addMesh(kGuideWrapActorKey, m_guideWrapMesh, tr("Envolvente"));
         m_guideView->setMeshColor(kGuideWrapActorKey, kWrapColor);
-        m_guideView->setMeshOpacity(kGuideWrapActorKey, 0.35);
+        m_guideView->setMeshScalarColoring(kGuideWrapActorKey, true); // teal, with the brushed region in blue
+        m_guideView->setMeshOpacity(kGuideWrapActorKey, m_guideWrapOpacitySpin ? m_guideWrapOpacitySpin->value() : 0.6);
     }
     if (m_guideMesh && m_guideMesh->GetNumberOfPolys() > 0) {
         const int key = objectActorKey(kGuideMeshLabel);
@@ -900,12 +1050,13 @@ void MainWindow::syncGuideView()
         m_guideView->setMeshPickable(key, false); // clicks go through to the surface while placing
     }
     rebuildGuideMarkers();
+    applyGuideLayers();
 }
 
 void MainWindow::updateGuideUi()
 {
     const bool hasWrap = m_guideWrapMesh && m_guideWrapMesh->GetNumberOfPolys() > 0;
-    const bool hasRegion = GuideBaseCore::ContourValid(m_guidePlan.contour);
+    const bool hasRegion = GuideBaseCore::PaintValid(m_guidePlan.paint) || GuideBaseCore::ContourValid(m_guidePlan.contour);
     const bool hasGuide = m_guideMesh && m_guideMesh->GetNumberOfPolys() > 0;
     const bool figureSelected = m_guideFigureList && m_guideFigureList->currentRow() >= 0;
     if (m_guideRegionButton) m_guideRegionButton->setEnabled(hasWrap);
@@ -927,8 +1078,8 @@ void MainWindow::updateGuideUi()
                    : tr("Guía Le Fort I: pulse «Calcular envolvente» sobre el segmento Le Fort y la base craneal "
                         "en su posición planificada.");
     else if (m_guidePointMode == kModeRegion || !hasRegion)
-        hint = tr("Pulse «Marcar zona» y haga clic alrededor de la superficie de apoyo. La línea azul muestra el "
-                  "borde redondeado: la base solo cubre esa cara, nunca lo que queda detrás.");
+        hint = tr("Pulse «Pintar zona» y pinte sobre la envolvente la superficie de apoyo (se ve en azul). "
+                  "Ctrl borra; Alt + arrastre vertical cambia el tamaño. La base solo cubre la cara pintada.");
     else if (m_guidePointMode == kModeSlotEnds)
         hint = m_guidePendingEnds.empty() ? tr("Elija la osteotomía en la lista y marque el inicio de la ranura.")
                                           : tr("Marque ahora el final de la ranura.");
@@ -947,7 +1098,7 @@ void MainWindow::updateGuideUi()
 
 QJsonObject MainWindow::guidePlanJson() const
 {
-    if (m_guidePlan.contour.empty() && m_guidePlan.figures.empty() && !m_guideWrapMesh)
+    if (m_guidePlan.contour.empty() && m_guidePlan.paint.empty() && m_guidePlan.figures.empty() && !m_guideWrapMesh)
         return {};
     return GuidePlanCore::ToJson(m_guidePlan);
 }
@@ -975,6 +1126,7 @@ void MainWindow::restoreGuidePlan(const ProjectState& state)
     if (m_guideGapSpin) m_guideGapSpin->setValue(m_guidePlan.wrap.gapClosingMm);
     if (m_guideDetailSpin) m_guideDetailSpin->setValue(m_guidePlan.wrap.smallestDetailMm);
     if (m_guideCornerSpin) m_guideCornerSpin->setValue(m_guidePlan.design.base.cornerRadiusMm);
+    if (m_guideBrushSpin && !m_guidePlan.paint.empty()) m_guideBrushSpin->setValue(m_guidePlan.paint.back().radiusMm);
     if (m_guideThicknessSpin) m_guideThicknessSpin->setValue(m_guidePlan.design.base.thicknessMm);
     if (m_guideClearanceSpin) m_guideClearanceSpin->setValue(m_guidePlan.design.base.clearanceMm);
     if (m_guideBladeSpin) m_guideBladeSpin->setValue(m_guidePlan.design.slot.bladeThicknessMm);

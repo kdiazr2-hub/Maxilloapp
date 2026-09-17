@@ -240,6 +240,12 @@ private:
     void removeGuideFigure();
     void setGuideFigureGizmo(bool active);
     void onGuideGizmoUpdated(int label, vtkSmartPointer<vtkPolyData> mesh);
+    // Region brush on the envelope, and the layers of the GUIAS view.
+    void onGuideSurfaceBrushed(double x, double y, double z, Qt::KeyboardModifiers modifiers);
+    void onGuideBrushRadiusDragged(double deltaYPixels);
+    void onGuideBrushFinished();
+    void repaintGuideWrap();
+    void applyGuideLayers();
     // Cuts the guide can carry a slot for: remembered when an osteotomy is executed.
     void rememberOsteotomyCut(const QString& name, const OsteotomyPath& path, GuideType type);
     QJsonObject guidePlanJson() const;
@@ -256,6 +262,12 @@ private:
     QComboBox* m_guideTypeCombo = nullptr;
     QLabel* m_guideSourcesLabel = nullptr;
     QDoubleSpinBox* m_guideCornerSpin = nullptr;
+    QDoubleSpinBox* m_guideBrushSpin = nullptr;
+    QCheckBox* m_guideShowModelsCheck = nullptr;
+    QCheckBox* m_guideShowWrapCheck = nullptr;
+    QCheckBox* m_guideShowGuideCheck = nullptr;
+    QCheckBox* m_guideShowFiguresCheck = nullptr;
+    QDoubleSpinBox* m_guideWrapOpacitySpin = nullptr;
     QComboBox* m_guideFigureShapeCombo = nullptr;
     QComboBox* m_guideFigureOperationCombo = nullptr;
     QDoubleSpinBox* m_guideFigureDiameterSpin = nullptr;

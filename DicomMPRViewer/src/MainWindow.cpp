@@ -2797,6 +2797,9 @@ void MainWindow::buildCentralWidget()
                 [this](Mesh3DView* source) { toggleViewFullScreen(static_cast<QWidget*>(source)); });
         connect(m_guideView, &Mesh3DView::pointPicked, this, &MainWindow::onGuidePointPicked);
         connect(m_guideView, &Mesh3DView::gizmoMeshUpdated, this, &MainWindow::onGuideGizmoUpdated);
+        connect(m_guideView, &Mesh3DView::surfaceBrushed, this, &MainWindow::onGuideSurfaceBrushed);
+        connect(m_guideView, &Mesh3DView::brushRadiusDragged, this, &MainWindow::onGuideBrushRadiusDragged);
+        connect(m_guideView, &Mesh3DView::surfaceBrushFinished, this, &MainWindow::onGuideBrushFinished);
 
         m_viewModeStack->addWidget(guidePanel);  // index 7
     }
@@ -7228,7 +7231,7 @@ QWidget* MainWindow::viewAtCursor() const
     const QPoint globalPos = QCursor::pos();
     QWidget* leaf = QApplication::widgetAt(globalPos);
 
-    const std::array<QWidget*, 18> views = {
+    const std::array<QWidget*, 19> views = {
         static_cast<QWidget*>(m_axialView),
         static_cast<QWidget*>(m_coronalView),
         static_cast<QWidget*>(m_sagittalView),
@@ -7246,7 +7249,8 @@ QWidget* MainWindow::viewAtCursor() const
         static_cast<QWidget*>(m_repositionView),
         static_cast<QWidget*>(m_splintUpperView),
         static_cast<QWidget*>(m_splintLowerView),
-        static_cast<QWidget*>(m_splintView)
+        static_cast<QWidget*>(m_splintView),
+        static_cast<QWidget*>(m_guideView)
     };
 
     for (QWidget* view : views) {

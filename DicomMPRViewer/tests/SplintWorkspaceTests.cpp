@@ -45,6 +45,7 @@
 #include <vtkImageData.h>
 #include <vtkMatrix4x4.h>
 #include <vtkPlane.h>
+#include <vtkPointData.h>
 
 #include <functional>
 #include <iostream>
@@ -872,15 +873,38 @@ public:
                 "the envelope was not built from the Le Fort segment and the cranial base");
         require(window.m_guidePrepared.ok, "the envelope was not measured for marking");
 
-        // 2. The support region, marked on the face of the wall, is drawn rounded on the surface.
+        // 2. The support region, painted with the brush on the envelope, in any order.
         window.m_guideRegionButton->setChecked(true);
-        require(window.m_guidePointMode == 1, "marking the region did not switch the picking mode");
-        for (const auto& p : std::vector<std::array<double, 3>>{{-15.0, 0.0, 2.0}, {15.0, 0.0, 2.0},
-                                                                {15.0, 0.0, 18.0}, {-15.0, 0.0, 18.0}})
-            window.onGuidePointPicked(0, p[0], p[1], p[2]);
+        require(window.m_guidePointMode == 1, "painting the region did not switch the mode");
+        window.m_guideBrushSpin->setValue(4.0);
+        for (double z = 3.0; z <= 17.0; z += 2.0)
+            for (double x = -14.0; x <= 14.0; x += 2.0)
+                window.onGuideSurfaceBrushed(x, 0.0, z, Qt::NoModifier);
+        window.onGuideBrushFinished();
+        require(window.m_guidePlan.paint.size() > 20, "the brushed region was not collected");
+        // The brushed patch shows on the envelope, which is its own coloured layer.
+        auto* paintColors = window.m_guideWrapMesh->GetPointData()->GetArray("GuidePaint");
+        require(paintColors != nullptr, "the envelope is not coloured as its own layer");
+        bool paintedSeen = false;
+        double rgb[3] = {};
+        for (vtkIdType id = 0; id < paintColors->GetNumberOfTuples() && !paintedSeen; ++id) {
+            paintColors->GetTuple(id, rgb);
+            paintedSeen = rgb[0] < 30.0 && rgb[2] > 200.0;
+        }
+        require(paintedSeen, "the brushed region is not painted on the envelope");
+        // Ctrl erases where the brush passes, and Alt-dragging resizes the brush.
+        const size_t dabs = window.m_guidePlan.paint.size();
+        window.onGuideSurfaceBrushed(0.0, 0.0, 10.0, Qt::ControlModifier);
+        require(window.m_guidePlan.paint.size() == dabs + 1 && window.m_guidePlan.paint.back().erase,
+                "Ctrl did not erase with the brush");
+        window.onGuideSurfaceBrushed(0.0, 0.0, 10.0, Qt::NoModifier); // paint the spot back
+        window.onGuideBrushRadiusDragged(-40.0);
+        require(window.m_guideBrushSpin->value() > 4.0, "dragging up did not grow the brush");
+        window.m_guideBrushSpin->setValue(4.0);
         window.m_guideRegionButton->setChecked(false);
-        require(window.m_guidePlan.contour.size() == 4, "the marked region was not collected");
-        require(window.m_guideView->hasOverlay(kGuideRegionOverlayKey), "the rounded outline is not drawn");
+        // Layers can be hidden one by one.
+        window.m_guideShowWrapCheck->setChecked(false);
+        window.m_guideShowWrapCheck->setChecked(true);
 
         // 3. The planned cut gets a slot, with the ends the user places.
         require(window.m_guideCutList->count() == 1, "the planned osteotomy is not offered as a slot");
@@ -948,7 +972,7 @@ public:
         reopened.show();
         settle();
         reopened.restoreGuidePlan(state);
-        require(reopened.m_guidePlan.contour.size() == 4 && reopened.m_guidePlan.slotPlan.size() == 1 &&
+        require(reopened.m_guidePlan.paint.size() == window.m_guidePlan.paint.size() && reopened.m_guidePlan.slotPlan.size() == 1 &&
                     reopened.m_guidePlan.holes.size() == 1 && reopened.m_guidePlan.figures.size() == 1,
                 "the guide plan did not survive the project");
         require(reopened.m_guideCutList->count() == 1, "the reloaded plan does not offer its cut again");
@@ -957,7 +981,7 @@ public:
         // A chin guide wraps other models and only offers the genioplasty: the Le Fort cut disappears from the list.
         window.m_guideTypeCombo->setCurrentIndex(window.m_guideTypeCombo->findData(static_cast<int>(GuideType::Chin)));
         settle();
-        require(window.m_guidePlan.type == GuideType::Chin && window.m_guidePlan.contour.empty() &&
+        require(window.m_guidePlan.type == GuideType::Chin && window.m_guidePlan.paint.empty() &&
                     !window.m_guideWrapMesh,
                 "switching to a chin guide did not start its envelope and region again");
         require(window.m_guideCutList->count() == 0, "a chin guide offers the Le Fort cut");

@@ -41,6 +41,16 @@ class vtkPolyData;
 // Points marked on the wrap, in placement order.
 using GuideContour = std::vector<std::array<double, 3>>;
 
+// One dab of the region brush on the wrap: paints (or erases) a column of `radiusMm` through the guide wall,
+// along the surface normal at `center`. Dabs apply in order, so painting over an erased spot paints it again.
+struct GuideBrushStroke
+{
+    std::array<double, 3> center{0.0, 0.0, 0.0};
+    double radiusMm = 4.0;
+    bool erase = false;
+};
+using GuideBrushPaint = std::vector<GuideBrushStroke>;
+
 struct GuideBaseParams
 {
     double thicknessMm = 2.5;      // wall thickness of the guide
@@ -58,6 +68,7 @@ struct GuideRegion
     std::array<double, 3> axis{0.0, 0.0, 1.0};
     std::shared_ptr<const ImplicitCore::BakedPlanarField> outline; // rounded region: 2D signed distance
     std::shared_ptr<const ImplicitCore::BakedPlanarField> front;   // heights the base must stay above
+    std::shared_ptr<const ImplicitCore::BakedField> paint;         // brushed columns (brush regions only)
 };
 
 struct GuideBaseResult
@@ -86,6 +97,13 @@ vtkSmartPointer<vtkPolyData> ContourPolyline(const GuideContour& contour);
 // how far past the silhouette the wall may wrap (its own thickness).
 GuideRegion MakeRegion(const std::shared_ptr<const ImplicitCore::BakedField>& wrapField, const GuideContour& contour,
                        const GuideBaseParams& params);
+// The region painted with the brush: exactly the surface under the dabs (minus the erased ones), in front of
+// whatever lies behind it, whatever order it was painted in.
+bool PaintValid(const GuideBrushPaint& paint, QString* error = nullptr);
+GuideRegion MakeBrushRegion(const std::shared_ptr<const ImplicitCore::BakedField>& wrapField,
+                            const GuideBrushPaint& paint, const GuideBaseParams& params);
+QJsonArray PaintToJson(const GuideBrushPaint& paint);
+GuideBrushPaint PaintFromJson(const QJsonArray& array);
 // The rounded outline laid on the surface, lifted slightly so it is not hidden by it (display).
 vtkSmartPointer<vtkPolyData> RegionOutline(const GuideRegion& region, double liftMm = 0.3);
 

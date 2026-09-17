@@ -54,6 +54,7 @@ GuidePlan samplePlan()
     stl.operation = GuideFigureOperation::Add;
     stl.sourcePath = QStringLiteral("C:/casos/tope.stl");
     plan.figures = {box, stl};
+    plan.paint = {{{1.0, 2.0, 3.0}, 4.0, false}, {{1.5, 2.0, 3.0}, 2.5, true}};
     return plan;
 }
 
@@ -86,6 +87,9 @@ void testRoundTrip()
     require(back.slotPlan[0].path.valid, "the reloaded path is not valid");
 
     require(back.type == GuideType::Chin, "the guide type was lost");
+    require(back.paint.size() == 2 && back.paint[1].erase && std::abs(back.paint[1].radiusMm - 2.5) < 1e-9 &&
+                back.paint[0].center == plan.paint[0].center,
+            "the brushed region was lost");
     require(std::abs(back.design.base.cornerRadiusMm - 4.5) < 1e-9, "the outline rounding was lost");
     require(back.figures.size() == 2 && back.figures[0].shape == GuideFigureShape::Box &&
                 back.figures[0].operation == GuideFigureOperation::Subtract &&
