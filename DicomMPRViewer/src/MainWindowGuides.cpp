@@ -319,6 +319,18 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
     m_guideClearanceSpin = spin(0.1, 0.0, 2.0, 0.05);
     guideForm->addRow(tr("Espesor:"), m_guideThicknessSpin);
     guideForm->addRow(tr("Holgura:"), m_guideClearanceSpin);
+    // The rim finish of a printed guide pad: thinner and rounded towards the edge.
+    m_guideTaperSpin = spin(4.0, 0.0, 15.0, 0.5);
+    m_guideEdgeFractionSpin = new QDoubleSpinBox(panel);
+    m_guideEdgeFractionSpin->setRange(10.0, 100.0);
+    m_guideEdgeFractionSpin->setSingleStep(5.0);
+    m_guideEdgeFractionSpin->setDecimals(0);
+    m_guideEdgeFractionSpin->setValue(40.0);
+    m_guideEdgeFractionSpin->setSuffix(tr(" %"));
+    m_guideEdgeRoundSpin = spin(1.2, 0.0, 4.0, 0.1);
+    guideForm->addRow(tr("Afinado hacia el borde:"), m_guideTaperSpin);
+    guideForm->addRow(tr("Espesor en el borde:"), m_guideEdgeFractionSpin);
+    guideForm->addRow(tr("Redondeo del borde:"), m_guideEdgeRoundSpin);
     layout->addLayout(guideForm);
     m_guideBuildButton = new QPushButton(tr("Crear guía"), panel);
     connect(m_guideBuildButton, &QPushButton::clicked, this, &MainWindow::buildGuideMesh);
@@ -472,6 +484,19 @@ void MainWindow::computeGuideWrap()
     m_guideWrapMesh = wrap.mesh;
     m_guidePrepared = prepared;
     repaintGuideWrap();
+    // The envelope replaces the bone while designing: bone layers hidden, envelope opaque.
+    if (m_guideShowModelsCheck) {
+        QSignalBlocker blocker(m_guideShowModelsCheck);
+        m_guideShowModelsCheck->setChecked(false);
+    }
+    if (m_guideShowWrapCheck) {
+        QSignalBlocker blocker(m_guideShowWrapCheck);
+        m_guideShowWrapCheck->setChecked(true);
+    }
+    if (m_guideWrapOpacitySpin) {
+        QSignalBlocker blocker(m_guideWrapOpacitySpin);
+        m_guideWrapOpacitySpin->setValue(1.0);
+    }
     syncGuideView();
     updateGuideUi();
     if (m_guideReportLabel)
@@ -890,6 +915,9 @@ void MainWindow::buildGuideMesh()
     m_guidePlan.design.base.thicknessMm = m_guideThicknessSpin->value();
     m_guidePlan.design.base.clearanceMm = m_guideClearanceSpin->value();
     m_guidePlan.design.base.smallestDetailMm = m_guideDetailSpin->value();
+    m_guidePlan.design.base.edgeTaperMm = m_guideTaperSpin->value();
+    m_guidePlan.design.base.edgeThicknessFraction = m_guideEdgeFractionSpin->value() / 100.0;
+    m_guidePlan.design.base.edgeRoundMm = m_guideEdgeRoundSpin->value();
     if (m_guideCornerSpin)
         m_guidePlan.design.base.cornerRadiusMm = m_guideCornerSpin->value();
     m_guidePlan.design.slot.bladeThicknessMm = m_guideBladeSpin->value();
@@ -1131,6 +1159,9 @@ void MainWindow::restoreGuidePlan(const ProjectState& state)
     if (m_guideClearanceSpin) m_guideClearanceSpin->setValue(m_guidePlan.design.base.clearanceMm);
     if (m_guideBladeSpin) m_guideBladeSpin->setValue(m_guidePlan.design.slot.bladeThicknessMm);
     if (m_guideMarginSpin) m_guideMarginSpin->setValue(m_guidePlan.design.edgeMarginMm);
+    if (m_guideTaperSpin) m_guideTaperSpin->setValue(m_guidePlan.design.base.edgeTaperMm);
+    if (m_guideEdgeFractionSpin) m_guideEdgeFractionSpin->setValue(100.0 * m_guidePlan.design.base.edgeThicknessFraction);
+    if (m_guideEdgeRoundSpin) m_guideEdgeRoundSpin->setValue(m_guidePlan.design.base.edgeRoundMm);
     refreshGuideSources();
     refreshGuideCutList();
     refreshGuideFigureList();

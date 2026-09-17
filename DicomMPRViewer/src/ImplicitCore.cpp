@@ -399,6 +399,16 @@ NodePtr Union(const NodePtr& a, const NodePtr& b) { return combine(NodeType::Uni
 NodePtr Intersect(const std::vector<NodePtr>& nodes) { return combine(NodeType::Intersect, nodes); }
 NodePtr Intersect(const NodePtr& a, const NodePtr& b) { return combine(NodeType::Intersect, {a, b}); }
 
+NodePtr SmoothIntersect(const std::vector<NodePtr>& nodes, double radiusMm)
+{
+    if (!(radiusMm > 0.0))
+        return Intersect(nodes);
+    auto node = combine(NodeType::SmoothIntersect, nodes);
+    if (node && node->type == NodeType::SmoothIntersect)
+        mutableNode(node).value = radiusMm;
+    return node;
+}
+
 NodePtr Subtract(const NodePtr& from, const NodePtr& tool)
 {
     if (!from)
@@ -580,6 +590,17 @@ double Value(const ImplicitNode& node, const Vec3& p)
             best = std::max(best, Value(*child, p));
         return best;
     }
+    case NodeType::SmoothIntersect: {
+        // Smooth maximum: max(a, b) plus a bump where the two are within `value` of each other.
+        const double k = node.value;
+        double result = Value(*node.children[0], p);
+        for (size_t i = 1; i < node.children.size(); ++i) {
+            const double b = Value(*node.children[i], p);
+            const double h = std::clamp(0.5 - 0.5 * (b - result) / k, 0.0, 1.0);
+            result = b + (result - b) * h + k * h * (1.0 - h);
+        }
+        return result;
+    }
     case NodeType::Subtract:
         return std::max(Value(*node.children[0], p), -Value(*node.children[1], p));
     case NodeType::Negate:
@@ -666,7 +687,8 @@ bool Bounds(const NodePtr& node, double bounds[6])
         }
         return !n.children.empty();
     }
-    case NodeType::Intersect: {
+    case NodeType::Intersect:
+    case NodeType::SmoothIntersect: {
         bool any = false;
         for (const NodePtr& child : n.children) {
             double childBounds[6] = {};

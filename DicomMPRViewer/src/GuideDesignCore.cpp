@@ -288,6 +288,7 @@ GuideDesignResult Build(const GuidePreparation& prepared, const GuideRegion& reg
     const auto solid = cutters.empty() ? grown : ImplicitCore::Subtract(grown, ImplicitCore::Union(cutters));
     ImplicitCore::PolygonizeOptions options;
     options.smoothingIterations = params.base.smoothingIterations;
+    options.passBand = 0.05; // a finished, smooth surface; features stay because the field already carries them
     options.repair = true;
     const ImplicitCore::BuildResult built = ImplicitCore::Build(solid, bounds, detail, options, cancel);
     if (!built.ok) {

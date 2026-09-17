@@ -54,6 +54,7 @@ enum class NodeType
     PlanarHeight, // below a 2D baked height map along the frame's axis (heights - offset - axial)
     Union,
     Intersect,
+    SmoothIntersect, // intersection with the creases rounded by `value` mm
     Subtract,
     Negate,
     Offset,
@@ -126,6 +127,9 @@ NodePtr Union(const std::vector<NodePtr>& nodes);
 NodePtr Union(const NodePtr& a, const NodePtr& b);
 NodePtr Intersect(const std::vector<NodePtr>& nodes);
 NodePtr Intersect(const NodePtr& a, const NodePtr& b);
+// Intersection whose edges are rounded over `radiusMm` (polynomial smooth maximum). It never adds material: the
+// solid only loses its sharp creases, so it is safe to round a part against its own limits.
+NodePtr SmoothIntersect(const std::vector<NodePtr>& nodes, double radiusMm);
 NodePtr Subtract(const NodePtr& from, const NodePtr& tool);
 NodePtr Negate(const NodePtr& node);
 // Grows the solid by t (t < 0 shrinks it).

@@ -42,6 +42,9 @@ GuidePlan samplePlan()
 
     plan.type = GuideType::Chin;
     plan.design.base.cornerRadiusMm = 4.5;
+    plan.design.base.edgeTaperMm = 5.5;
+    plan.design.base.edgeThicknessFraction = 0.35;
+    plan.design.base.edgeRoundMm = 0.8;
     GuideFigure box;
     box.shape = GuideFigureShape::Box;
     box.operation = GuideFigureOperation::Subtract;
@@ -91,6 +94,10 @@ void testRoundTrip()
                 back.paint[0].center == plan.paint[0].center,
             "the brushed region was lost");
     require(std::abs(back.design.base.cornerRadiusMm - 4.5) < 1e-9, "the outline rounding was lost");
+    require(std::abs(back.design.base.edgeTaperMm - 5.5) < 1e-9 &&
+                std::abs(back.design.base.edgeThicknessFraction - 0.35) < 1e-9 &&
+                std::abs(back.design.base.edgeRoundMm - 0.8) < 1e-9,
+            "the rim finish was lost");
     require(back.figures.size() == 2 && back.figures[0].shape == GuideFigureShape::Box &&
                 back.figures[0].operation == GuideFigureOperation::Subtract &&
                 back.figures[0].matrix == plan.figures[0].matrix && std::abs(back.figures[0].heightMm - 0.8) < 1e-9,

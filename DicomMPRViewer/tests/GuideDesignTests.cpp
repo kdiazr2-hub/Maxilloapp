@@ -84,6 +84,9 @@ GuideDesignParams params(double thickness, double clearance, double blade = 1.0)
     p.base.smallestDetailMm = 0.25;
     p.slot.bladeThicknessMm = blade;
     p.slot.smallestDetailMm = 0.25;
+    // Square rim: these tests probe holes and slots at set depths in the wall.
+    p.base.edgeTaperMm = 0.0;
+    p.base.edgeRoundMm = 0.0;
     return p;
 }
 

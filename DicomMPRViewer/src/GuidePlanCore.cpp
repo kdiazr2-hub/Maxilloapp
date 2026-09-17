@@ -99,6 +99,9 @@ QJsonObject ToJson(const GuidePlan& plan)
                      {QStringLiteral("smallestDetailMm"), plan.design.base.smallestDetailMm},
                      {QStringLiteral("smoothingIterations"), plan.design.base.smoothingIterations},
                      {QStringLiteral("cornerRadiusMm"), plan.design.base.cornerRadiusMm},
+                     {QStringLiteral("edgeTaperMm"), plan.design.base.edgeTaperMm},
+                     {QStringLiteral("edgeThicknessFraction"), plan.design.base.edgeThicknessFraction},
+                     {QStringLiteral("edgeRoundMm"), plan.design.base.edgeRoundMm},
                      {QStringLiteral("bladeThicknessMm"), plan.design.slot.bladeThicknessMm},
                      {QStringLiteral("slotExtensionMm"), plan.design.slot.extensionMm},
                      {QStringLiteral("holeLengthMm"), plan.design.holeLengthMm},
@@ -134,6 +137,10 @@ GuidePlan FromJson(const QJsonObject& object)
         design.value(QStringLiteral("smoothingIterations")).toInt(plan.design.base.smoothingIterations);
     plan.design.base.cornerRadiusMm =
         design.value(QStringLiteral("cornerRadiusMm")).toDouble(plan.design.base.cornerRadiusMm);
+    plan.design.base.edgeTaperMm = design.value(QStringLiteral("edgeTaperMm")).toDouble(plan.design.base.edgeTaperMm);
+    plan.design.base.edgeThicknessFraction =
+        design.value(QStringLiteral("edgeThicknessFraction")).toDouble(plan.design.base.edgeThicknessFraction);
+    plan.design.base.edgeRoundMm = design.value(QStringLiteral("edgeRoundMm")).toDouble(plan.design.base.edgeRoundMm);
     plan.design.slot.bladeThicknessMm =
         design.value(QStringLiteral("bladeThicknessMm")).toDouble(plan.design.slot.bladeThicknessMm);
     plan.design.slot.extensionMm = design.value(QStringLiteral("slotExtensionMm")).toDouble(plan.design.slot.extensionMm);

@@ -100,6 +100,13 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   order; the outline is the dabs seen along the axis, and each dab is also a column along the local surface normal
   through the whole wall, baked into `GuideRegion::paint` and intersected in `BaseNode`, so the base covers exactly
   the painted surface. Saved as `paint` in the plan.
+  Rim finish (user's request, 2026-09-16, after a reference image of printed guide pads): the outer face is a
+  variable offset baked with `BakeFunction` — the thickness eases (smoothstep) from `edgeThicknessFraction` at the
+  outline to full at `edgeTaperMm` inside — and all limits meet in `ImplicitCore::SmoothIntersect` (polynomial smooth
+  max, radius `edgeRoundMm`; it only removes material). Surface ridges came from raster steps: the 2D outline SDF is
+  Gaussian-blurred (1.2 cells), brushed masks get a 2 mm closing + 1 mm opening (dab scallops), the brushed columns
+  are blurred and 1.5 mm wider than the dabs so the smooth outline sets the rim, and the guide is contoured with 30
+  sinc iterations, pass band 0.05. Tests that probe depths in the wall set taper and round to 0.
 - `CutSlotCore::CutSlots` subtracts a slab of `OsteotomyCore`'s own path field from the base, so slot and planned
   osteotomy coincide by construction. `OsteotomyCore::PreparePathField` / `FieldAt` build the frame once for grid
   sweeps (the older `PathField` rebuilds it per call); the field is baked with `ImplicitCore::BakeFunction`. The
@@ -119,7 +126,8 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   (guide = (base ∪ added) − slots − holes − subtracted); `FigurePreview` draws them.
   The GUIAS module is the eighth ORTOGNÁTICA step: `MainWindowGuides.cpp` holds the side panel (guide type → wrap →
   paint the support region (drag; Ctrl erases; Alt + vertical drag resizes; the envelope is its own teal layer with
-  the painted patch in blue, and CAPAS toggles models / envelope / guide / figures) → tick which osteotomies get a
+  the painted patch in blue, and CAPAS toggles models / envelope / guide / figures; computing the envelope hides the
+  bone and makes it opaque) → tick which osteotomies get a
   slot and place its ends →
   figures placed by click and moved with the gizmo → fixation holes → build, thickness map, STL export) and workspace
   page 7. `GuideType` decides the envelope (user's rule, 2026-09-16): Le Fort I = Le Fort segment + cranial base,

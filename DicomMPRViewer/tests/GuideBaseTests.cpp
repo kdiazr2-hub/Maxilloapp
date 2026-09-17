@@ -75,6 +75,9 @@ GuideBaseParams params(double thickness, double clearance, double detail = 0.3)
     p.thicknessMm = thickness;
     p.clearanceMm = clearance;
     p.smallestDetailMm = detail;
+    // Square rim: these tests measure the wall itself; the tapered, rounded finish has its own test.
+    p.edgeTaperMm = 0.0;
+    p.edgeRoundMm = 0.0;
     return p;
 }
 
@@ -224,6 +227,57 @@ void testRoundedOutline()
     require(!none.valid && !none.error.isEmpty(), "a region smaller than the rounding was accepted");
 }
 
+void testTaperedRoundedRim()
+{
+    const auto plate = boxMesh({-25.0, 25.0, -25.0, 25.0, -2.0, 0.0}, false, false);
+    const GuideContour square = {{-12.0, -12.0, 0.0}, {12.0, -12.0, 0.0}, {12.0, 12.0, 0.0}, {-12.0, 12.0, 0.0}};
+    GuideBaseParams finish = params(3.0, 0.2, 0.25);
+    finish.cornerRadiusMm = 0.0;
+    finish.smoothingIterations = 0;
+    finish.edgeTaperMm = 4.0;
+    finish.edgeThicknessFraction = 0.4;
+    finish.edgeRoundMm = 1.0;
+    const GuideBaseResult result = GuideBaseCore::CreateBase(plate, square, finish);
+    require(result.ok, "the tapered base failed: " + result.error.toStdString());
+    require(MeshRepairCore::Analyze(result.mesh).Valid(), "the tapered base is not a valid closed solid");
+
+    // Highest point of the outer face in bands measured from the rim at |x| = 12.
+    const auto topIn = [&](double fromRim, double toRim) {
+        double top = -1e9;
+        double p[3] = {};
+        for (vtkIdType i = 0; i < result.mesh->GetNumberOfPoints(); ++i) {
+            result.mesh->GetPoint(i, p);
+            const double rim = 12.0 - std::max(std::abs(p[0]), std::abs(p[1]));
+            if (rim >= fromRim && rim <= toRim)
+                top = std::max(top, p[2]);
+        }
+        return top;
+    };
+    const double centre = topIn(8.0, 12.0);
+    const double middle = topIn(3.5, 4.5);
+    const double edge = topIn(-1.0, 0.7);
+    require(centre > 0.2 + 3.0 - 0.4, "the centre of the guide lost its thickness: " + std::to_string(centre));
+    require(middle > 0.2 + 3.0 * 0.8, "the wall thins too early: " + std::to_string(middle));
+    require(edge < 0.2 + 3.0 * 0.6, "the wall does not thin towards the rim: " + std::to_string(edge));
+    require(edge < middle && middle <= centre + 0.1, "the thickness does not fall off towards the rim");
+
+    // With the finish off the rim stays square: full thickness right to the edge.
+    GuideBaseParams square_ = finish;
+    square_.edgeTaperMm = 0.0;
+    square_.edgeRoundMm = 0.0;
+    const GuideBaseResult squareRim = GuideBaseCore::CreateBase(plate, square, square_);
+    require(squareRim.ok, "the square-rim base failed");
+    double b[6] = {};
+    squareRim.mesh->GetBounds(b);
+    double edgeTop = -1e9, p[3] = {};
+    for (vtkIdType i = 0; i < squareRim.mesh->GetNumberOfPoints(); ++i) {
+        squareRim.mesh->GetPoint(i, p);
+        if (12.0 - std::max(std::abs(p[0]), std::abs(p[1])) < 0.7)
+            edgeTop = std::max(edgeTop, p[2]);
+    }
+    require(edgeTop > 0.2 + 3.0 - 0.4, "with the finish off the rim should keep its thickness");
+}
+
 // Builds the base of a brushed region on its own, as GuideDesignCore does.
 vtkSmartPointer<vtkPolyData> brushedBase(vtkPolyData* wrap, const GuideBrushPaint& paint, const GuideBaseParams& p,
                                         GuideRegion* regionOut = nullptr)
@@ -308,6 +362,7 @@ int main()
         {"stays on the marked face", testStaysOnTheMarkedFace},
         {"rounded outline", testRoundedOutline},
         {"brushed region", testBrushedRegion},
+        {"tapered rounded rim", testTaperedRoundedRim},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {

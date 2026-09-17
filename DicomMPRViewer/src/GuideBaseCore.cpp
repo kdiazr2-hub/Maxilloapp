@@ -6,6 +6,7 @@
 #include <vtkContourFilter.h>
 #include <vtkFloatArray.h>
 #include <vtkImageData.h>
+#include <vtkImageGaussianSmooth.h>
 #include <vtkMath.h>
 #include <vtkPointData.h>
 #include <vtkPoints.h>
@@ -86,6 +87,38 @@ std::vector<uint8_t> dilate(const std::vector<uint8_t>& mask, int nu, int nv, do
     for (size_t i = 0; i < mask.size(); ++i)
         out[i] = squared[i] <= radiusCells * radiusCells ? 1 : 0;
     return out;
+}
+
+// Separable Gaussian on a 2D grid. A signed distance measured on a binary raster steps by half a cell along its
+// zero line; blurring it by about a cell leaves the line where it was and takes the steps out, which is what
+// otherwise shows as ridges on the rim of the guide.
+void blur2D(std::vector<float>& values, int nu, int nv, double sigmaCells)
+{
+    if (!(sigmaCells > 0.0) || values.empty())
+        return;
+    const int radius = std::max(1, static_cast<int>(std::ceil(2.5 * sigmaCells)));
+    std::vector<double> kernel(static_cast<size_t>(2 * radius + 1));
+    double sum = 0.0;
+    for (int i = -radius; i <= radius; ++i)
+        sum += kernel[static_cast<size_t>(i + radius)] = std::exp(-0.5 * i * i / (sigmaCells * sigmaCells));
+    for (double& k : kernel)
+        k /= sum;
+    std::vector<float> temp(values.size());
+    const auto at = [nu](int i, int j) { return static_cast<size_t>(i) + static_cast<size_t>(nu) * static_cast<size_t>(j); };
+    for (int j = 0; j < nv; ++j)
+        for (int i = 0; i < nu; ++i) {
+            double acc = 0.0;
+            for (int k = -radius; k <= radius; ++k)
+                acc += kernel[static_cast<size_t>(k + radius)] * values[at(std::clamp(i + k, 0, nu - 1), j)];
+            temp[at(i, j)] = static_cast<float>(acc);
+        }
+    for (int j = 0; j < nv; ++j)
+        for (int i = 0; i < nu; ++i) {
+            double acc = 0.0;
+            for (int k = -radius; k <= radius; ++k)
+                acc += kernel[static_cast<size_t>(k + radius)] * temp[at(i, std::clamp(j + k, 0, nv - 1))];
+            values[at(i, j)] = static_cast<float>(acc);
+        }
 }
 
 std::vector<uint8_t> invert(const std::vector<uint8_t>& mask)
@@ -280,6 +313,7 @@ bool completeRegion(GuideRegion& region, const ImplicitCore::BakedField& field, 
     for (size_t c = 0; c < cells; ++c)
         outline->values[c] =
             static_cast<float>((mask[c] ? -(std::sqrt(toOutside[c]) - 0.5) : (std::sqrt(toInside[c]) - 0.5)) * h);
+    blur2D(outline->values, nu, nv, 1.2);
 
     // Height of the first surface met coming in along -axis, over the whole grid.
     double aTop = -kFar, aBottom = kFar;
@@ -450,6 +484,11 @@ GuideRegion MakeBrushRegion(const std::shared_ptr<const ImplicitCore::BakedField
                 if (std::hypot(g.u0 + i * h - uv[0], g.v0 + j * h - uv[1]) <= r)
                     mask[g.index(i, j)] = stroke.erase ? 0 : 1;
     }
+    // A painted area is a union of discs: its rim is scalloped between dabs. Closing fills those notches and
+    // a light opening rounds the corners, so the guide's rim follows the stroke, not the dabs.
+    const double closeCells = 2.0 / h, openCells = 1.0 / h;
+    mask = erode(dilate(mask, g.nu, g.nv, closeCells), g.nu, g.nv, closeCells);
+    mask = dilate(erode(mask, g.nu, g.nv, openCells), g.nu, g.nv, openCells);
     if (std::none_of(mask.begin(), mask.end(), [](uint8_t c) { return c != 0; })) {
         region.error = QStringLiteral("La zona pintada quedó vacía: vuelva a pintarla.");
         return region;
@@ -463,7 +502,7 @@ GuideRegion MakeBrushRegion(const std::shared_ptr<const ImplicitCore::BakedField
     const double reach = clearance + thickness + 1.0;
     for (const GuideBrushStroke& stroke : paint)
         for (int a = 0; a < 3; ++a) {
-            const double extent = stroke.radiusMm + reach + 1.0;
+            const double extent = stroke.radiusMm + 1.5 + reach + 1.0;
             bounds[2 * a] = std::min(bounds[2 * a], stroke.center[static_cast<size_t>(a)] - extent);
             bounds[2 * a + 1] = std::max(bounds[2 * a + 1], stroke.center[static_cast<size_t>(a)] + extent);
         }
@@ -484,7 +523,9 @@ GuideRegion MakeBrushRegion(const std::shared_ptr<const ImplicitCore::BakedField
         const Vec3 b = add(stroke.center, mul(normal, reach));
         const Vec3 ab = sub(b, a);
         const double ab2 = dot(ab, ab);
-        const double r = std::max(0.1, stroke.radiusMm);
+        // A little wider than the dab: on gentle surfaces the smoothed outline sets the rim, and the columns only
+        // take over on steep ones — otherwise their scallops between dabs would show along the edge.
+        const double r = std::max(0.1, stroke.radiusMm) + 1.5;
         std::array<int, 3> lo{}, hi{};
         for (int axisIndex = 0; axisIndex < 3; ++axisIndex) {
             const size_t ai = static_cast<size_t>(axisIndex);
@@ -503,7 +544,21 @@ GuideRegion MakeBrushRegion(const std::shared_ptr<const ImplicitCore::BakedField
                         columns.solid[voxel(i, j, k)] = stroke.erase ? 0 : 1;
                 }
     }
-    region.paint = ImplicitCore::SignedDistanceField(columns);
+    // Same raster steps in 3D: smooth the columns' distance before it cuts the wall.
+    const auto columnField = ImplicitCore::SignedDistanceField(columns);
+    if (columnField) {
+        auto gaussian = vtkSmartPointer<vtkImageGaussianSmooth>::New();
+        gaussian->SetInputData(ImplicitCore::ToImage(*columnField));
+        gaussian->SetDimensionality(3);
+        gaussian->SetStandardDeviations(1.5, 1.5, 1.5);
+        gaussian->SetRadiusFactors(2.5, 2.5, 2.5);
+        gaussian->Update();
+        auto smoothed = std::make_shared<ImplicitCore::BakedField>(*columnField);
+        vtkDataArray* values = gaussian->GetOutput()->GetPointData()->GetScalars();
+        for (vtkIdType i = 0; i < values->GetNumberOfTuples() && i < static_cast<vtkIdType>(smoothed->values.size()); ++i)
+            smoothed->values[static_cast<size_t>(i)] = static_cast<float>(values->GetTuple1(i));
+        region.paint = smoothed;
+    }
     return region;
 }
 
@@ -586,14 +641,59 @@ ImplicitCore::NodePtr BaseNode(const std::shared_ptr<const ImplicitCore::BakedFi
         return nullptr;
     const double thickness = std::clamp(params.thicknessMm, 0.3, 20.0);
     const double clearance = std::clamp(params.clearanceMm, 0.0, 5.0);
-    // The layer is measured as a real distance, so the wall keeps its thickness on oblique surfaces; the
-    // height limiter keeps it on the surface the user marked.
-    std::vector<ImplicitCore::NodePtr> parts{RegionPrism(region, spanMm),
-                                             ImplicitCore::Layer(field, clearance, clearance + thickness),
+    const double taper = std::clamp(params.edgeTaperMm, 0.0, 30.0);
+    const double edgeFraction = std::clamp(params.edgeThicknessFraction, 0.1, 1.0);
+    const double round = std::clamp(params.edgeRoundMm, 0.0, 5.0);
+
+    // The outer face, measured as a real distance so the wall keeps its thickness on oblique surfaces, lowered
+    // towards the rim: the thickness follows the distance to the outline, from `edgeFraction` at the edge to full
+    // at `taper` inside it. The variable offset is baked once over the patch.
+    ImplicitCore::NodePtr outer = ImplicitCore::Offset(field, clearance + thickness);
+    if (taper > 0.0 && edgeFraction < 1.0 && region.outline && region.front) {
+        const ImplicitCore::BakedPlanarField& outline = *region.outline;
+        const ImplicitCore::BakedPlanarField& front = *region.front;
+        double aMin = kFar, aMax = -kFar;
+        for (size_t c = 0; c < outline.values.size(); ++c)
+            if (outline.values[c] < 1.0 && std::abs(front.values[c]) < 0.5 * kFar) {
+                aMin = std::min(aMin, static_cast<double>(front.values[c]));
+                aMax = std::max(aMax, static_cast<double>(front.values[c]));
+            }
+        if (aMin < aMax + 1.0) {
+            const double reach = clearance + thickness + 2.0;
+            double bounds[6] = {kFar, -kFar, kFar, -kFar, kFar, -kFar};
+            for (double u : {outline.u0, outline.u0 + (outline.nu - 1) * outline.spacingMm})
+                for (double v : {outline.v0, outline.v0 + (outline.nv - 1) * outline.spacingMm})
+                    for (double a : {aMin - reach, aMax + reach}) {
+                        const Vec3 p = add(outline.origin,
+                                           add(mul(outline.uAxis, u), add(mul(outline.vAxis, v), mul(outline.axis, a))));
+                        for (int k = 0; k < 3; ++k) {
+                            bounds[2 * k] = std::min(bounds[2 * k], p[static_cast<size_t>(k)]);
+                            bounds[2 * k + 1] = std::max(bounds[2 * k + 1], p[static_cast<size_t>(k)]);
+                        }
+                    }
+            const auto wrap = wrapField;
+            const auto outlinePtr = region.outline;
+            const auto tapered = ImplicitCore::BakeFunction(
+                [wrap, outlinePtr, clearance, thickness, taper, edgeFraction](const Vec3& p) {
+                    const Vec3 d = sub(p, outlinePtr->origin);
+                    const double inside = -outlinePtr->At(dot(d, outlinePtr->uAxis), dot(d, outlinePtr->vAxis));
+                    const double t = std::clamp(inside / taper, 0.0, 1.0);
+                    const double eased = t * t * (3.0 - 2.0 * t); // smoothstep: no crease where the taper ends
+                    return wrap->At(p) - (clearance + thickness * (edgeFraction + (1.0 - edgeFraction) * eased));
+                },
+                bounds, std::max(0.1, params.smallestDetailMm), 1.0);
+            if (tapered)
+                outer = ImplicitCore::Field(tapered);
+        }
+    }
+    const auto inner = ImplicitCore::Negate(ImplicitCore::Offset(field, clearance));
+
+    // The height limiter keeps the wall on the surface the user marked; the rim is rounded where the limits meet.
+    std::vector<ImplicitCore::NodePtr> parts{RegionPrism(region, spanMm), outer, inner,
                                              ImplicitCore::PlanarHeight(region.front, 0.0)};
     if (region.paint)
         parts.push_back(ImplicitCore::Field(region.paint)); // the columns actually brushed
-    return ImplicitCore::Intersect(parts);
+    return ImplicitCore::SmoothIntersect(parts, round);
 }
 
 GuideBaseResult CreateBase(vtkPolyData* wrap, const GuideContour& contour, const GuideBaseParams& params,

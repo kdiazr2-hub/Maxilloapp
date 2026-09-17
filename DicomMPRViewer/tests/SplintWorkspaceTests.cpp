@@ -827,7 +827,7 @@ public:
 
     // GUIAS: choose the guide, wrap its models, mark the support region, slot the planned cut, add a Boolean
     // figure, build and save.
-    static void runGuidesWorkflow()
+    static void runGuidesWorkflow(const QString& artifactsDir)
     {
         MainWindow window;
         window.setAttribute(Qt::WA_DontShowOnScreen);
@@ -872,6 +872,9 @@ public:
         require(window.m_guidePlan.sourceLabels == std::vector<int>({kLeFortSegLabel, kLeFortCranialLabel}),
                 "the envelope was not built from the Le Fort segment and the cranial base");
         require(window.m_guidePrepared.ok, "the envelope was not measured for marking");
+        require(!window.m_guideShowModelsCheck->isChecked() && window.m_guideShowWrapCheck->isChecked() &&
+                    std::abs(window.m_guideWrapOpacitySpin->value() - 1.0) < 1e-9,
+                "the envelope is not shown alone and opaque after computing it");
 
         // 2. The support region, painted with the brush on the envelope, in any order.
         window.m_guideRegionButton->setChecked(true);
@@ -959,6 +962,20 @@ public:
         require(window.m_guideReportLabel->text().contains(QStringLiteral("1 restada")),
                 "the report does not count the subtracted figure: " + window.m_guideReportLabel->text().toStdString());
         require(window.m_guideExportButton->isEnabled(), "the guide cannot be exported");
+        // Screenshots of the finished guide alone, to look at its rim and surface.
+        window.m_guideShowWrapCheck->setChecked(false);
+        window.m_guideShowFiguresCheck->setChecked(false);
+        QDir().mkpath(artifactsDir);
+        for (const auto& [viewIndex, name] : {std::pair{0, QStringLiteral("guide-front.png")},
+                                              std::pair{1, QStringLiteral("guide-side.png")}}) {
+            window.m_guideView->setStandardView(viewIndex);
+            window.m_guideView->render();
+            settle();
+            const QImage shot = window.m_guideView->findChild<QVTKOpenGLNativeWidget*>()->grabFramebuffer();
+            require(shot.save(QDir(artifactsDir).filePath(name)), "guide screenshot not written");
+        }
+        window.m_guideShowWrapCheck->setChecked(true);
+        window.m_guideShowFiguresCheck->setChecked(true);
         window.m_guideThicknessCheck->setChecked(true); // thickness map must not throw
         settle();
 
@@ -1254,7 +1271,7 @@ int main(int argc, char** argv)
         SplintWorkspaceTests::runSplintFollowsReposition();
         SplintWorkspaceTests::runRepositionAnalysis();
         SplintWorkspaceTests::runOsteotomyWorkflow(artifacts);
-        SplintWorkspaceTests::runGuidesWorkflow();
+        SplintWorkspaceTests::runGuidesWorkflow(artifacts);
         if (!unexpectedDialogs.isEmpty()) {
             std::cerr << "FAIL unexpected dialogs: " << unexpectedDialogs.join(QStringLiteral(" | ")).toStdString() << '\n';
             return 1;

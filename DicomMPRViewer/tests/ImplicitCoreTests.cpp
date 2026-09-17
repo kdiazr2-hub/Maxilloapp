@@ -233,6 +233,29 @@ void testPlanarFields()
     requireVolume(Intersect(Sphere({0.0, 0.0, 0.0}, 10.0), above), sphere - removedCap, 0.03,
                   "sphere above a height map");
 }
+
+void testSmoothIntersection()
+{
+    // A box cut by a half space: the smooth version rounds the crease and never adds material.
+    const auto box = ImplicitCore::Box({0.0, 0.0, 0.0}, {10.0, 10.0, 10.0});
+    const auto below = HalfSpace({0.0, 0.0, 4.0}, {0.0, 0.0, 1.0});
+    const auto hard = Intersect(box, below);
+    const auto soft = SmoothIntersect({box, below}, 2.0);
+    for (const Vec3& p : {Vec3{0.0, 0.0, 0.0}, Vec3{9.5, 9.5, 3.5}, Vec3{10.0, 0.0, 4.0}, Vec3{0.0, 0.0, 20.0}})
+        require(Value(soft, p) >= Value(hard, p) - 1e-12, "the smooth intersection added material");
+    // Far from the crease both agree; at the crease the edge is cut back.
+    require(std::abs(Value(soft, {0.0, 0.0, -5.0}) - Value(hard, {0.0, 0.0, -5.0})) < 1e-9,
+            "the smooth intersection changed the solid away from its edges");
+    require(Value(soft, {9.9, 0.0, 3.9}) > 0.0 && Value(hard, {9.9, 0.0, 3.9}) < 0.0,
+            "the crease was not rounded");
+    const double hardVolume = 20.0 * 20.0 * 14.0;
+    const BuildResult built = Build(soft, nullptr, 0.3, sharpOptions());
+    require(built.ok, "the smooth intersection could not be built");
+    const double volume = volumeOf(built.mesh);
+    require(volume < hardVolume && volume > 0.97 * hardVolume,
+            "the rounded solid volume is off: " + std::to_string(volume));
+    require(SmoothIntersect({box, below}, 0.0)->type == NodeType::Intersect, "a zero radius is not a plain intersection");
+}
 } // namespace
 
 int main()
@@ -246,6 +269,7 @@ int main()
         {"repaired output", testRepairedOutput},
         {"cancellation", testCancellation},
         {"planar fields", testPlanarFields},
+        {"smooth intersection", testSmoothIntersection},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {

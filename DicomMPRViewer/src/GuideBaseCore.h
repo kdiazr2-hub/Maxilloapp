@@ -56,8 +56,13 @@ struct GuideBaseParams
     double thicknessMm = 2.5;      // wall thickness of the guide
     double clearanceMm = 0.0;      // gap left against the anatomy
     double smallestDetailMm = 0.25;
-    int smoothingIterations = 12;  // also rounds the cut edge of the base
+    int smoothingIterations = 30;  // windowed sinc on the contoured guide
     double cornerRadiusMm = 3.0;   // rounding of the marked outline
+    // Finish of the rim, like a printed guide pad: the wall thins towards the edge over `edgeTaperMm`, down to
+    // `edgeThicknessFraction` of its thickness, and the edge is rounded over `edgeRoundMm`. Zeros give a square rim.
+    double edgeTaperMm = 4.0;
+    double edgeThicknessFraction = 0.4;
+    double edgeRoundMm = 1.2;
 };
 
 // The marked patch, rounded and seen along its projection axis.

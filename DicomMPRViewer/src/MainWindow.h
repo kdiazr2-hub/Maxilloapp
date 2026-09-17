@@ -263,6 +263,9 @@ private:
     QLabel* m_guideSourcesLabel = nullptr;
     QDoubleSpinBox* m_guideCornerSpin = nullptr;
     QDoubleSpinBox* m_guideBrushSpin = nullptr;
+    QDoubleSpinBox* m_guideTaperSpin = nullptr;
+    QDoubleSpinBox* m_guideEdgeFractionSpin = nullptr;
+    QDoubleSpinBox* m_guideEdgeRoundSpin = nullptr;
     QCheckBox* m_guideShowModelsCheck = nullptr;
     QCheckBox* m_guideShowWrapCheck = nullptr;
     QCheckBox* m_guideShowGuideCheck = nullptr;
