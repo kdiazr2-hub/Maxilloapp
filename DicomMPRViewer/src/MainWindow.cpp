@@ -5984,6 +5984,9 @@ ProjectState MainWindow::collectProjectState() const
     state.lowerArchMesh      = m_lowerArchMesh;
     state.upperCompositeMesh = m_upperCompositeMesh;
     state.lowerCompositeMesh = m_lowerCompositeMesh;
+    for (const auto& [label, mesh] : m_repositionOriginalMeshes)
+        if (mesh)
+            state.preRepositionMeshes[label] = mesh;
     state.mandibleMovement = m_mandibleMovement;
     state.maxillaBonePoints  = m_maxillaBonePoints;
     state.upperArchPoints    = m_upperArchPoints;
@@ -6171,6 +6174,8 @@ void MainWindow::applyProjectState(const ProjectState& state)
     if (m_splintLowerView) m_splintLowerView->clearMeshes();
     if (m_splintView) m_splintView->clearMeshes();
     m_repositionOriginalMeshes.clear();
+    for (auto it = state.preRepositionMeshes.cbegin(); it != state.preRepositionMeshes.cend(); ++it)
+        m_repositionOriginalMeshes[it.key()] = it.value();
     m_repositionTranslationMm.clear();
     m_repositionRotationDeg.clear();
     m_repositionTargetLabel = -1;
@@ -14355,4 +14360,3 @@ void MainWindow::closeAirwayDialog()
         m_airwayDialog->close();
     }
 }
-

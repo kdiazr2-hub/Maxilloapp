@@ -800,6 +800,14 @@ bool MainWindow::applyOsteotomyCut()
         }
         m_leFortCranialMesh = split.positive;
         m_leFortSegmentMesh = split.negative;
+        // Preserve the osteotomy-time anatomy for the surgical guide. REPOSICIÓN
+        // may move the live meshes later, but the slot remains in this frame.
+        auto originalCranial = vtkSmartPointer<vtkPolyData>::New();
+        originalCranial->DeepCopy(m_leFortCranialMesh);
+        m_repositionOriginalMeshes[kLeFortCranialLabel] = originalCranial;
+        auto originalSegment = vtkSmartPointer<vtkPolyData>::New();
+        originalSegment->DeepCopy(m_leFortSegmentMesh);
+        m_repositionOriginalMeshes[kLeFortSegLabel] = originalSegment;
         commit(kLeFortCranialLabel, m_leFortCranialMesh);
         commit(kLeFortSegLabel, m_leFortSegmentMesh);
         m_segmentReferences[kLeFortSegLabel] = OsteotomyCore::CaptureSegmentReference(m_leFortSegmentMesh, m_ostWizard.path.points);

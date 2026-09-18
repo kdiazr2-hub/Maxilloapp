@@ -287,6 +287,16 @@ bool ProjectSerializer::save(const QString& projectFilePath,
     }
     assets[QStringLiteral("objectMeshes")] = objMeshFiles;
 
+    QJsonObject preRepositionFiles;
+    for (auto it = state.preRepositionMeshes.cbegin(); it != state.preRepositionMeshes.cend(); ++it) {
+        const QString meshPath = aDir + QStringLiteral("/preop_%1.stl").arg(it.key());
+        QString stlErr;
+        if (saveStl(it.value(), meshPath, &stlErr))
+            preRepositionFiles[QString::number(it.key())] = rel(meshPath);
+    }
+    if (!preRepositionFiles.isEmpty())
+        assets[QStringLiteral("preRepositionMeshes")] = preRepositionFiles;
+
     // Special arch / composite meshes
     auto saveMeshAsset = [&](vtkPolyData* mesh, const QString& key, const QString& filename) {
         if (!mesh) return;
@@ -464,6 +474,14 @@ bool ProjectSerializer::load(const QString& projectFilePath,
         const QString meshPath = abs(it.value().toString());
         if (auto mesh = loadStl(meshPath))
             state.objectMeshes[label] = mesh;
+    }
+
+    state.preRepositionMeshes.clear();
+    const QJsonObject preRepositionFiles = assets[QStringLiteral("preRepositionMeshes")].toObject();
+    for (auto it = preRepositionFiles.begin(); it != preRepositionFiles.end(); ++it) {
+        const int label = it.key().toInt();
+        if (auto mesh = loadStl(abs(it.value().toString())))
+            state.preRepositionMeshes[label] = mesh;
     }
 
     // Special meshes

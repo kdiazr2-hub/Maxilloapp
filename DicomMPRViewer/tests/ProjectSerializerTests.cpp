@@ -1,5 +1,6 @@
 #include "CompositeBlockCore.h"
 #include "GuidePlanCore.h"
+#include "ObjectLabels.h"
 #include "OsteotomyCore.h"
 #include "ProjectSerializer.h"
 #include "SplintDesignCore.h"
@@ -141,11 +142,24 @@ void testGuidesPlanRoundTrip()
     ProjectState state;
     state.dicomFolder = QStringLiteral("C:/dicom/caso");
     state.guidesPlan = GuidePlanCore::ToJson(plan);
+    auto preopSource = vtkSmartPointer<vtkCubeSource>::New();
+    preopSource->SetCenter(0.0, 0.0, 12.0);
+    preopSource->Update();
+    auto preopLeFort = vtkSmartPointer<vtkPolyData>::New();
+    preopLeFort->DeepCopy(preopSource->GetOutput());
+    state.preRepositionMeshes[kLeFortSegLabel] = preopLeFort;
     QString error;
     require(ProjectSerializer::save(path, state, &error), "save failed: " + error.toStdString());
     ProjectState loaded;
     require(ProjectSerializer::load(path, loaded, &error), "load failed: " + error.toStdString());
     require(loaded.guidesPlan == state.guidesPlan, "the guides plan changed on disk");
+    require(loaded.preRepositionMeshes.contains(kLeFortSegLabel) &&
+                loaded.preRepositionMeshes[kLeFortSegLabel]->GetNumberOfPolys() > 0,
+            "the pre-reposition Le Fort geometry was not preserved");
+    double preopBounds[6] = {};
+    loaded.preRepositionMeshes[kLeFortSegLabel]->GetBounds(preopBounds);
+    require(preopBounds[4] > 11.0 && preopBounds[5] < 13.0,
+            "the restored pre-reposition Le Fort geometry changed position");
 
     const GuidePlan back = GuidePlanCore::FromJson(loaded.guidesPlan);
     require(back.name == plan.name && back.sourceLabels == plan.sourceLabels && back.contour == plan.contour,

@@ -127,6 +127,12 @@ void testBaseSlotsAndHolesInOneField()
     for (double x : {-10.0, 0.0, 10.0})
         require(solid->At({x, midWall, cutHeightAt(path, x)}) > 0.0,
                 "the slot is not open on the planned cut at x = " + std::to_string(x));
+    // The blade-width opening is centred on the osteotomy and guide material remains immediately on both sides.
+    for (double x : {-8.0, 0.0, 8.0}) {
+        const double cut = cutHeightAt(path, x);
+        require(solid->At({x, midWall, cut - 1.2}) < 0.0 && solid->At({x, midWall, cut + 1.2}) < 0.0,
+                "the slot has no guide border on both sides at x = " + std::to_string(x));
+    }
     // ...and stops before the edge of the guide: that bridge is what holds it together.
     for (double x : {-14.0, 14.0})
         require(solid->At({x, midWall, cutHeightAt(path, x)}) < 0.0,

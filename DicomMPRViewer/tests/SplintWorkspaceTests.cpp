@@ -837,14 +837,17 @@ public:
         window.show();
         settle();
 
-        // The Le Fort segment in its planned position, a wall whose face looks forward (+y), and the cranial base
-        // above it.
+        // The osteotomy-time Le Fort segment is a wall whose face looks forward (+y). The live segment is moved
+        // far away, as REPOSICION may leave it; GUIAS must still use the preserved pre-reposition geometry.
         const auto wall = boxMesh({-25.0, 25.0, -8.0, 0.0, -5.0, 25.0}, false, false);
+        const auto movedWall = boxMesh({-25.0, 25.0, -8.0, 0.0, 25.0, 55.0}, false, false);
         const auto cranium = boxMesh({-30.0, 30.0, -20.0, -2.0, 26.0, 45.0}, false, false);
         window.addObjectEntry(QStringLiteral("Segmento Le Fort I"), QColor(230, 220, 200), kLeFortSegLabel);
-        window.setRepositionMeshForLabel(kLeFortSegLabel, wall);
+        window.setRepositionMeshForLabel(kLeFortSegLabel, movedWall);
+        window.m_repositionOriginalMeshes[kLeFortSegLabel] = wall;
         window.addObjectEntry(QStringLiteral("Base craneal"), QColor(220, 210, 190), kLeFortCranialLabel);
         window.setRepositionMeshForLabel(kLeFortCranialLabel, cranium);
+        window.m_repositionOriginalMeshes[kLeFortCranialLabel] = cranium;
         // A planned Le Fort cut, as the osteotomy wizard would leave it.
         window.rememberOsteotomyCut(QStringLiteral("Le Fort I"),
                                     OsteotomyCore::LeFortPath({{{-10.0, 5.0, 9.4}, {10.0, 5.0, 9.6},
@@ -870,6 +873,13 @@ public:
         require(window.m_guideSourcesLabel->text().contains(QStringLiteral("Segmento Le Fort I")) &&
                     window.m_guideSourcesLabel->text().contains(QStringLiteral("Base craneal")),
                 "the Le Fort guide does not name its two models: " + window.m_guideSourcesLabel->text().toStdString());
+        require(window.m_guideSourcesLabel->text().contains(QStringLiteral("preoperatoria")),
+                "the Le Fort guide does not identify its pre-reposition frame");
+        double sourceBounds[6] = {}, liveBounds[6] = {};
+        window.guideSourceMeshForLabel(kLeFortSegLabel)->GetBounds(sourceBounds);
+        window.repositionMeshForLabel(kLeFortSegLabel)->GetBounds(liveBounds);
+        require(sourceBounds[4] < 0.0 && liveBounds[4] > 20.0,
+                "the Le Fort guide uses the repositioned segment instead of the osteotomy-time segment");
         window.m_guideDetailSpin->setValue(0.5); // coarse: this is a wiring test, not a geometry one
         window.computeGuideWrap();
         settle();

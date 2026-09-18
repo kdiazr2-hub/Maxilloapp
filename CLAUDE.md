@@ -154,8 +154,10 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   bar under it that shows only what the active tool uses. The surface brush drives it: `kModeSculpt` dispatches
   `surfaceBrushed` to the active tool (Ctrl inverts añadir↔quitar, Alt + vertical drag resizes), `kModeTrim` picks
   the trim contour, and `handleGuideSculptKey` (called first from `MainWindow::eventFilter` and `keyPressEvent`)
-  takes +/−, Ctrl+Z, Ctrl+Y, Intro and Esc. `GuideType` decides the envelope (user's rule, 2026-09-16): Le Fort I = Le Fort segment + cranial base,
-  chin = chin segment + post-genioplasty mandible, always in their planned position; the slot list only shows that
+  takes +/−, Ctrl+Z, Ctrl+Y, Intro and Esc. `GuideType` decides the envelope (user's rule, 2026-09-17): Le Fort I = Le Fort segment + cranial base
+  captured at osteotomy time, before REPOSICION; chin = chin segment + post-genioplasty mandible in their planned
+  position. Those optional pre-reposition meshes are persisted with the project. A saw slot is centred on the exact
+  saved osteotomy path and clipped by the configured edge margin so guide material remains on both sides. The slot list only shows that
   type's cuts (`m_guideCuts`, filled by `rememberOsteotomyCut` when the wizard executes a Le Fort or genioplasty and by
   the plan on reload). Imported figures are saved by file path and reloaded from it.
 - Object label constants and `objectActorKey` live in `ObjectLabels.h`.

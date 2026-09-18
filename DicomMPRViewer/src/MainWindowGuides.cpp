@@ -772,6 +772,19 @@ void MainWindow::setGuideType(GuideType type)
     updateGuideUi();
 }
 
+vtkSmartPointer<vtkPolyData> MainWindow::guideSourceMeshForLabel(int label) const
+{
+    // The Le Fort cutting path is defined at osteotomy time. Its guide must be
+    // designed in that same pre-reposition frame, even after the segment moves.
+    if (m_guidePlan.type == GuideType::LeFort) {
+        const auto original = m_repositionOriginalMeshes.find(label);
+        if (original != m_repositionOriginalMeshes.end() && original->second &&
+            original->second->GetNumberOfPolys() > 0)
+            return original->second;
+    }
+    return repositionMeshForLabel(label);
+}
+
 void MainWindow::refreshGuideSources()
 {
     if (m_guidePlan.sourceLabels.empty())
@@ -780,13 +793,16 @@ void MainWindow::refreshGuideSources()
         return;
     QStringList parts;
     for (int label : GuidePlanCore::SourceLabelsFor(m_guidePlan.type)) {
-        const auto mesh = repositionMeshForLabel(label);
+        const auto mesh = guideSourceMeshForLabel(label);
         const bool present = mesh && mesh->GetNumberOfPolys() > 0;
         parts << (present ? QStringLiteral("✓ %1").arg(meshLabelName(label))
                           : tr("✗ %1 (falta)").arg(meshLabelName(label)));
     }
-    m_guideSourcesLabel->setText(tr("Envolvente sobre los modelos en su posición planificada:\n%1")
-                                     .arg(parts.join(QStringLiteral("\n"))));
+    const QString frame = m_guidePlan.type == GuideType::LeFort
+        ? tr("posición preoperatoria, antes de Reposición")
+        : tr("posición planificada");
+    m_guideSourcesLabel->setText(tr("Envolvente sobre los modelos en %1:\n%2")
+                                     .arg(frame, parts.join(QStringLiteral("\n"))));
 }
 
 void MainWindow::refreshGuideCutList()
@@ -834,7 +850,7 @@ void MainWindow::computeGuideWrap()
     std::vector<vtkPolyData*> meshes;
     QStringList missing;
     for (int label : GuidePlanCore::SourceLabelsFor(m_guidePlan.type)) {
-        const auto mesh = repositionMeshForLabel(label);
+        const auto mesh = guideSourceMeshForLabel(label);
         if (mesh && mesh->GetNumberOfPolys() > 0)
             meshes.push_back(mesh);
         else
@@ -1465,9 +1481,10 @@ void MainWindow::syncGuideView()
     if (gizmoRunning)
         return; // rebuilding the scene would drop the figure being moved
     m_guideView->clearMeshes(true);
-    // The models the guide sits on, in their planned position, then the envelope, the guide and the figures.
+    // Le Fort uses the pre-reposition frame so its saved osteotomy and slot coincide.
+    // Other guide types keep their planned-position sources.
     for (int label : GuidePlanCore::SourceLabelsFor(m_guidePlan.type)) {
-        const auto mesh = repositionMeshForLabel(label);
+        const auto mesh = guideSourceMeshForLabel(label);
         if (!mesh || mesh->GetNumberOfPolys() == 0)
             continue;
         const int key = objectActorKey(label);

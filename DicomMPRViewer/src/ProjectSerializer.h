@@ -83,6 +83,8 @@ struct ProjectState
     vtkSmartPointer<vtkImageData>              labelmap;
     QMap<int, vtkSmartPointer<vtkPolyData>>    maskMeshes;   // label → mesh
     QMap<int, vtkSmartPointer<vtkPolyData>>    objectMeshes; // label → mesh
+    // Segment geometry at osteotomy time, before REPOSICIÓN. Optional in older projects.
+    QMap<int, vtkSmartPointer<vtkPolyData>>    preRepositionMeshes;
     vtkSmartPointer<vtkPolyData>               upperArchOriginalMesh;
     vtkSmartPointer<vtkPolyData>               lowerArchOriginalMesh;
     vtkSmartPointer<vtkPolyData>               upperArchMesh;

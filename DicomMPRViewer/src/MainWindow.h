@@ -261,6 +261,7 @@ private:
     void nudgeGuideBrushSize(double deltaMm);
     bool handleGuideSculptKey(QKeyEvent* event); // +/-, Ctrl+Z, Ctrl+Y, Enter, Esc while editing
     std::vector<GuideSlot> guideChosenSlots() const;
+    vtkSmartPointer<vtkPolyData> guideSourceMeshForLabel(int label) const;
     // Cuts the guide can carry a slot for: remembered when an osteotomy is executed.
     void rememberOsteotomyCut(const QString& name, const OsteotomyPath& path, GuideType type);
     QJsonObject guidePlanJson() const;

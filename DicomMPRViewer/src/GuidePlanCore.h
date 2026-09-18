@@ -22,7 +22,7 @@
 // Which guide is being designed; each takes its own models for the envelope.
 enum class GuideType
 {
-    LeFort, // Le Fort I segment + cranial base, in their planned position
+    LeFort, // Le Fort I segment + cranial base, before repositioning
     Chin    // chin segment + mandible after the genioplasty
 };
 
