@@ -133,6 +133,14 @@ GuideDesignResult Build(const GuidePreparation& prepared, const GuideRegion& reg
 GuideDesignResult Build(const GuidePreparation& prepared, const GuideContour& contour,
                         const std::vector<GuideSlot>& slotPlan, const std::vector<GuideFixationHole>& holes,
                         const GuideDesignParams& params = {}, const std::atomic<bool>* cancel = nullptr);
+// Everything an edit must never fill in again: the saw slots, the fixation holes and the subtracted
+// figures, as one field node over `bounds`. It comes from the very nodes the guide was carved with, so
+// `GuideSculptCore`'s brushes are limited by the plan itself. Null when nothing is cut away.
+ImplicitCore::NodePtr KeepOutNode(const GuidePreparation& prepared, const GuideRegion& region,
+                                  const std::vector<GuideSlot>& slotPlan, const std::vector<GuideFixationHole>& holes,
+                                  const std::vector<GuideFigure>& figures, const GuideDesignParams& params,
+                                  const double bounds[6], const std::atomic<bool>* cancel = nullptr,
+                                  QString* error = nullptr);
 // Outward normal of the wrap, to drill a hole or seat a figure along it where the user clicked.
 std::array<double, 3> SurfaceNormalAt(const GuidePreparation& prepared, const std::array<double, 3>& point);
 

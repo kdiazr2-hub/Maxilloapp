@@ -45,6 +45,67 @@ Vec3 cross(const Vec3& a, const Vec3& b)
 {
     return {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
 }
+
+// Everything that must stay empty in the finished guide: the saw slots, the fixation holes and the figures
+// the user subtracts. Both the build and the edit session's keep-out field come from here, so an edit can
+// never fill in what the plan cut away. Returns an empty list and sets `error` when one of them is unusable.
+std::vector<ImplicitCore::NodePtr> cutterNodes(const GuideRegion& region, double spanMm,
+                                               const std::vector<GuideSlot>& slotPlan,
+                                               const std::vector<GuideFixationHole>& holes,
+                                               const std::vector<GuideFigure>& figures,
+                                               const GuideDesignParams& params, const double bounds[6],
+                                               const std::atomic<bool>* cancel, QString* error)
+{
+    std::vector<ImplicitCore::NodePtr> cutters;
+    const double detail = std::clamp(params.base.smallestDetailMm, 0.05, 2.0);
+    for (const GuideFigure& figure : figures) {
+        if (figure.operation != GuideFigureOperation::Subtract)
+            continue;
+        QString figureError;
+        const auto node = GuideDesignCore::FigureNode(figure, detail, &figureError);
+        if (!node) {
+            if (error)
+                *error = figureError.isEmpty() ? QStringLiteral("Una figura no tiene geometría.") : figureError;
+            return {};
+        }
+        cutters.push_back(node);
+    }
+    // Every slot is clipped to the marked region shrunk by the edge margin, so material is always left
+    // around it and the guide comes out in one piece.
+    const double edgeMargin = std::clamp(params.edgeMarginMm, 0.0, 20.0);
+    const auto insideRegion = ImplicitCore::Offset(GuideBaseCore::RegionPrism(region, spanMm), -edgeMargin);
+    for (const GuideSlot& slot : slotPlan) {
+        QString pathError;
+        const auto slab = CutSlotCore::SlotNode(slot.path, bounds, params.slot, cancel, &pathError);
+        if (!slab) {
+            if (error)
+                *error = pathError.isEmpty() ? QStringLiteral("Trayectoria de corte no válida.") : pathError;
+            return {};
+        }
+        std::vector<ImplicitCore::NodePtr> limits{slab, insideRegion};
+        if (slot.hasExtent) {
+            // Between the two ends the user placed: a half space at each, facing along the slot.
+            const Vec3 along{slot.end[0] - slot.start[0], slot.end[1] - slot.start[1], slot.end[2] - slot.start[2]};
+            const double length = std::sqrt(along[0] * along[0] + along[1] * along[1] + along[2] * along[2]);
+            if (length < 1e-6) {
+                if (error)
+                    *error = QStringLiteral("Los dos extremos de la ranura están en el mismo punto.");
+                return {};
+            }
+            const Vec3 direction{along[0] / length, along[1] / length, along[2] / length};
+            limits.push_back(ImplicitCore::HalfSpace(slot.start, {-direction[0], -direction[1], -direction[2]}));
+            limits.push_back(ImplicitCore::HalfSpace(slot.end, direction));
+        }
+        cutters.push_back(ImplicitCore::Intersect(limits));
+    }
+    const double holeLength = std::clamp(params.holeLengthMm, 1.0, 100.0);
+    for (const GuideFixationHole& hole : holes) {
+        if (!(hole.diameterMm > 0.0))
+            continue;
+        cutters.push_back(ImplicitCore::Cylinder(hole.center, hole.axis, 0.5 * hole.diameterMm, 0.5 * holeLength));
+    }
+    return cutters;
+}
 } // namespace
 
 namespace GuideDesignCore
@@ -187,6 +248,27 @@ GuideDesignResult Build(const GuidePreparation& prepared, const GuideContour& co
     return Build(prepared, contour, slotPlan, holes, {}, params, cancel);
 }
 
+ImplicitCore::NodePtr KeepOutNode(const GuidePreparation& prepared, const GuideRegion& region,
+                                  const std::vector<GuideSlot>& slotPlan, const std::vector<GuideFixationHole>& holes,
+                                  const std::vector<GuideFigure>& figures, const GuideDesignParams& params,
+                                  const double bounds[6], const std::atomic<bool>* cancel, QString* error)
+{
+    if (!bounds || !region.valid) {
+        if (error)
+            *error = QStringLiteral("No hay zona marcada para calcular el volumen protegido.");
+        return nullptr;
+    }
+    QString cutterError;
+    const auto cutters =
+        cutterNodes(region, prepared.spanMm, slotPlan, holes, figures, params, bounds, cancel, &cutterError);
+    if (!cutterError.isEmpty()) {
+        if (error)
+            *error = cutterError;
+        return nullptr;
+    }
+    return cutters.empty() ? nullptr : ImplicitCore::Union(cutters);
+}
+
 GuideDesignResult Build(const GuidePreparation& prepared, const GuideContour& contour,
                         const std::vector<GuideSlot>& slotPlan, const std::vector<GuideFixationHole>& holes,
                         const std::vector<GuideFigure>& figures, const GuideDesignParams& params,
@@ -227,22 +309,20 @@ GuideDesignResult Build(const GuidePreparation& prepared, const GuideRegion& reg
 
     // Added figures grow the guide before anything is cut from it.
     std::vector<ImplicitCore::NodePtr> solids{base};
-    std::vector<ImplicitCore::NodePtr> cutters;
     int added = 0, subtracted = 0;
     for (const GuideFigure& figure : figures) {
+        if (figure.operation == GuideFigureOperation::Subtract) {
+            ++subtracted;
+            continue;
+        }
         QString figureError;
         const auto node = FigureNode(figure, detail, &figureError);
         if (!node) {
             result.error = figureError.isEmpty() ? QStringLiteral("Una figura no tiene geometría.") : figureError;
             return result;
         }
-        if (figure.operation == GuideFigureOperation::Add) {
-            solids.push_back(node);
-            ++added;
-        } else {
-            cutters.push_back(node);
-            ++subtracted;
-        }
+        solids.push_back(node);
+        ++added;
     }
     const auto grown = ImplicitCore::Union(solids);
     double bounds[6] = {};
@@ -251,38 +331,14 @@ GuideDesignResult Build(const GuidePreparation& prepared, const GuideRegion& reg
         return result;
     }
 
-    // Slots and holes are carved into the same field as the base, and the whole guide is contoured once.
-    // Every slot is clipped to the marked region shrunk by the edge margin, so material is always left
-    // around it and the guide comes out in one piece.
-    const double edgeMargin = std::clamp(params.edgeMarginMm, 0.0, 20.0);
-    const auto insideRegion = ImplicitCore::Offset(GuideBaseCore::RegionPrism(region, prepared.spanMm), -edgeMargin);
-    for (const GuideSlot& slot : slotPlan) {
-        QString pathError;
-        const auto slab = CutSlotCore::SlotNode(slot.path, bounds, params.slot, cancel, &pathError);
-        if (!slab) {
-            result.error = pathError.isEmpty() ? QStringLiteral("Trayectoria de corte no válida.") : pathError;
-            return result;
-        }
-        std::vector<ImplicitCore::NodePtr> limits{slab, insideRegion};
-        if (slot.hasExtent) {
-            // Between the two ends the user placed: a half space at each, facing along the slot.
-            const Vec3 along{slot.end[0] - slot.start[0], slot.end[1] - slot.start[1], slot.end[2] - slot.start[2]};
-            const double length = std::sqrt(along[0] * along[0] + along[1] * along[1] + along[2] * along[2]);
-            if (length < 1e-6) {
-                result.error = QStringLiteral("Los dos extremos de la ranura están en el mismo punto.");
-                return result;
-            }
-            const Vec3 direction{along[0] / length, along[1] / length, along[2] / length};
-            limits.push_back(ImplicitCore::HalfSpace(slot.start, {-direction[0], -direction[1], -direction[2]}));
-            limits.push_back(ImplicitCore::HalfSpace(slot.end, direction));
-        }
-        cutters.push_back(ImplicitCore::Intersect(limits));
-    }
-    const double holeLength = std::clamp(params.holeLengthMm, 1.0, 100.0);
-    for (const GuideFixationHole& hole : holes) {
-        if (!(hole.diameterMm > 0.0))
-            continue;
-        cutters.push_back(ImplicitCore::Cylinder(hole.center, hole.axis, 0.5 * hole.diameterMm, 0.5 * holeLength));
+    // Slots, holes and subtracted figures are carved into the same field as the base, and the whole guide
+    // is contoured once.
+    QString cutterError;
+    const auto cutters =
+        cutterNodes(region, prepared.spanMm, slotPlan, holes, figures, params, bounds, cancel, &cutterError);
+    if (!cutterError.isEmpty()) {
+        result.error = cutterError;
+        return result;
     }
 
     const auto solid = cutters.empty() ? grown : ImplicitCore::Subtract(grown, ImplicitCore::Union(cutters));
