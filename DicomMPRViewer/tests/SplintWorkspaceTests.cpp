@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 #include "MPRView.h"
 #include "Mesh3DView.h"
+#include "MeshRepairCore.h"
 #include "ObjectLabels.h"
 #include "ProjectSerializer.h"
 #include "SplintContourEditCore.h"
@@ -42,6 +43,7 @@
 #include <vtkTransformPolyDataFilter.h>
 #include <vtkTriangleFilter.h>
 #include <vtkFeatureEdges.h>
+#include <vtkPolyDataConnectivityFilter.h>
 #include <vtkImageData.h>
 #include <vtkMatrix4x4.h>
 #include <vtkPlane.h>
@@ -988,6 +990,97 @@ public:
         window.m_guideShowFiguresCheck->setChecked(true);
         window.m_guideThicknessCheck->setChecked(true); // thickness map must not throw
         settle();
+
+        // 7. EDITAR: the guide as clay. The palette opens on the smoothing tool and the surface brush
+        // drives whichever tool is active.
+        require(window.m_guideEditSection->isVisibleTo(&window), "the edit step did not appear with the guide");
+        window.m_guideEditButton->setChecked(true);
+        settle();
+        require(window.m_guideSculptActive && window.m_guideSculpt.Ready(), "the edit session did not open");
+        require(window.m_guideSculptPalette->isVisibleTo(&window) && window.m_guideSculptTools.size() == 8,
+                "the sculpting palette is not on show");
+        require(window.m_guideSculptTool == 0 && window.m_guidePointMode == 5,
+                "the edit did not start on the smoothing brush");
+        require(!window.m_guideSculptTools[6]->isEnabled(), "undo is offered before anything was edited");
+        require(window.m_guideSculptPalette->grab()
+                    .scaled(window.m_guideSculptPalette->width() * 4, window.m_guideSculptPalette->height() * 4,
+                            Qt::KeepAspectRatio, Qt::SmoothTransformation)
+                    .save(QDir(artifactsDir).filePath(QStringLiteral("guide-tools.png"))),
+                "the sculpting palette was not captured");
+
+        // Points on the guide itself, as the picker would report them.
+        std::vector<std::array<double, 3>> onGuide;
+        for (int step = 0; step < 6; ++step) {
+            double point[3] = {};
+            const vtkIdType index =
+                static_cast<vtkIdType>(step) * window.m_guideMesh->GetNumberOfPoints() / 7;
+            window.m_guideMesh->GetPoint(index, point);
+            onGuide.push_back({point[0], point[1], point[2]});
+        }
+        for (const auto& point : onGuide)
+            window.onGuideSurfaceBrushed(point[0], point[1], point[2], Qt::NoModifier);
+        window.onGuideBrushFinished();
+        settle();
+        require(window.m_guideSculptEdited && window.m_guideSculpt.CanUndo(), "the smoothing stroke was not recorded");
+        require(window.m_guideSculptTools[6]->isEnabled(), "undo is not offered after a stroke");
+
+        // A bead of material added along a stroke, and the contextual bar following the tool.
+        window.setGuideSculptTool(2);
+        require(!window.m_guideSculptLevelRow->isVisibleTo(window.m_guideSculptBar),
+                "adding material offers a level it does not use");
+        for (const auto& point : onGuide)
+            window.onGuideSurfaceBrushed(point[0], point[1], point[2], Qt::NoModifier);
+        window.onGuideBrushFinished();
+        settle();
+        window.setGuideSculptTool(1);
+        require(window.m_guideSculptLevelLabel->text() == QStringLiteral("Calor"),
+                "hot wax does not call its slider heat");
+
+        // A trim: a window over the right-hand end of the guide, swept along the view.
+        window.m_guideView->setStandardView(0);
+        settle();
+        window.setGuideSculptTool(5);
+        require(window.m_guidePointMode == 6 && window.m_guideSculptTrimRow->isVisibleTo(window.m_guideSculptBar),
+                "the trim tool did not switch the panel");
+        for (const auto& point : {std::array<double, 3>{12.0, 0.0, -10.0}, std::array<double, 3>{30.0, 0.0, -10.0},
+                                  std::array<double, 3>{30.0, 0.0, 30.0}, std::array<double, 3>{12.0, 0.0, 30.0}})
+            window.onGuidePointPicked(0, point[0], point[1], point[2]);
+        require(window.m_guideTrimPoints.size() == 4, "the trim contour was not collected");
+        const double beforeTrim = window.m_guideMesh->GetNumberOfPoints();
+        window.applyGuideTrim();
+        settle();
+        require(window.m_guideTrimPoints.empty(), "the trim contour was not cleared after applying it");
+        require(window.m_guideMesh && window.m_guideMesh->GetNumberOfPolys() > 0, "the trim left no guide");
+        require(window.m_guideMesh->GetNumberOfPoints() < beforeTrim, "the trim removed nothing");
+
+        // Undo puts the trim back.
+        window.guideSculptUndo();
+        settle();
+        require(window.m_guideSculpt.CanRedo(), "undo left nothing to redo");
+        require(window.m_guideMesh->GetNumberOfPoints() > 0.9 * beforeTrim, "undo did not put the trim back");
+
+        // Whatever was edited, the guide is still one closed piece.
+        const MeshCheck edited = MeshRepairCore::Analyze(window.m_guideMesh);
+        require(edited.Valid(), "the edited guide is not a closed mesh: " + edited.Summary().toStdString());
+        auto pieces = vtkSmartPointer<vtkPolyDataConnectivityFilter>::New();
+        pieces->SetInputData(window.m_guideMesh);
+        pieces->SetExtractionModeToAllRegions();
+        pieces->Update();
+        require(pieces->GetNumberOfExtractedRegions() == 1, "the edited guide came apart");
+        {
+            window.m_guideView->setStandardView(0);
+            window.m_guideView->render();
+            settle();
+            const QImage shot = window.m_guideView->findChild<QVTKOpenGLNativeWidget*>()->grabFramebuffer();
+            require(shot.save(QDir(artifactsDir).filePath(QStringLiteral("guide-edited.png"))),
+                    "the edited guide screenshot was not written");
+        }
+        window.m_guideEditButton->setChecked(false);
+        settle();
+        require(!window.m_guideSculptActive && window.m_guidePointMode == 0, "leaving the edit left it running");
+        const auto guideObject = window.repositionMeshForLabel(kGuideMeshLabel);
+        require(guideObject && guideObject->GetNumberOfPolys() == window.m_guideMesh->GetNumberOfPolys(),
+                "the edited guide did not become the guide object");
 
         // The plan travels with the project and comes back.
         const QJsonObject saved = window.guidePlanJson();

@@ -14138,6 +14138,11 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
             key->accept();
             return true;
         }
+        // The sculpting shortcuts come first while the guide is being edited.
+        if (handleGuideSculptKey(key)) {
+            key->accept();
+            return true;
+        }
         if (key->key() == Qt::Key_Space &&
             key->modifiers() == Qt::NoModifier &&
             toggleViewUnderCursor()) {
@@ -14161,6 +14166,10 @@ void MainWindow::keyPressEvent(QKeyEvent* event)
 {
     if (event->key() == Qt::Key_Escape && m_fillBoneCavityLabel > 0) {
         cancelBoneCavityFill();
+        event->accept();
+        return;
+    }
+    if (handleGuideSculptKey(event)) {
         event->accept();
         return;
     }

@@ -11,6 +11,7 @@
 #include "AppStateManager.h"
 #include "SplintDesignCore.h"
 #include "GuidePlanCore.h"
+#include "GuideSculptCore.h"
 #include "OsteotomyCore.h"
 #include <QPointer>
 #include "CompositeBlockCore.h"
@@ -246,6 +247,20 @@ private:
     void onGuideBrushFinished();
     void repaintGuideWrap();
     void applyGuideLayers();
+    // GUIAS - EDITAR: the finished guide sculpted like Freeform's clay (MainWindowGuides.cpp).
+    void setGuideEditActive(bool active);
+    void setGuideSculptTool(int tool);
+    void updateGuideSculptBar();
+    void onGuideSculptBrushed(double x, double y, double z, Qt::KeyboardModifiers modifiers);
+    void onGuideSculptFinished();
+    void refreshGuideSculptMesh(bool fast);
+    void applyGuideTrim();
+    void clearGuideTrim();
+    void guideSculptUndo();
+    void guideSculptRedo();
+    void nudgeGuideBrushSize(double deltaMm);
+    bool handleGuideSculptKey(QKeyEvent* event); // +/-, Ctrl+Z, Ctrl+Y, Enter, Esc while editing
+    std::vector<GuideSlot> guideChosenSlots() const;
     // Cuts the guide can carry a slot for: remembered when an osteotomy is executed.
     void rememberOsteotomyCut(const QString& name, const OsteotomyPath& path, GuideType type);
     QJsonObject guidePlanJson() const;
@@ -304,7 +319,37 @@ private:
     QWidget* m_guideHoleSection = nullptr;
     QWidget* m_guideFiguresSection = nullptr;
     QWidget* m_guideBuildSection = nullptr;
+    QWidget* m_guideEditSection = nullptr;
     QWidget* m_guideExportSection = nullptr;
+    // EDITAR: the tool palette, its contextual bar and the session behind them.
+    QPushButton* m_guideEditButton = nullptr;
+    QVector<QToolButton*> m_guideSculptTools;
+    QVector<QToolButton*> m_guideSculptModes;
+    QWidget* m_guideSculptPalette = nullptr;
+    QWidget* m_guideSculptBar = nullptr;
+    QWidget* m_guideSculptSizeRow = nullptr;
+    QWidget* m_guideSculptLevelRow = nullptr;
+    QWidget* m_guideSculptModeRow = nullptr;
+    QWidget* m_guideSculptTrimRow = nullptr;
+    QDoubleSpinBox* m_guideSculptSizeSpin = nullptr;
+    QSlider* m_guideSculptLevelSlider = nullptr;
+    QLabel* m_guideSculptLevelLabel = nullptr;
+    QCheckBox* m_guideTrimInvertCheck = nullptr;
+    QTimer* m_guideSculptPreviewTimer = nullptr;
+    SculptSession m_guideSculpt;
+    GuideRegion m_guideRegion;                 // the region the guide was built from, reused by the edit
+    std::vector<GuideSlot> m_guideBuiltSlots;  // and the slots, for the keep-out field
+    std::vector<std::array<double, 3>> m_guideTrimPoints;
+    int m_guideSculptTool = 0;
+    int m_guideWaxMode = 0;
+    int m_guideSmoothScope = 0;
+    int m_guideFlattenMode = 0;
+    bool m_guideSculptActive = false;
+    bool m_guideSculptStroking = false;
+    bool m_guideSculptHasLast = false;
+    bool m_guideSculptEdited = false;
+    bool m_guideSculptDirty = false;
+    std::array<double, 3> m_guideSculptLast{0.0, 0.0, 0.0};
     QLabel* m_guideReportLabel = nullptr;
     GuidePlan m_guidePlan;
     GuidePreparation m_guidePrepared;

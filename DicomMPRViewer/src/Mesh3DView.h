@@ -121,6 +121,9 @@ public:
     // deltas to resize the brush. Right drag still rotates.
     void setSurfaceBrushMode(bool active);
 
+    // Where the camera looks (focal - position, normalised): the axis a trim sweeps along.
+    std::array<double, 3> viewDirection() const;
+
     static bool RayPlaneIntersection(const std::array<double, 3>& rayStart, const std::array<double, 3>& rayEnd,
                                      const std::array<double, 3>& planeOrigin, const std::array<double, 3>& planeNormal,
                                      std::array<double, 3>& hit);

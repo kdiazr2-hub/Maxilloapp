@@ -32,7 +32,7 @@ Tests (CTest):
 - `GeometryCoreTests`, `BoneCavityFillTests`, `MeshGeneratorTests` — plain C++ executables
 - `MaskToObjectTests` checks exact label extraction, committed cavity filling and immutable input.
 - `ModelWorkflowTests` checks guided MODELOS steps, paired point requirements, fine adjustment and mandatory acceptance.
-- `SplintHeightmapTests`, `SplintDesignTests`, `SplintContourEditTests`, `SplintPreviewSchedulerTests`, `ProjectSerializerTests`, `CompositeBlockTests`, `MeshRepairTests`, `OsteotomyCoreTests`, `CollisionTests`, `ImplicitCoreTests`, `WrapCoreTests`, `GuideBaseTests`, `CutSlotTests`, `GuideDesignTests`, `GuidePlanTests`, `SegmentationProgressTests` — core tests declared with `add_core_test()`; synthetic arches in `tests/SplintTestGeometry.h`
+- `SplintHeightmapTests`, `SplintDesignTests`, `SplintContourEditTests`, `SplintPreviewSchedulerTests`, `ProjectSerializerTests`, `CompositeBlockTests`, `MeshRepairTests`, `OsteotomyCoreTests`, `CollisionTests`, `ImplicitCoreTests`, `WrapCoreTests`, `GuideBaseTests`, `CutSlotTests`, `GuideDesignTests`, `GuideSculptTests`, `GuidePlanTests`, `SegmentationProgressTests` — core tests declared with `add_core_test()`; synthetic arches in `tests/SplintTestGeometry.h`
 - `SplintWorkspaceTests` also covers the composite block flow and the osteotomy wizard (Le Fort I → BSSO → genioplasty)
 - `RepositionWorkspaceTests`, `SplintWorkspaceTests` — instantiate `MainWindow` (declared `friend`), render offscreen, write PNGs to `build/workspace-test-artifacts`
 - `Mesh3DViewInteractionTests` — drives `Mesh3DView` offscreen with synthetic mouse events
@@ -124,13 +124,37 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   `GuideFigure`s are the Boolean tools (cylinder, box, sphere with exact measurements, or an imported STL centred on
   its middle): a local frame (`FrameAt`, z along the surface normal) and Add/Subtract, carved into the same field
   (guide = (base ∪ added) − slots − holes − subtracted); `FigurePreview` draws them.
+  `GuideDesignCore::KeepOutNode` returns slots + holes + subtracted figures as one node: `Build` and the edit
+  session's protected field both come from that one list, so an edit can never fill in what the plan cut away.
+- `GuideSculptCore` is the EDITAR step: Freeform's clay, except the clay is the signed distance grid the guide was
+  contoured from. `SculptSession::Reset` bakes the finished guide (`BakeMeshField`, detail spacing, ≥ 3 mm padding so
+  material can be added outside it) and the brushes edit that grid: Suavizar `φ += w·λ·(G∗φ − φ)` with a 3×3×3
+  separable kernel and a level that runs 50-fold from end to end (`LevelScale`), Cera caliente (derretir = wider
+  kernel reaching 1.5 R, suavizar, añadir/quitar `∓ δ·w`), Añadir/Quitar material (`min`/`max` against an
+  `ImplicitCore::Capsule` from the previous dab to this one, so a fast drag leaves no gaps), Aplanar on a plane
+  fitted by PCA to the surface voxels under the brush and oriented with the field's gradient (aplanar / rascar =
+  only `max` / rellenar = only `min`). `Trim` is Split Piece: a polygon clicked on the guide swept along
+  `Mesh3DView::viewDirection()` as an `ImplicitCore::Prism`, then `KeepLargestPiece` (Select Lump) drops the islands.
+  Two fields are re-applied after every stroke, in `EndStroke`: the anatomy (`φ = max(φ, clearance − wrapDist)`) and
+  the baked keep-out (`φ = max(φ, −keepOut)`). Undo is per stroke in 32³ blocks saved before they are touched and
+  swapped back, capped at 30 strokes or ~300 MB. `Contour(fast)` is the raw preview during a drag (no sinc, no
+  repair, throttled to ~10 Hz by a `QTimer`); letting go contours properly and that mesh becomes `m_guideMesh`.
+  Smoothing never accumulates because every stroke starts from the grid, not from the previous mesh.
   The GUIAS module is the eighth ORTOGNÁTICA step: `MainWindowGuides.cpp` holds the side panel (guide type → wrap →
   paint the support region (drag; Ctrl erases; Alt + vertical drag resizes; the envelope is its own teal layer with
   the painted patch in blue, and CAPAS toggles models / envelope / guide / figures; computing the envelope hides the
   bone and makes it opaque) → tick which osteotomies get a
   slot and place its ends →
-  figures placed by click and moved with the gizmo → fixation holes → build, thickness map, STL export) and workspace
-  page 7. `GuideType` decides the envelope (user's rule, 2026-09-16): Le Fort I = Le Fort segment + cranial base,
+  figures placed by click and moved with the gizmo → fixation holes → build → edit → thickness map, STL export) and
+  workspace page 7. The panel shows only the six steps (tipo, zona de apoyo, ranuras, agujeros, crear, editar,
+  exportar), each appearing when the step before it has produced something, with one short hint line per mode; the
+  layers are a single row of toggles and everything with a sensible default lives in the folded «Avanzado» and
+  «Figuras» sections. EDITAR is a palette of eight square `QToolButton`s whose icons are drawn with `QPainter` in
+  `MainWindowGuides.cpp` (`sculptPixmap`; deliberately our own drawing, not anyone else's files) and a contextual
+  bar under it that shows only what the active tool uses. The surface brush drives it: `kModeSculpt` dispatches
+  `surfaceBrushed` to the active tool (Ctrl inverts añadir↔quitar, Alt + vertical drag resizes), `kModeTrim` picks
+  the trim contour, and `handleGuideSculptKey` (called first from `MainWindow::eventFilter` and `keyPressEvent`)
+  takes +/−, Ctrl+Z, Ctrl+Y, Intro and Esc. `GuideType` decides the envelope (user's rule, 2026-09-16): Le Fort I = Le Fort segment + cranial base,
   chin = chin segment + post-genioplasty mandible, always in their planned position; the slot list only shows that
   type's cuts (`m_guideCuts`, filled by `rememberOsteotomyCut` when the wizard executes a Le Fort or genioplasty and by
   the plan on reload). Imported figures are saved by file path and reloaded from it.

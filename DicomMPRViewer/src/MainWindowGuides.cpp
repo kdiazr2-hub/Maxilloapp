@@ -13,6 +13,7 @@
 #include "MainWindow.h"
 
 #include "Mesh3DView.h"
+#include "GuideSculptCore.h"
 #include "MeshRepairCore.h"
 #include "ObjectLabels.h"
 #include "SplintHeightmapGenerator.h"
@@ -25,14 +26,23 @@
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QFrame>
+#include <QGridLayout>
 #include <QHBoxLayout>
+#include <QIcon>
+#include <QKeyEvent>
 #include <QLabel>
+#include <QPainter>
+#include <QPainterPath>
+#include <QPixmap>
 #include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSlider>
 #include <QStackedWidget>
 #include <QStatusBar>
+#include <QTimer>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include <vtkIdList.h>
@@ -61,6 +71,197 @@ constexpr int kModeRegion = 1;
 constexpr int kModeSlotEnds = 2;
 constexpr int kModeHoles = 3;
 constexpr int kModeFigure = 4;
+constexpr int kModeSculpt = 5;
+constexpr int kModeTrim = 6;
+
+// The EDITAR palette, in the order the buttons sit in the grid.
+constexpr int kToolSmooth = 0;
+constexpr int kToolWax = 1;
+constexpr int kToolAdd = 2;
+constexpr int kToolRemove = 3;
+constexpr int kToolFlatten = 4;
+constexpr int kToolTrim = 5;
+constexpr int kToolUndo = 6;
+constexpr int kToolRedo = 7;
+constexpr int kIconSmooth = kToolSmooth;
+constexpr int kIconWax = kToolWax;
+constexpr int kIconAdd = kToolAdd;
+constexpr int kIconRemove = kToolRemove;
+constexpr int kIconFlatten = kToolFlatten;
+constexpr int kIconTrim = kToolTrim;
+constexpr int kIconUndo = kToolUndo;
+constexpr int kIconRedo = kToolRedo;
+
+// The palette icons, drawn here rather than shipped as files: a clay ball for the brushes that work it,
+// a spatula for the plane, a blade for the trim and two curved arrows for the history. Same idea as the
+// sculpting palettes these tools come from, but our own drawing.
+QPixmap sculptPixmap(int kind, int size)
+{
+    QPixmap pixmap(size, size);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    const double u = size / 48.0; // the drawing is laid out on a 48 x 48 grid
+    const QRectF ball(7.0 * u, 7.0 * u, 34.0 * u, 34.0 * u);
+    const auto clay = [&](const QColor& light, const QColor& dark) {
+        QRadialGradient gradient(ball.center() - QPointF(ball.width() * 0.25, ball.height() * 0.28),
+                                 ball.width() * 1.05);
+        gradient.setColorAt(0.0, light);
+        gradient.setColorAt(1.0, dark);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(gradient);
+        painter.drawEllipse(ball);
+    };
+    const auto stroke = [&](const QColor& color, double width) {
+        QPen pen(color);
+        pen.setWidthF(width);
+        pen.setCapStyle(Qt::RoundCap);
+        pen.setJoinStyle(Qt::RoundJoin);
+        painter.setPen(pen);
+        painter.setBrush(Qt::NoBrush);
+    };
+
+    switch (kind) {
+    case kIconSmooth: {
+        clay(QColor(226, 230, 238), QColor(118, 126, 140));
+        QPainterPath clip;
+        clip.addEllipse(ball);
+        painter.setClipPath(clip);
+        // Three ripples, each flatter than the one above it: the surface being smoothed out.
+        for (int row = 0; row < 3; ++row) {
+            const double y = ball.top() + ball.height() * (0.28 + 0.22 * row);
+            const double amplitude = 4.5 * u * (1.0 - 0.45 * row);
+            QPainterPath wave;
+            wave.moveTo(ball.left() - u, y);
+            for (int seg = 0; seg < 4; ++seg) {
+                const double x0 = ball.left() - u + ball.width() * 0.3 * seg;
+                const double x1 = x0 + ball.width() * 0.3;
+                wave.quadTo(0.5 * (x0 + x1), y + (seg % 2 == 0 ? -amplitude : amplitude), x1, y);
+            }
+            stroke(QColor(44, 50, 62), 2.6 * u);
+            painter.drawPath(wave);
+        }
+        painter.setClipping(false);
+        break;
+    }
+    case kIconWax: {
+        // A flame over a ball of wax that is running off it.
+        QPainterPath flame;
+        flame.moveTo(24.0 * u, 0.5 * u);
+        flame.cubicTo(34.0 * u, 8.0 * u, 31.0 * u, 13.0 * u, 24.0 * u, 15.0 * u);
+        flame.cubicTo(17.0 * u, 13.0 * u, 14.0 * u, 8.0 * u, 24.0 * u, 0.5 * u);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(255, 214, 80));
+        painter.drawPath(flame);
+        clay(QColor(255, 198, 126), QColor(206, 96, 12));
+        painter.setBrush(QColor(224, 124, 30));
+        painter.drawEllipse(QPointF(17.0 * u, 42.0 * u), 3.6 * u, 4.8 * u);
+        painter.drawEllipse(QPointF(31.0 * u, 40.5 * u), 2.8 * u, 3.8 * u);
+        break;
+    }
+    case kIconAdd:
+    case kIconRemove: {
+        clay(QColor(196, 202, 214), QColor(96, 104, 118));
+        const QColor sign = kind == kIconAdd ? QColor(60, 220, 100) : QColor(255, 82, 72);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(sign);
+        const QPointF center = ball.center();
+        const double arm = 12.0 * u, thick = 4.4 * u;
+        QPainterPath cross;
+        cross.addRoundedRect(QRectF(center.x() - arm, center.y() - thick, 2 * arm, 2 * thick), thick, thick);
+        if (kind == kIconAdd)
+            cross.addRoundedRect(QRectF(center.x() - thick, center.y() - arm, 2 * thick, 2 * arm), thick, thick);
+        painter.drawPath(cross.simplified());
+        break;
+    }
+    case kIconFlatten: {
+        // The surface, already flat, and the spatula riding over it.
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(92, 99, 112));
+        painter.drawRoundedRect(QRectF(2.0 * u, 36.0 * u, 44.0 * u, 9.0 * u), 2.5 * u, 2.5 * u);
+        painter.save();
+        painter.translate(24.0 * u, 26.0 * u);
+        painter.rotate(-14.0);
+        painter.setBrush(QColor(232, 236, 244));
+        painter.drawRoundedRect(QRectF(-19.0 * u, 0.0, 38.0 * u, 6.0 * u), 2.5 * u, 2.5 * u);
+        painter.setBrush(QColor(150, 158, 172));
+        painter.drawRoundedRect(QRectF(8.0 * u, -17.0 * u, 5.5 * u, 18.0 * u), 2.5 * u, 2.5 * u);
+        painter.restore();
+        break;
+    }
+    case kIconTrim: {
+        // The dashed line the user draws, and the blade cutting along it.
+        QPen dashed(QColor(170, 178, 190));
+        dashed.setWidthF(2.8 * u);
+        dashed.setStyle(Qt::DashLine);
+        dashed.setCapStyle(Qt::FlatCap);
+        painter.setPen(dashed);
+        painter.setBrush(Qt::NoBrush);
+        painter.drawLine(QPointF(2.0 * u, 40.0 * u), QPointF(46.0 * u, 40.0 * u));
+        QPainterPath blade;
+        blade.moveTo(31.0 * u, 2.0 * u);
+        blade.lineTo(39.0 * u, 8.0 * u);
+        blade.lineTo(17.0 * u, 34.0 * u);
+        blade.lineTo(11.0 * u, 30.0 * u);
+        blade.closeSubpath();
+        painter.setPen(QPen(QColor(24, 28, 36, 150), 1.2 * u));
+        painter.setBrush(QColor(236, 240, 248));
+        painter.drawPath(blade);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(80, 86, 98));
+        painter.save();
+        painter.translate(35.0 * u, 5.0 * u);
+        painter.rotate(-54.0);
+        painter.drawRoundedRect(QRectF(-5.0 * u, -4.0 * u, 12.0 * u, 8.0 * u), 2.0 * u, 2.0 * u);
+        painter.restore();
+        break;
+    }
+    case kIconUndo:
+    case kIconRedo: {
+        painter.save();
+        if (kind == kIconRedo) { // the same arrow, mirrored
+            painter.translate(size, 0);
+            painter.scale(-1.0, 1.0);
+        }
+        const QRectF circle(9.0 * u, 11.0 * u, 30.0 * u, 28.0 * u);
+        QPainterPath arc;
+        arc.arcMoveTo(circle, 150.0);
+        arc.arcTo(circle, 150.0, -235.0);
+        stroke(QColor(232, 236, 244), 3.6 * u);
+        painter.drawPath(arc);
+        // The head sits on the free end of the arc, pointing the way it came from.
+        const QPointF tip = arc.pointAtPercent(0.0);
+        const QPointF back = arc.pointAtPercent(0.08);
+        QPointF along = tip - back;
+        const double length = std::hypot(along.x(), along.y());
+        if (length > 1e-6) {
+            along /= length;
+            const QPointF side(-along.y(), along.x());
+            QPainterPath head;
+            head.moveTo(tip + along * 9.5 * u);
+            head.lineTo(tip - along * 2.5 * u + side * 7.0 * u);
+            head.lineTo(tip - along * 2.5 * u - side * 7.0 * u);
+            head.closeSubpath();
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(QColor(232, 236, 244));
+            painter.drawPath(head);
+        }
+        painter.restore();
+        break;
+    }
+    default:
+        break;
+    }
+    return pixmap;
+}
+
+QIcon sculptIcon(int kind)
+{
+    QIcon icon;
+    for (int size : {28, 56})
+        icon.addPixmap(sculptPixmap(kind, size));
+    return icon;
+}
 
 constexpr int kGuideFigureActorBase = -560; // one actor per figure, counting down
 
@@ -147,6 +348,15 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
                                         "  border:1px solid #3a3a3c; border-radius:8px; font-size:11px; }"
                                         "#GuideControlPanel QComboBox { background:#2c2c2e; color:#f5f5f7;"
                                         "  border:1px solid #3a3a3c; border-radius:8px; padding:4px 8px; }"
+                                        "#GuideControlPanel QToolButton { background:#2c2c2e; color:#f5f5f7;"
+                                        "  border:1px solid #3a3a3c; border-radius:8px; }"
+                                        "#GuideControlPanel QToolButton:hover { background:#3a3a3c; }"
+                                        "#GuideControlPanel QToolButton:checked { background:#0a84ff;"
+                                        "  border-color:#64d2ff; }"
+                                        "#GuideControlPanel QToolButton:disabled { background:#232325;"
+                                        "  border-color:#2c2c2e; color:#6e6e73; }"
+                                        "#GuideControlPanel QToolButton#GuideMode { font-size:10px;"
+                                        "  padding:3px 7px; }"
                                         "#GuideControlPanel QCheckBox { color:#c7c7cc; font-size:11px; }"
                                         "#GuideControlPanel QLabel { color:#c7c7cc; font-size:11px; }"));
     auto* layout = new QVBoxLayout(panel);
@@ -345,7 +555,128 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
     connect(m_guideBuildButton, &QPushButton::clicked, this, &MainWindow::buildGuideMesh);
     buildBox->addWidget(m_guideBuildButton);
 
-    // ── 6. Export ─────────────────────────────────────────────────────────
+    // ── 6. Edit: the finished guide as clay ───────────────────────────────
+    auto* editBox = step(tr("6. EDITAR"));
+    m_guideEditSection = editBox->parentWidget();
+    m_guideEditButton = new QPushButton(tr("Editar la guía"), panel);
+    m_guideEditButton->setCheckable(true);
+    connect(m_guideEditButton, &QPushButton::toggled, this, &MainWindow::setGuideEditActive);
+    editBox->addWidget(m_guideEditButton);
+
+    // The palette: one square button per tool, as Freeform's tool tray.
+    m_guideSculptPalette = new QWidget(panel);
+    auto* palette = new QGridLayout(m_guideSculptPalette);
+    palette->setContentsMargins(0, 2, 0, 2);
+    palette->setSpacing(4);
+    const std::vector<std::tuple<int, QString, QString>> tools = {
+        {kIconSmooth, tr("Suavizar"), QStringLiteral("1")},
+        {kIconWax, tr("Cera caliente"), QStringLiteral("2")},
+        {kIconAdd, tr("Añadir material"), QStringLiteral("3")},
+        {kIconRemove, tr("Quitar material"), QStringLiteral("4")},
+        {kIconFlatten, tr("Aplanar"), QStringLiteral("5")},
+        {kIconTrim, tr("Recortar"), QStringLiteral("6")},
+        {kIconUndo, tr("Deshacer"), QStringLiteral("Ctrl+Z")},
+        {kIconRedo, tr("Rehacer"), QStringLiteral("Ctrl+Y")},
+    };
+    for (int index = 0; index < static_cast<int>(tools.size()); ++index) {
+        const auto& [icon, name, shortcut] = tools[static_cast<size_t>(index)];
+        auto* button = new QToolButton(m_guideSculptPalette);
+        button->setIcon(sculptIcon(icon));
+        button->setIconSize(QSize(28, 28));
+        button->setFixedSize(40, 40);
+        button->setToolTip(QStringLiteral("%1 (%2)").arg(name, shortcut));
+        button->setCheckable(index < kToolUndo);
+        connect(button, &QToolButton::clicked, this, [this, index] {
+            if (index == kToolUndo)
+                guideSculptUndo();
+            else if (index == kToolRedo)
+                guideSculptRedo();
+            else
+                setGuideSculptTool(index);
+        });
+        palette->addWidget(button, index / 4, index % 4);
+        m_guideSculptTools.append(button);
+    }
+    editBox->addWidget(m_guideSculptPalette);
+
+    // The contextual bar: only what the active tool uses.
+    m_guideSculptBar = new QWidget(panel);
+    auto* bar = new QVBoxLayout(m_guideSculptBar);
+    bar->setContentsMargins(0, 0, 0, 0);
+    bar->setSpacing(4);
+
+    m_guideSculptSizeRow = new QWidget(m_guideSculptBar);
+    auto* sizeRow = new QHBoxLayout(m_guideSculptSizeRow);
+    sizeRow->setContentsMargins(0, 0, 0, 0);
+    sizeRow->setSpacing(4);
+    sizeRow->addWidget(new QLabel(tr("Tamaño"), m_guideSculptSizeRow));
+    m_guideSculptSizeSpin = new QDoubleSpinBox(m_guideSculptSizeRow);
+    m_guideSculptSizeSpin->setRange(0.5, 20.0);
+    m_guideSculptSizeSpin->setSingleStep(0.5);
+    m_guideSculptSizeSpin->setDecimals(1);
+    m_guideSculptSizeSpin->setValue(3.0);
+    m_guideSculptSizeSpin->setSuffix(tr(" mm"));
+    sizeRow->addWidget(m_guideSculptSizeSpin, 1);
+    for (const auto& [text, deltaMm] : {std::pair{QStringLiteral("−"), -0.5}, std::pair{QStringLiteral("+"), 0.5}}) {
+        auto* nudge = new QToolButton(m_guideSculptSizeRow);
+        nudge->setText(text);
+        nudge->setFixedSize(24, 24);
+        connect(nudge, &QToolButton::clicked, this, [this, deltaMm] { nudgeGuideBrushSize(deltaMm); });
+        sizeRow->addWidget(nudge);
+    }
+    bar->addWidget(m_guideSculptSizeRow);
+
+    m_guideSculptLevelRow = new QWidget(m_guideSculptBar);
+    auto* levelRow = new QHBoxLayout(m_guideSculptLevelRow);
+    levelRow->setContentsMargins(0, 0, 0, 0);
+    levelRow->setSpacing(4);
+    m_guideSculptLevelLabel = new QLabel(tr("Nivel"), m_guideSculptLevelRow);
+    levelRow->addWidget(m_guideSculptLevelLabel);
+    m_guideSculptLevelSlider = new QSlider(Qt::Horizontal, m_guideSculptLevelRow);
+    m_guideSculptLevelSlider->setRange(0, 100);
+    m_guideSculptLevelSlider->setValue(50);
+    levelRow->addWidget(m_guideSculptLevelSlider, 1);
+    bar->addWidget(m_guideSculptLevelRow);
+
+    m_guideSculptModeRow = new QWidget(m_guideSculptBar);
+    auto* modeRow = new QHBoxLayout(m_guideSculptModeRow);
+    modeRow->setContentsMargins(0, 0, 0, 0);
+    modeRow->setSpacing(4);
+    for (int index = 0; index < 4; ++index) {
+        auto* mode = new QToolButton(m_guideSculptModeRow);
+        mode->setObjectName(QStringLiteral("GuideMode"));
+        mode->setCheckable(true);
+        connect(mode, &QToolButton::clicked, this, [this, index] {
+            switch (m_guideSculptTool) {
+            case kToolSmooth: m_guideSmoothScope = index; break;
+            case kToolWax: m_guideWaxMode = index; break;
+            case kToolFlatten: m_guideFlattenMode = index; break;
+            default: break;
+            }
+            updateGuideSculptBar();
+        });
+        modeRow->addWidget(mode);
+        m_guideSculptModes.append(mode);
+    }
+    modeRow->addStretch(1);
+    bar->addWidget(m_guideSculptModeRow);
+
+    m_guideSculptTrimRow = new QWidget(m_guideSculptBar);
+    auto* trimRow = new QHBoxLayout(m_guideSculptTrimRow);
+    trimRow->setContentsMargins(0, 0, 0, 0);
+    trimRow->setSpacing(4);
+    m_guideTrimInvertCheck = new QCheckBox(tr("Invertir"), m_guideSculptTrimRow);
+    trimRow->addWidget(m_guideTrimInvertCheck);
+    auto* trimApply = new QPushButton(tr("Aplicar"), m_guideSculptTrimRow);
+    connect(trimApply, &QPushButton::clicked, this, &MainWindow::applyGuideTrim);
+    trimRow->addWidget(trimApply);
+    auto* trimClear = new QPushButton(tr("Limpiar"), m_guideSculptTrimRow);
+    connect(trimClear, &QPushButton::clicked, this, &MainWindow::clearGuideTrim);
+    trimRow->addWidget(trimClear);
+    bar->addWidget(m_guideSculptTrimRow);
+    editBox->addWidget(m_guideSculptBar);
+
+    // ── 7. Export ─────────────────────────────────────────────────────────
     auto* exportBox = step(tr("6. EXPORTAR"));
     m_guideExportSection = exportBox->parentWidget();
     m_guideThicknessCheck = new QCheckBox(tr("Mapa de espesor"), panel);
@@ -407,6 +738,8 @@ void MainWindow::setGuidesWorkspace(bool enabled)
     if (m_viewModeStack && enabled)
         m_viewModeStack->setCurrentIndex(7);
     if (!enabled) {
+        if (m_guideSculptActive)
+            setGuideEditActive(false);
         setGuidePointMode(kModeNone);
         if (m_guideMoveFigureButton && m_guideMoveFigureButton->isChecked())
             m_guideMoveFigureButton->setChecked(false);
@@ -569,16 +902,28 @@ void MainWindow::setGuidePointMode(int mode)
         QSignalBlocker blocker(button);
         button->setChecked(mode == owned);
     }
+    if (mode != kModeSculpt && mode != kModeTrim)
+        for (QToolButton* tool : m_guideSculptTools) {
+            if (!tool->isCheckable())
+                continue;
+            QSignalBlocker blocker(tool);
+            tool->setChecked(false);
+        }
     if (m_guideView) {
-        // The region is painted with the surface brush; the other modes pick points.
-        m_guideView->setSurfaceBrushMode(mode == kModeRegion);
-        m_guideView->setPointPickMode(mode != kModeNone && mode != kModeRegion);
+        // The region and the sculpting tools use the surface brush; the other modes pick points.
+        m_guideView->setSurfaceBrushMode(mode == kModeRegion || mode == kModeSculpt);
+        m_guideView->setPointPickMode(mode == kModeSlotEnds || mode == kModeHoles || mode == kModeFigure ||
+                                      mode == kModeTrim);
     }
     updateGuideUi();
 }
 
 void MainWindow::onGuideSurfaceBrushed(double x, double y, double z, Qt::KeyboardModifiers modifiers)
 {
+    if (m_guidePointMode == kModeSculpt) {
+        onGuideSculptBrushed(x, y, z, modifiers);
+        return;
+    }
     if (m_guidePointMode != kModeRegion || !m_guideWrapMesh)
         return;
     GuideBrushStroke stroke;
@@ -621,6 +966,10 @@ void MainWindow::onGuideSurfaceBrushed(double x, double y, double z, Qt::Keyboar
 
 void MainWindow::onGuideBrushRadiusDragged(double deltaYPixels)
 {
+    if (m_guidePointMode == kModeSculpt) {
+        nudgeGuideBrushSize(-0.05 * deltaYPixels); // Alt + dragging up grows the sculpting brush
+        return;
+    }
     if (m_guidePointMode != kModeRegion || !m_guideBrushSpin)
         return;
     // Dragging up grows the brush.
@@ -630,6 +979,10 @@ void MainWindow::onGuideBrushRadiusDragged(double deltaYPixels)
 
 void MainWindow::onGuideBrushFinished()
 {
+    if (m_guidePointMode == kModeSculpt) {
+        onGuideSculptFinished();
+        return;
+    }
     updateGuideUi();
 }
 
@@ -709,6 +1062,9 @@ void MainWindow::onGuidePointPicked(int, double x, double y, double z)
         m_guideCutList->currentItem()->setCheckState(Qt::Checked);
         break;
     }
+    case kModeTrim:
+        m_guideTrimPoints.push_back(point);
+        break;
     case kModeHoles: {
         GuideFixationHole hole;
         hole.center = point;
@@ -893,6 +1249,8 @@ void MainWindow::rebuildGuideMarkers()
     m_guideView->clearPointMarkers();
     for (const auto& p : m_guidePlan.contour)
         m_guideView->addPointMarker(p[0], p[1], p[2], kRegionColor);
+    for (const auto& p : m_guideTrimPoints)
+        m_guideView->addPointMarker(p[0], p[1], p[2], kSubtractColor);
     for (const auto& slot : m_guidePlan.slotPlan)
         if (slot.hasExtent) {
             m_guideView->addPointMarker(slot.start[0], slot.start[1], slot.start[2], kSlotEndColor);
@@ -948,8 +1306,37 @@ void MainWindow::clearGuideHoles()
     updateGuideUi();
 }
 
+std::vector<GuideSlot> MainWindow::guideChosenSlots() const
+{
+    // Only the osteotomies ticked in the list get a slot, with the ends the user placed when there are any.
+    std::vector<GuideSlot> chosen;
+    for (int row = 0; row < (m_guideCutList ? m_guideCutList->count() : 0); ++row) {
+        auto* item = m_guideCutList->item(row);
+        if (item->checkState() != Qt::Checked)
+            continue;
+        const OsteotomyPath& path = m_guideCuts[static_cast<size_t>(item->data(Qt::UserRole).toInt())].path;
+        bool placed = false;
+        for (const GuideSlot& slot : m_guidePlan.slotPlan)
+            if (slot.hasExtent && slot.path.points == path.points) {
+                chosen.push_back(slot);
+                placed = true;
+            }
+        if (!placed) {
+            GuideSlot slot;
+            slot.path = path; // no ends marked: the whole region, still short of the rim
+            chosen.push_back(slot);
+        }
+    }
+    return chosen;
+}
+
 void MainWindow::buildGuideMesh()
 {
+    if (m_guideSculptEdited &&
+        QMessageBox::question(this, tr("Guías"),
+                              tr("Se perderán las ediciones de la guía. ¿Crear la guía de nuevo?")) !=
+            QMessageBox::Yes)
+        return;
     if (!m_guideWrapMesh || m_guideWrapMesh->GetNumberOfPolys() == 0) {
         QMessageBox::warning(this, tr("Guías"), tr("Calcule primero la envolvente."));
         return;
@@ -974,25 +1361,7 @@ void MainWindow::buildGuideMesh()
     m_guidePlan.design.slot.smallestDetailMm = m_guideDetailSpin->value();
     m_guidePlan.design.edgeMarginMm = m_guideMarginSpin->value();
 
-    // Only the osteotomies ticked in the list get a slot.
-    std::vector<GuideSlot> chosen;
-    for (int row = 0; row < (m_guideCutList ? m_guideCutList->count() : 0); ++row) {
-        auto* item = m_guideCutList->item(row);
-        if (item->checkState() != Qt::Checked)
-            continue;
-        const OsteotomyPath& path = m_guideCuts[static_cast<size_t>(item->data(Qt::UserRole).toInt())].path;
-        bool placed = false;
-        for (const GuideSlot& slot : m_guidePlan.slotPlan)
-            if (slot.hasExtent && slot.path.points == path.points) {
-                chosen.push_back(slot);
-                placed = true;
-            }
-        if (!placed) {
-            GuideSlot slot;
-            slot.path = path; // no ends marked: the whole region, still short of the rim
-            chosen.push_back(slot);
-        }
-    }
+    const std::vector<GuideSlot> chosen = guideChosenSlots();
     // Imported figures reloaded from their file if the mesh is not in memory (after opening a project).
     for (GuideFigure& figure : m_guidePlan.figures)
         if (figure.shape == GuideFigureShape::Mesh && !figure.mesh)
@@ -1004,11 +1373,13 @@ void MainWindow::buildGuideMesh()
         m_guidePrepared = GuideDesignCore::Prepare(m_guideWrapMesh, m_guidePlan.design);
     GuideDesignResult result;
     if (m_guidePrepared.ok) {
-        const GuideRegion region =
+        // Kept for the edit session: its keep-out field is built from this very region and these slots.
+        m_guideRegion =
             brushed ? GuideBaseCore::MakeBrushRegion(m_guidePrepared.wrapField, m_guidePlan.paint, m_guidePlan.design.base)
                     : GuideBaseCore::MakeRegion(m_guidePrepared.wrapField, m_guidePlan.contour, m_guidePlan.design.base);
-        result = GuideDesignCore::Build(m_guidePrepared, region, chosen, m_guidePlan.holes, m_guidePlan.figures,
-                                        m_guidePlan.design);
+        m_guideBuiltSlots = chosen;
+        result = GuideDesignCore::Build(m_guidePrepared, m_guideRegion, chosen, m_guidePlan.holes,
+                                        m_guidePlan.figures, m_guidePlan.design);
     }
     QApplication::restoreOverrideCursor();
     if (!m_guidePrepared.ok) {
@@ -1020,6 +1391,9 @@ void MainWindow::buildGuideMesh()
         return;
     }
     m_guideMesh = result.mesh;
+    m_guideSculptEdited = false;
+    if (m_guideSculptActive)
+        setGuideEditActive(false); // the clay is stale: the guide was carved again
     if (!objectEntryExists(kGuideMeshLabel))
         addObjectEntry(tr("Guía quirúrgica"), kGuideColor, kGuideMeshLabel);
     setRepositionMeshForLabel(kGuideMeshLabel, m_guideMesh);
@@ -1148,7 +1522,9 @@ void MainWindow::updateGuideUi()
     showSection(m_guideHoleSection, hasRegion);
     showSection(m_guideFiguresSection, hasRegion);
     showSection(m_guideBuildSection, hasRegion);
+    showSection(m_guideEditSection, hasGuide);
     showSection(m_guideExportSection, hasGuide);
+    updateGuideSculptBar();
     if (m_guideRegionButton) m_guideRegionButton->setEnabled(hasWrap);
     if (m_guideSlotEndsButton) m_guideSlotEndsButton->setEnabled(hasWrap && m_guideCutList && m_guideCutList->count() > 0);
     if (m_guideHoleButton) m_guideHoleButton->setEnabled(hasWrap);
@@ -1173,6 +1549,10 @@ void MainWindow::updateGuideUi()
         hint = tr("Haga clic donde quiera la figura.");
     else if (m_guidePointMode == kModeHoles)
         hint = tr("Haga clic en cada agujero de fijación.");
+    else if (m_guidePointMode == kModeTrim)
+        hint = tr("Marque el contorno del recorte y pulse Intro.");
+    else if (m_guidePointMode == kModeSculpt)
+        hint = tr("Arrastre sobre la guía · Ctrl invierte · Alt + arrastre cambia el tamaño.");
     else if (!hasGuide)
         hint = tr("Ajuste el espesor y pulse «Crear guía».");
     else
@@ -1225,4 +1605,369 @@ void MainWindow::restoreGuidePlan(const ProjectState& state)
     if (!missingFiles.isEmpty())
         statusBar()->showMessage(tr("Guías: no se encontraron las figuras importadas %1.")
                                      .arg(missingFiles.join(QStringLiteral(", "))));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EDITAR: the finished guide as clay
+//
+// `GuideSculptCore` owns the grid and the tools; this half is the palette, the
+// contextual bar under it and the wiring of the surface brush to whichever tool
+// is active. The preview during a drag is the raw contour at ~10 Hz; letting go
+// re-contours the guide properly and that mesh becomes `m_guideMesh`.
+// ─────────────────────────────────────────────────────────────────────────────
+void MainWindow::setGuideEditActive(bool active)
+{
+    if (!active) {
+        m_guideSculptActive = false;
+        setGuidePointMode(kModeNone);
+        clearGuideTrim();
+        if (m_guideSculptPreviewTimer)
+            m_guideSculptPreviewTimer->stop();
+        if (m_guideEditButton && m_guideEditButton->isChecked()) {
+            QSignalBlocker blocker(m_guideEditButton);
+            m_guideEditButton->setChecked(false);
+        }
+        if (m_guideShowModelsCheck) {
+            QSignalBlocker blocker(m_guideShowModelsCheck);
+            m_guideShowModelsCheck->setChecked(true);
+        }
+        if (m_guideWrapOpacitySpin) {
+            QSignalBlocker blocker(m_guideWrapOpacitySpin);
+            m_guideWrapOpacitySpin->setValue(1.0);
+        }
+        applyGuideLayers();
+        updateGuideUi();
+        return;
+    }
+    if (!m_guideMesh || m_guideMesh->GetNumberOfPolys() == 0) {
+        QMessageBox::warning(this, tr("Guías"), tr("Primero cree la guía."));
+        if (m_guideEditButton) {
+            QSignalBlocker blocker(m_guideEditButton);
+            m_guideEditButton->setChecked(false);
+        }
+        return;
+    }
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    statusBar()->showMessage(tr("Guías: preparando la edición…"));
+    // The clay is the guide itself, with room around it for material to be added.
+    const double detail = std::clamp(m_guidePlan.design.base.smallestDetailMm, 0.15, 0.5);
+    QString error;
+    const bool ready = m_guideSculpt.Reset(m_guideMesh, detail, 4.0, &error);
+    if (ready) {
+        SculptLimits limits;
+        limits.wrapField = m_guidePrepared.wrapField;
+        limits.clearanceMm = m_guidePlan.design.base.clearanceMm;
+        // Whatever the plan cut away stays cut away: slots, holes and subtracted figures, baked once.
+        double bounds[6] = {};
+        m_guideMesh->GetBounds(bounds);
+        for (int axis = 0; axis < 3; ++axis) {
+            bounds[2 * axis] -= 5.0;
+            bounds[2 * axis + 1] += 5.0;
+        }
+        const auto keepOut = GuideDesignCore::KeepOutNode(m_guidePrepared, m_guideRegion, m_guideBuiltSlots,
+                                                          m_guidePlan.holes, m_guidePlan.figures, m_guidePlan.design,
+                                                          bounds);
+        if (keepOut)
+            limits.keepOut = ImplicitCore::BakeFunction(
+                [keepOut](const std::array<double, 3>& p) { return ImplicitCore::Value(keepOut, p); }, bounds, detail);
+        m_guideSculpt.SetLimits(limits);
+    }
+    QApplication::restoreOverrideCursor();
+    if (!ready) {
+        QMessageBox::warning(this, tr("Guías"), error.isEmpty() ? tr("No se pudo preparar la edición.") : error);
+        if (m_guideEditButton) {
+            QSignalBlocker blocker(m_guideEditButton);
+            m_guideEditButton->setChecked(false);
+        }
+        return;
+    }
+    m_guideSculptActive = true;
+    m_guideSculptEdited = false;
+    if (!m_guideSculptPreviewTimer) {
+        m_guideSculptPreviewTimer = new QTimer(this);
+        m_guideSculptPreviewTimer->setInterval(100); // ~10 Hz while dragging
+        connect(m_guideSculptPreviewTimer, &QTimer::timeout, this, [this] {
+            if (!m_guideSculptDirty)
+                return;
+            m_guideSculptDirty = false;
+            refreshGuideSculptMesh(true);
+        });
+    }
+    // Only the guide matters while sculpting: the bone goes away and the envelope fades behind it.
+    if (m_guideShowModelsCheck) {
+        QSignalBlocker blocker(m_guideShowModelsCheck);
+        m_guideShowModelsCheck->setChecked(false);
+    }
+    if (m_guideShowGuideCheck) {
+        QSignalBlocker blocker(m_guideShowGuideCheck);
+        m_guideShowGuideCheck->setChecked(true);
+    }
+    if (m_guideWrapOpacitySpin) {
+        QSignalBlocker blocker(m_guideWrapOpacitySpin);
+        m_guideWrapOpacitySpin->setValue(0.25);
+    }
+    applyGuideLayers();
+    setGuideSculptTool(kToolSmooth);
+    statusBar()->showMessage(tr("Guías: edición lista. Ctrl invierte, Alt + arrastre cambia el tamaño."));
+}
+
+void MainWindow::setGuideSculptTool(int tool)
+{
+    m_guideSculptTool = tool;
+    for (int index = 0; index < m_guideSculptTools.size(); ++index) {
+        QToolButton* button = m_guideSculptTools[index];
+        if (!button->isCheckable())
+            continue;
+        QSignalBlocker blocker(button);
+        button->setChecked(index == tool);
+    }
+    if (tool != kToolTrim)
+        clearGuideTrim();
+    setGuidePointMode(tool == kToolTrim ? kModeTrim : kModeSculpt);
+    updateGuideSculptBar();
+}
+
+void MainWindow::updateGuideSculptBar()
+{
+    const bool editing = m_guideSculptActive;
+    if (m_guideSculptPalette)
+        m_guideSculptPalette->setVisible(editing);
+    if (m_guideSculptBar)
+        m_guideSculptBar->setVisible(editing);
+    if (m_guideEditButton)
+        m_guideEditButton->setText(editing ? tr("Terminar la edición") : tr("Editar la guía"));
+    for (int index = 0; index < m_guideSculptTools.size(); ++index)
+        m_guideSculptTools[index]->setEnabled(editing &&
+                                              (index != kToolUndo || m_guideSculpt.CanUndo()) &&
+                                              (index != kToolRedo || m_guideSculpt.CanRedo()));
+    if (!editing)
+        return;
+    const bool trimming = m_guideSculptTool == kToolTrim;
+    if (m_guideSculptSizeRow)
+        m_guideSculptSizeRow->setVisible(!trimming);
+    if (m_guideSculptTrimRow)
+        m_guideSculptTrimRow->setVisible(trimming);
+    // The level only means something where a tool reads it.
+    const bool hasLevel = m_guideSculptTool == kToolSmooth || m_guideSculptTool == kToolWax ||
+                          m_guideSculptTool == kToolFlatten;
+    if (m_guideSculptLevelRow)
+        m_guideSculptLevelRow->setVisible(hasLevel);
+    if (m_guideSculptLevelLabel)
+        m_guideSculptLevelLabel->setText(m_guideSculptTool == kToolWax ? tr("Calor") : tr("Nivel"));
+
+    QStringList modes;
+    int current = 0;
+    switch (m_guideSculptTool) {
+    case kToolSmooth:
+        modes = {tr("Dentro"), tr("Alrededor")};
+        current = m_guideSmoothScope;
+        break;
+    case kToolWax:
+        modes = {tr("Derretir"), tr("Suavizar"), tr("Añadir"), tr("Quitar")};
+        current = m_guideWaxMode;
+        break;
+    case kToolFlatten:
+        modes = {tr("Aplanar"), tr("Rascar"), tr("Rellenar")};
+        current = m_guideFlattenMode;
+        break;
+    default:
+        break;
+    }
+    if (m_guideSculptModeRow)
+        m_guideSculptModeRow->setVisible(!modes.isEmpty());
+    for (int index = 0; index < m_guideSculptModes.size(); ++index) {
+        QToolButton* mode = m_guideSculptModes[index];
+        const bool used = index < modes.size();
+        mode->setVisible(used);
+        if (!used)
+            continue;
+        mode->setText(modes[index]);
+        QSignalBlocker blocker(mode);
+        mode->setChecked(index == current);
+    }
+}
+
+void MainWindow::nudgeGuideBrushSize(double deltaMm)
+{
+    if (!m_guideSculptSizeSpin)
+        return;
+    m_guideSculptSizeSpin->setValue(std::clamp(m_guideSculptSizeSpin->value() + deltaMm, 0.5, 20.0));
+    statusBar()->showMessage(tr("Tamaño del pincel: %1 mm").arg(m_guideSculptSizeSpin->value(), 0, 'f', 1));
+}
+
+void MainWindow::onGuideSculptBrushed(double x, double y, double z, Qt::KeyboardModifiers modifiers)
+{
+    if (!m_guideSculptActive || !m_guideSculpt.Ready())
+        return;
+    if (!m_guideSculptStroking) {
+        m_guideSculpt.BeginStroke();
+        m_guideSculptStroking = true;
+        m_guideSculptHasLast = false;
+        if (m_guideSculptPreviewTimer)
+            m_guideSculptPreviewTimer->start();
+    }
+    SculptBrush brush;
+    brush.center = {x, y, z};
+    brush.previous = m_guideSculptLast;
+    brush.hasPrevious = m_guideSculptHasLast;
+    brush.radiusMm = m_guideSculptSizeSpin ? m_guideSculptSizeSpin->value() : 3.0;
+    brush.level = m_guideSculptLevelSlider ? m_guideSculptLevelSlider->value() / 100.0 : 0.5;
+    brush.scope = m_guideSmoothScope == 1 ? SmoothScope::Around : SmoothScope::Inside;
+    brush.flatten = m_guideFlattenMode == 1   ? FlattenMode::Scrape
+                    : m_guideFlattenMode == 2 ? FlattenMode::Fill
+                                              : FlattenMode::Flatten;
+    const bool invert = modifiers.testFlag(Qt::ControlModifier); // Ctrl turns a tool into its opposite
+    switch (m_guideSculptTool) {
+    case kToolSmooth:
+        brush.tool = SculptTool::Smooth;
+        break;
+    case kToolWax: {
+        brush.tool = SculptTool::HotWax;
+        int wax = m_guideWaxMode;
+        if (invert && wax == 2)
+            wax = 3;
+        else if (invert && wax == 3)
+            wax = 2;
+        brush.wax = wax == 1 ? HotWaxMode::Smooth : wax == 2 ? HotWaxMode::Add : wax == 3 ? HotWaxMode::Remove
+                                                                                          : HotWaxMode::Melt;
+        break;
+    }
+    case kToolAdd:
+        brush.tool = invert ? SculptTool::Remove : SculptTool::Add;
+        break;
+    case kToolRemove:
+        brush.tool = invert ? SculptTool::Add : SculptTool::Remove;
+        break;
+    case kToolFlatten:
+        brush.tool = SculptTool::Flatten;
+        break;
+    default:
+        return;
+    }
+    m_guideSculpt.ApplyBrush(brush);
+    m_guideSculptLast = brush.center;
+    m_guideSculptHasLast = true;
+    m_guideSculptEdited = true;
+    m_guideSculptDirty = true;
+}
+
+void MainWindow::onGuideSculptFinished()
+{
+    if (!m_guideSculptStroking)
+        return;
+    m_guideSculptStroking = false;
+    m_guideSculptDirty = false;
+    if (m_guideSculptPreviewTimer)
+        m_guideSculptPreviewTimer->stop();
+    m_guideSculpt.EndStroke();
+    refreshGuideSculptMesh(false);
+    updateGuideSculptBar();
+}
+
+void MainWindow::refreshGuideSculptMesh(bool fast)
+{
+    const auto mesh = m_guideSculpt.Contour(fast);
+    if (!mesh || mesh->GetNumberOfPolys() == 0)
+        return;
+    m_guideMesh = mesh;
+    if (m_guideView) {
+        const int key = objectActorKey(kGuideMeshLabel);
+        m_guideView->addMesh(key, m_guideMesh, meshLabelName(kGuideMeshLabel));
+        m_guideView->setMeshColor(key, kGuideColor);
+        m_guideView->render();
+    }
+    if (fast)
+        return;
+    setRepositionMeshForLabel(kGuideMeshLabel, m_guideMesh);
+    applyGuideThicknessColors(); // the thickness map reads the edited guide
+}
+
+void MainWindow::applyGuideTrim()
+{
+    if (!m_guideSculptActive || !m_guideSculpt.Ready())
+        return;
+    if (m_guideTrimPoints.size() < 3) {
+        statusBar()->showMessage(tr("Guías: marque al menos tres puntos del recorte."));
+        return;
+    }
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    QString error;
+    // Swept along the direction the camera looks in, so the polygon cuts what the user sees.
+    const bool ok = m_guideSculpt.Trim(m_guideTrimPoints, m_guideView ? m_guideView->viewDirection()
+                                                                      : std::array<double, 3>{0.0, 1.0, 0.0},
+                                       m_guideTrimInvertCheck && m_guideTrimInvertCheck->isChecked(), &error);
+    QApplication::restoreOverrideCursor();
+    if (!ok) {
+        QMessageBox::warning(this, tr("Guías"), error);
+        return;
+    }
+    m_guideSculptEdited = true;
+    clearGuideTrim();
+    refreshGuideSculptMesh(false);
+    updateGuideSculptBar();
+    statusBar()->showMessage(tr("Guías: recorte aplicado; se conservó la pieza mayor."));
+}
+
+void MainWindow::clearGuideTrim()
+{
+    m_guideTrimPoints.clear();
+    rebuildGuideMarkers();
+}
+
+void MainWindow::guideSculptUndo()
+{
+    if (!m_guideSculptActive || !m_guideSculpt.Undo())
+        return;
+    refreshGuideSculptMesh(false);
+    updateGuideSculptBar();
+    statusBar()->showMessage(tr("Guías: edición deshecha."));
+}
+
+void MainWindow::guideSculptRedo()
+{
+    if (!m_guideSculptActive || !m_guideSculpt.Redo())
+        return;
+    refreshGuideSculptMesh(false);
+    updateGuideSculptBar();
+    statusBar()->showMessage(tr("Guías: edición rehecha."));
+}
+
+bool MainWindow::handleGuideSculptKey(QKeyEvent* event)
+{
+    if (!m_guideSculptActive || !event || !m_viewModeStack || m_viewModeStack->currentIndex() != 7)
+        return false;
+    const bool control = event->modifiers().testFlag(Qt::ControlModifier);
+    switch (event->key()) {
+    case Qt::Key_Z:
+        if (!control)
+            return false;
+        guideSculptUndo();
+        return true;
+    case Qt::Key_Y:
+        if (!control)
+            return false;
+        guideSculptRedo();
+        return true;
+    case Qt::Key_Plus:
+    case Qt::Key_Equal:
+        nudgeGuideBrushSize(0.5);
+        return true;
+    case Qt::Key_Minus:
+        nudgeGuideBrushSize(-0.5);
+        return true;
+    case Qt::Key_Return:
+    case Qt::Key_Enter:
+        if (m_guideSculptTool != kToolTrim)
+            return false;
+        applyGuideTrim();
+        return true;
+    case Qt::Key_Escape:
+        if (m_guideSculptTool != kToolTrim || m_guideTrimPoints.empty())
+            return false;
+        clearGuideTrim();
+        statusBar()->showMessage(tr("Guías: recorte descartado."));
+        return true;
+    default:
+        return false;
+    }
 }

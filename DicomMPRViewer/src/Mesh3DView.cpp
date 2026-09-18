@@ -1315,6 +1315,23 @@ void Mesh3DView::setSurfaceBrushMode(bool active)
     if (m_vtkWidget) m_vtkWidget->setCursor(cursor);
 }
 
+std::array<double, 3> Mesh3DView::viewDirection() const
+{
+    if (!m_renderer || !m_renderer->GetActiveCamera())
+        return {0.0, 1.0, 0.0};
+    double position[3] = {}, focal[3] = {};
+    m_renderer->GetActiveCamera()->GetPosition(position);
+    m_renderer->GetActiveCamera()->GetFocalPoint(focal);
+    std::array<double, 3> direction{focal[0] - position[0], focal[1] - position[1], focal[2] - position[2]};
+    const double length = std::sqrt(direction[0] * direction[0] + direction[1] * direction[1] +
+                                    direction[2] * direction[2]);
+    if (length < 1e-9)
+        return {0.0, 1.0, 0.0};
+    for (double& value : direction)
+        value /= length;
+    return direction;
+}
+
 bool Mesh3DView::handleBrushEvent(QEvent* event)
 {
     const QEvent::Type type = event->type();
