@@ -25,6 +25,7 @@
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QFrame>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
 #include <QMessageBox>
@@ -46,6 +47,7 @@
 #include <vtkTransformPolyDataFilter.h>
 
 #include <algorithm>
+#include <utility>
 
 // Defined in MainWindowModels.cpp.
 QString guidedSidePanelStyle(const QString& objectName);
@@ -136,10 +138,16 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
                                         "  border-color:#64d2ff; color:#ffffff; font-weight:700; }"
                                         "#GuideControlPanel QPushButton:disabled { background:#232325;"
                                         "  border-color:#2c2c2e; color:#6e6e73; }"
+                                        "#GuideControlPanel QPushButton#GuideFold { background:transparent;"
+                                        "  border:none; color:#8e8e93; font-weight:700; text-align:left;"
+                                        "  padding:6px 0 2px 0; }"
+                                        "#GuideControlPanel QPushButton#GuideFold:checked { background:transparent;"
+                                        "  border:none; color:#c7c7cc; }"
                                         "#GuideControlPanel QListWidget { background:#242426; color:#f5f5f7;"
                                         "  border:1px solid #3a3a3c; border-radius:8px; font-size:11px; }"
                                         "#GuideControlPanel QComboBox { background:#2c2c2e; color:#f5f5f7;"
                                         "  border:1px solid #3a3a3c; border-radius:8px; padding:4px 8px; }"
+                                        "#GuideControlPanel QCheckBox { color:#c7c7cc; font-size:11px; }"
                                         "#GuideControlPanel QLabel { color:#c7c7cc; font-size:11px; }"));
     auto* layout = new QVBoxLayout(panel);
     layout->setContentsMargins(12, 12, 12, 12);
@@ -153,15 +161,45 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
     m_guideHintLabel->setStyleSheet(QStringLiteral("color:#f5f5f7; font-size:11px; padding:2px 0 6px 0;"));
     layout->addWidget(m_guideHintLabel);
 
-    const auto section = [&](const QString& text) {
-        auto* label = new QLabel(text, panel);
+    // A numbered step: its own widget, so the panel can show only the steps that are reachable.
+    const auto step = [&](const QString& text) {
+        auto* holder = new QWidget(panel);
+        auto* box = new QVBoxLayout(holder);
+        box->setContentsMargins(0, 0, 0, 0);
+        box->setSpacing(5);
+        auto* label = new QLabel(text, holder);
         label->setObjectName(QStringLiteral("GuidedPanelSection"));
-        layout->addWidget(label);
+        box->addWidget(label);
+        layout->addWidget(holder);
+        return box;
     };
-    const auto spin = [&](double value, double lo, double hi, double step) {
+    // Everything that is not a step folds away: the panel stays short and nothing is lost.
+    const auto fold = [&](const QString& text) {
+        auto* holder = new QWidget(panel);
+        auto* box = new QVBoxLayout(holder);
+        box->setContentsMargins(0, 0, 0, 0);
+        box->setSpacing(4);
+        auto* header = new QPushButton(QStringLiteral("▸ ") + text, holder);
+        header->setObjectName(QStringLiteral("GuideFold"));
+        header->setCheckable(true);
+        auto* body = new QWidget(holder);
+        auto* inner = new QVBoxLayout(body);
+        inner->setContentsMargins(0, 0, 0, 0);
+        inner->setSpacing(5);
+        body->setVisible(false);
+        connect(header, &QPushButton::toggled, body, [header, body, text](bool on) {
+            header->setText((on ? QStringLiteral("▾ ") : QStringLiteral("▸ ")) + text);
+            body->setVisible(on);
+        });
+        box->addWidget(header);
+        box->addWidget(body);
+        layout->addWidget(holder);
+        return std::pair<QWidget*, QVBoxLayout*>{holder, inner};
+    };
+    const auto spin = [&](double value, double lo, double hi, double stepSize) {
         auto* box = new QDoubleSpinBox(panel);
         box->setRange(lo, hi);
-        box->setSingleStep(step);
+        box->setSingleStep(stepSize);
         box->setDecimals(2);
         box->setValue(value);
         box->setSuffix(tr(" mm"));
@@ -169,91 +207,90 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
     };
 
     // ── 1. Guide type and envelope ────────────────────────────────────────
-    section(tr("1. TIPO DE GUÍA"));
+    auto* typeBox = step(tr("1. TIPO DE GUÍA"));
     m_guideTypeCombo = new QComboBox(panel);
     m_guideTypeCombo->addItem(tr("Guía Le Fort I"), static_cast<int>(GuideType::LeFort));
     m_guideTypeCombo->addItem(tr("Guía de mentón"), static_cast<int>(GuideType::Chin));
     connect(m_guideTypeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
             [this](int) { setGuideType(static_cast<GuideType>(m_guideTypeCombo->currentData().toInt())); });
-    layout->addWidget(m_guideTypeCombo);
+    typeBox->addWidget(m_guideTypeCombo);
     m_guideSourcesLabel = new QLabel(panel);
     m_guideSourcesLabel->setWordWrap(true);
-    layout->addWidget(m_guideSourcesLabel);
-    auto* wrapForm = new QFormLayout();
-    m_guideGapSpin = spin(1.5, 0.0, 10.0, 0.1);
-    m_guideDetailSpin = spin(0.3, 0.1, 1.0, 0.05);
-    wrapForm->addRow(tr("Cierre de huecos:"), m_guideGapSpin);
-    wrapForm->addRow(tr("Detalle:"), m_guideDetailSpin);
-    layout->addLayout(wrapForm);
+    typeBox->addWidget(m_guideSourcesLabel);
     m_guideWrapButton = new QPushButton(tr("Calcular envolvente"), panel);
     connect(m_guideWrapButton, &QPushButton::clicked, this, &MainWindow::computeGuideWrap);
-    layout->addWidget(m_guideWrapButton);
+    typeBox->addWidget(m_guideWrapButton);
 
-    // ── Layers ────────────────────────────────────────────────────────────
-    section(tr("CAPAS"));
+    // ── Layers: one compact row of toggles ────────────────────────────────
+    m_guideLayersSection = new QWidget(panel);
+    auto* layerRow = new QHBoxLayout(m_guideLayersSection);
+    layerRow->setContentsMargins(0, 2, 0, 2);
+    layerRow->setSpacing(6);
     const auto layer = [&](const QString& text) {
-        auto* check = new QCheckBox(text, panel);
+        auto* check = new QCheckBox(text, m_guideLayersSection);
         check->setChecked(true);
         connect(check, &QCheckBox::toggled, this, [this](bool) { applyGuideLayers(); });
-        layout->addWidget(check);
+        layerRow->addWidget(check);
         return check;
     };
-    m_guideShowModelsCheck = layer(tr("Modelos (hueso)"));
+    m_guideShowModelsCheck = layer(tr("Hueso"));
     m_guideShowWrapCheck = layer(tr("Envolvente"));
     m_guideShowGuideCheck = layer(tr("Guía"));
     m_guideShowFiguresCheck = layer(tr("Figuras"));
-    auto* layerForm = new QFormLayout();
-    m_guideWrapOpacitySpin = new QDoubleSpinBox(panel);
-    m_guideWrapOpacitySpin->setRange(0.1, 1.0);
-    m_guideWrapOpacitySpin->setSingleStep(0.1);
-    m_guideWrapOpacitySpin->setValue(0.6);
-    connect(m_guideWrapOpacitySpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
-            [this](double) { applyGuideLayers(); });
-    layerForm->addRow(tr("Opacidad envolvente:"), m_guideWrapOpacitySpin);
-    layout->addLayout(layerForm);
+    layerRow->addStretch(1);
+    layout->addWidget(m_guideLayersSection);
 
     // ── 2. Support region ─────────────────────────────────────────────────
-    section(tr("2. ZONA DE APOYO (PINCEL)"));
+    auto* regionBox = step(tr("2. ZONA DE APOYO"));
+    m_guideRegionSection = regionBox->parentWidget();
     m_guideRegionButton = new QPushButton(tr("Pintar zona"), panel);
     m_guideRegionButton->setCheckable(true);
     connect(m_guideRegionButton, &QPushButton::toggled, this,
             [this](bool on) { setGuidePointMode(on ? kModeRegion : kModeNone); });
-    layout->addWidget(m_guideRegionButton);
+    regionBox->addWidget(m_guideRegionButton);
     auto* regionForm = new QFormLayout();
     m_guideBrushSpin = spin(4.0, 0.5, 15.0, 0.5);
-    regionForm->addRow(tr("Tamaño del pincel:"), m_guideBrushSpin);
-    layout->addLayout(regionForm);
-    auto* brushHelp = new QLabel(tr("Arrastre para pintar · Ctrl + arrastre para borrar · Alt + arrastre vertical "
-                                    "cambia el tamaño"), panel);
-    brushHelp->setWordWrap(true);
-    layout->addWidget(brushHelp);
+    regionForm->addRow(tr("Pincel:"), m_guideBrushSpin);
+    regionBox->addLayout(regionForm);
     auto* clearRegion = new QPushButton(tr("Borrar zona"), panel);
     connect(clearRegion, &QPushButton::clicked, this, &MainWindow::clearGuideRegion);
-    layout->addWidget(clearRegion);
+    regionBox->addWidget(clearRegion);
 
     // ── 3. Saw slots ──────────────────────────────────────────────────────
-    section(tr("3. RANURAS DE SIERRA"));
+    auto* slotBox = step(tr("3. RANURAS"));
+    m_guideSlotSection = slotBox->parentWidget();
     m_guideCutList = new QListWidget(panel);
-    m_guideCutList->setMaximumHeight(80);
+    m_guideCutList->setMaximumHeight(72);
     connect(m_guideCutList, &QListWidget::itemChanged, this, [this](QListWidgetItem*) { updateGuideUi(); });
-    layout->addWidget(m_guideCutList);
+    slotBox->addWidget(m_guideCutList);
     m_guideSlotEndsButton = new QPushButton(tr("Marcar extremos"), panel);
     m_guideSlotEndsButton->setCheckable(true);
     connect(m_guideSlotEndsButton, &QPushButton::toggled, this,
             [this](bool on) { setGuidePointMode(on ? kModeSlotEnds : kModeNone); });
-    layout->addWidget(m_guideSlotEndsButton);
+    slotBox->addWidget(m_guideSlotEndsButton);
     auto* clearEnds = new QPushButton(tr("Borrar extremos"), panel);
     connect(clearEnds, &QPushButton::clicked, this, &MainWindow::clearGuideSlotEnds);
-    layout->addWidget(clearEnds);
-    auto* bladeForm = new QFormLayout();
-    m_guideBladeSpin = spin(0.6, 0.2, 2.0, 0.1);
-    m_guideMarginSpin = spin(2.0, 0.0, 10.0, 0.5);
-    bladeForm->addRow(tr("Hoja de sierra:"), m_guideBladeSpin);
-    bladeForm->addRow(tr("Margen al borde:"), m_guideMarginSpin);
-    layout->addLayout(bladeForm);
+    slotBox->addWidget(clearEnds);
 
-    // ── 4. Figures (Boolean tools) ────────────────────────────────────────
-    section(tr("4. FIGURAS (OPERACIONES BOOLEANAS)"));
+    // ── 4. Fixation holes ─────────────────────────────────────────────────
+    auto* holeBox = step(tr("4. AGUJEROS"));
+    m_guideHoleSection = holeBox->parentWidget();
+    m_guideHoleButton = new QPushButton(tr("Marcar agujeros"), panel);
+    m_guideHoleButton->setCheckable(true);
+    connect(m_guideHoleButton, &QPushButton::toggled, this,
+            [this](bool on) { setGuidePointMode(on ? kModeHoles : kModeNone); });
+    holeBox->addWidget(m_guideHoleButton);
+    auto* holeForm = new QFormLayout();
+    m_guideHoleDiameterSpin = spin(2.0, 0.5, 6.0, 0.1);
+    holeForm->addRow(tr("Diámetro:"), m_guideHoleDiameterSpin);
+    holeBox->addLayout(holeForm);
+    auto* clearHoles = new QPushButton(tr("Borrar"), panel);
+    connect(clearHoles, &QPushButton::clicked, this, &MainWindow::clearGuideHoles);
+    holeBox->addWidget(clearHoles);
+
+    // ── Boolean figures: a tool for special cases, folded away ────────────
+    const auto [figuresHolder, figureBox] = fold(tr("Figuras"));
+    m_guideFiguresSection = figuresHolder;
     auto* figureForm = new QFormLayout();
     m_guideFigureShapeCombo = new QComboBox(panel);
     m_guideFigureShapeCombo->addItem(tr("Cilindro"), static_cast<int>(GuideFigureShape::Cylinder));
@@ -276,49 +313,58 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
     figureForm->addRow(tr("Ancho:"), m_guideFigureWidthSpin);
     figureForm->addRow(tr("Alto:"), m_guideFigureHeightSpin);
     figureForm->addRow(tr("Profundidad:"), m_guideFigureDepthSpin);
-    layout->addLayout(figureForm);
+    figureBox->addLayout(figureForm);
     m_guidePlaceFigureButton = new QPushButton(tr("Colocar figura"), panel);
     m_guidePlaceFigureButton->setCheckable(true);
     connect(m_guidePlaceFigureButton, &QPushButton::toggled, this,
             [this](bool on) { setGuidePointMode(on ? kModeFigure : kModeNone); });
-    layout->addWidget(m_guidePlaceFigureButton);
+    figureBox->addWidget(m_guidePlaceFigureButton);
     auto* importFigure = new QPushButton(tr("Importar figura STL…"), panel);
     connect(importFigure, &QPushButton::clicked, this, &MainWindow::importGuideFigure);
-    layout->addWidget(importFigure);
+    figureBox->addWidget(importFigure);
     m_guideFigureList = new QListWidget(panel);
-    m_guideFigureList->setMaximumHeight(90);
+    m_guideFigureList->setMaximumHeight(80);
     connect(m_guideFigureList, &QListWidget::currentRowChanged, this, [this](int) { updateGuideUi(); });
-    layout->addWidget(m_guideFigureList);
+    figureBox->addWidget(m_guideFigureList);
     m_guideMoveFigureButton = new QPushButton(tr("Mover figura (gizmo)"), panel);
     m_guideMoveFigureButton->setCheckable(true);
     connect(m_guideMoveFigureButton, &QPushButton::toggled, this, &MainWindow::setGuideFigureGizmo);
-    layout->addWidget(m_guideMoveFigureButton);
+    figureBox->addWidget(m_guideMoveFigureButton);
     auto* removeFigure = new QPushButton(tr("Borrar figura"), panel);
     connect(removeFigure, &QPushButton::clicked, this, &MainWindow::removeGuideFigure);
-    layout->addWidget(removeFigure);
+    figureBox->addWidget(removeFigure);
 
-    // ── 5. Fixation holes ─────────────────────────────────────────────────
-    section(tr("5. AGUJEROS DE FIJACIÓN"));
-    m_guideHoleButton = new QPushButton(tr("Marcar agujeros"), panel);
-    m_guideHoleButton->setCheckable(true);
-    connect(m_guideHoleButton, &QPushButton::toggled, this,
-            [this](bool on) { setGuidePointMode(on ? kModeHoles : kModeNone); });
-    layout->addWidget(m_guideHoleButton);
-    auto* holeForm = new QFormLayout();
-    m_guideHoleDiameterSpin = spin(2.0, 0.5, 6.0, 0.1);
-    holeForm->addRow(tr("Diámetro:"), m_guideHoleDiameterSpin);
-    layout->addLayout(holeForm);
-    auto* clearHoles = new QPushButton(tr("Borrar agujeros"), panel);
-    connect(clearHoles, &QPushButton::clicked, this, &MainWindow::clearGuideHoles);
-    layout->addWidget(clearHoles);
-
-    // ── 6. Build ──────────────────────────────────────────────────────────
-    section(tr("6. CREAR LA GUÍA"));
+    // ── 5. Build ──────────────────────────────────────────────────────────
+    auto* buildBox = step(tr("5. CREAR"));
+    m_guideBuildSection = buildBox->parentWidget();
     auto* guideForm = new QFormLayout();
     m_guideThicknessSpin = spin(2.5, 0.5, 10.0, 0.1);
-    m_guideClearanceSpin = spin(0.1, 0.0, 2.0, 0.05);
     guideForm->addRow(tr("Espesor:"), m_guideThicknessSpin);
-    guideForm->addRow(tr("Holgura:"), m_guideClearanceSpin);
+    buildBox->addLayout(guideForm);
+    m_guideBuildButton = new QPushButton(tr("Crear guía"), panel);
+    connect(m_guideBuildButton, &QPushButton::clicked, this, &MainWindow::buildGuideMesh);
+    buildBox->addWidget(m_guideBuildButton);
+
+    // ── 6. Export ─────────────────────────────────────────────────────────
+    auto* exportBox = step(tr("6. EXPORTAR"));
+    m_guideExportSection = exportBox->parentWidget();
+    m_guideThicknessCheck = new QCheckBox(tr("Mapa de espesor"), panel);
+    connect(m_guideThicknessCheck, &QCheckBox::toggled, this, [this](bool) { applyGuideThicknessColors(); });
+    exportBox->addWidget(m_guideThicknessCheck);
+    m_guideExportButton = new QPushButton(tr("Exportar STL"), panel);
+    connect(m_guideExportButton, &QPushButton::clicked, this, &MainWindow::exportGuideStl);
+    exportBox->addWidget(m_guideExportButton);
+
+    // ── Advanced: the numbers that have a sensible default ────────────────
+    const auto [advancedHolder, advancedBox] = fold(tr("Avanzado"));
+    Q_UNUSED(advancedHolder);
+    auto* advancedForm = new QFormLayout();
+    m_guideGapSpin = spin(1.5, 0.0, 10.0, 0.1);
+    m_guideDetailSpin = spin(0.3, 0.1, 1.0, 0.05);
+    m_guideClearanceSpin = spin(0.1, 0.0, 2.0, 0.05);
+    m_guideBladeSpin = spin(0.6, 0.2, 2.0, 0.1);
+    m_guideMarginSpin = spin(2.0, 0.0, 10.0, 0.5);
+    m_guideCornerSpin = spin(3.0, 0.0, 10.0, 0.5);
     // The rim finish of a printed guide pad: thinner and rounded towards the edge.
     m_guideTaperSpin = spin(4.0, 0.0, 15.0, 0.5);
     m_guideEdgeFractionSpin = new QDoubleSpinBox(panel);
@@ -328,19 +374,23 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
     m_guideEdgeFractionSpin->setValue(40.0);
     m_guideEdgeFractionSpin->setSuffix(tr(" %"));
     m_guideEdgeRoundSpin = spin(1.2, 0.0, 4.0, 0.1);
-    guideForm->addRow(tr("Afinado hacia el borde:"), m_guideTaperSpin);
-    guideForm->addRow(tr("Espesor en el borde:"), m_guideEdgeFractionSpin);
-    guideForm->addRow(tr("Redondeo del borde:"), m_guideEdgeRoundSpin);
-    layout->addLayout(guideForm);
-    m_guideBuildButton = new QPushButton(tr("Crear guía"), panel);
-    connect(m_guideBuildButton, &QPushButton::clicked, this, &MainWindow::buildGuideMesh);
-    layout->addWidget(m_guideBuildButton);
-    m_guideThicknessCheck = new QCheckBox(tr("Mapa de espesor"), panel);
-    connect(m_guideThicknessCheck, &QCheckBox::toggled, this, [this](bool) { applyGuideThicknessColors(); });
-    layout->addWidget(m_guideThicknessCheck);
-    m_guideExportButton = new QPushButton(tr("Exportar STL"), panel);
-    connect(m_guideExportButton, &QPushButton::clicked, this, &MainWindow::exportGuideStl);
-    layout->addWidget(m_guideExportButton);
+    m_guideWrapOpacitySpin = new QDoubleSpinBox(panel);
+    m_guideWrapOpacitySpin->setRange(0.1, 1.0);
+    m_guideWrapOpacitySpin->setSingleStep(0.1);
+    m_guideWrapOpacitySpin->setValue(0.6);
+    connect(m_guideWrapOpacitySpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
+            [this](double) { applyGuideLayers(); });
+    advancedForm->addRow(tr("Cierre de huecos:"), m_guideGapSpin);
+    advancedForm->addRow(tr("Detalle:"), m_guideDetailSpin);
+    advancedForm->addRow(tr("Holgura:"), m_guideClearanceSpin);
+    advancedForm->addRow(tr("Hoja de sierra:"), m_guideBladeSpin);
+    advancedForm->addRow(tr("Margen al borde:"), m_guideMarginSpin);
+    advancedForm->addRow(tr("Redondeo de esquinas:"), m_guideCornerSpin);
+    advancedForm->addRow(tr("Afinado hacia el borde:"), m_guideTaperSpin);
+    advancedForm->addRow(tr("Espesor en el borde:"), m_guideEdgeFractionSpin);
+    advancedForm->addRow(tr("Redondeo del borde:"), m_guideEdgeRoundSpin);
+    advancedForm->addRow(tr("Opacidad envolvente:"), m_guideWrapOpacitySpin);
+    advancedBox->addLayout(advancedForm);
 
     m_guideReportLabel = new QLabel(panel);
     m_guideReportLabel->setWordWrap(true);
@@ -1087,6 +1137,18 @@ void MainWindow::updateGuideUi()
     const bool hasRegion = GuideBaseCore::PaintValid(m_guidePlan.paint) || GuideBaseCore::ContourValid(m_guidePlan.contour);
     const bool hasGuide = m_guideMesh && m_guideMesh->GetNumberOfPolys() > 0;
     const bool figureSelected = m_guideFigureList && m_guideFigureList->currentRow() >= 0;
+    // Each step appears once the one before it has produced something.
+    const auto showSection = [](QWidget* section, bool visible) {
+        if (section)
+            section->setVisible(visible);
+    };
+    showSection(m_guideLayersSection, hasWrap);
+    showSection(m_guideRegionSection, hasWrap);
+    showSection(m_guideSlotSection, hasRegion);
+    showSection(m_guideHoleSection, hasRegion);
+    showSection(m_guideFiguresSection, hasRegion);
+    showSection(m_guideBuildSection, hasRegion);
+    showSection(m_guideExportSection, hasGuide);
     if (m_guideRegionButton) m_guideRegionButton->setEnabled(hasWrap);
     if (m_guideSlotEndsButton) m_guideSlotEndsButton->setEnabled(hasWrap && m_guideCutList && m_guideCutList->count() > 0);
     if (m_guideHoleButton) m_guideHoleButton->setEnabled(hasWrap);
@@ -1100,27 +1162,21 @@ void MainWindow::updateGuideUi()
         return;
     QString hint;
     if (!hasWrap)
-        hint = m_guidePlan.type == GuideType::Chin
-                   ? tr("Guía de mentón: pulse «Calcular envolvente» sobre el segmento de mentón y la mandíbula "
-                        "post-mentón en su posición planificada.")
-                   : tr("Guía Le Fort I: pulse «Calcular envolvente» sobre el segmento Le Fort y la base craneal "
-                        "en su posición planificada.");
+        hint = m_guidePlan.type == GuideType::Chin ? tr("Calcule la envolvente del mentón y la mandíbula.")
+                                                   : tr("Calcule la envolvente del Le Fort y el cráneo.");
     else if (m_guidePointMode == kModeRegion || !hasRegion)
-        hint = tr("Pulse «Pintar zona» y pinte sobre la envolvente la superficie de apoyo (se ve en azul). "
-                  "Ctrl borra; Alt + arrastre vertical cambia el tamaño. La base solo cubre la cara pintada.");
+        hint = tr("Pinte la zona de apoyo · Ctrl borra · Alt + arrastre cambia el tamaño.");
     else if (m_guidePointMode == kModeSlotEnds)
-        hint = m_guidePendingEnds.empty() ? tr("Elija la osteotomía en la lista y marque el inicio de la ranura.")
-                                          : tr("Marque ahora el final de la ranura.");
+        hint = m_guidePendingEnds.empty() ? tr("Elija la osteotomía y marque el inicio de la ranura.")
+                                          : tr("Marque el final de la ranura.");
     else if (m_guidePointMode == kModeFigure)
-        hint = tr("Haga clic donde quiera la figura: se coloca perpendicular a la superficie, centrada en la pared "
-                  "de la guía. Luego ajústela con «Mover figura».");
+        hint = tr("Haga clic donde quiera la figura.");
     else if (m_guidePointMode == kModeHoles)
-        hint = tr("Haga clic donde quiera cada agujero de fijación; se taladra perpendicular a la superficie.");
+        hint = tr("Haga clic en cada agujero de fijación.");
     else if (!hasGuide)
-        hint = tr("Elija ranuras, añada figuras o agujeros, ajuste espesor y holgura, y pulse «Crear guía».");
+        hint = tr("Ajuste el espesor y pulse «Crear guía».");
     else
-        hint = tr("Revise el mapa de espesor y exporte el STL. Las ranuras nunca llegan al borde: la guía sale "
-                  "de una pieza.");
+        hint = tr("Revise el mapa de espesor y exporte el STL.");
     m_guideHintLabel->setText(hint);
 }
 

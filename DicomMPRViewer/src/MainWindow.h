@@ -297,6 +297,14 @@ private:
     QDoubleSpinBox* m_guideMarginSpin = nullptr;
     QDoubleSpinBox* m_guideHoleDiameterSpin = nullptr;
     QLabel* m_guideHintLabel = nullptr;
+    // Panel sections, shown only once the step before them has produced something.
+    QWidget* m_guideLayersSection = nullptr;
+    QWidget* m_guideRegionSection = nullptr;
+    QWidget* m_guideSlotSection = nullptr;
+    QWidget* m_guideHoleSection = nullptr;
+    QWidget* m_guideFiguresSection = nullptr;
+    QWidget* m_guideBuildSection = nullptr;
+    QWidget* m_guideExportSection = nullptr;
     QLabel* m_guideReportLabel = nullptr;
     GuidePlan m_guidePlan;
     GuidePreparation m_guidePrepared;

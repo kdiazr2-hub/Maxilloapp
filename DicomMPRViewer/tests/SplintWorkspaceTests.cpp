@@ -858,6 +858,9 @@ public:
         require(window.m_orthoStep == 7, "GUIAS is not the eighth step of the bar");
         require(window.findChild<QWidget*>(QStringLiteral("GuideControlPanel")) != nullptr,
                 "the guides side panel is missing");
+        // Only the reachable steps are on show: before the envelope there is nothing else to do.
+        require(!window.m_guideRegionSection->isVisibleTo(&window) && !window.m_guideBuildSection->isVisibleTo(&window),
+                "the panel shows steps that are not reachable yet");
 
         // 1. A Le Fort guide always wraps the Le Fort segment and the cranial base.
         require(window.m_guideTypeCombo->currentData().toInt() == static_cast<int>(GuideType::LeFort),
@@ -875,6 +878,8 @@ public:
         require(!window.m_guideShowModelsCheck->isChecked() && window.m_guideShowWrapCheck->isChecked() &&
                     std::abs(window.m_guideWrapOpacitySpin->value() - 1.0) < 1e-9,
                 "the envelope is not shown alone and opaque after computing it");
+        require(window.m_guideRegionSection->isVisibleTo(&window) && !window.m_guideSlotSection->isVisibleTo(&window),
+                "the support region step did not appear alone with the envelope");
 
         // 2. The support region, painted with the brush on the envelope, in any order.
         window.m_guideRegionButton->setChecked(true);
@@ -885,6 +890,8 @@ public:
                 window.onGuideSurfaceBrushed(x, 0.0, z, Qt::NoModifier);
         window.onGuideBrushFinished();
         require(window.m_guidePlan.paint.size() > 20, "the brushed region was not collected");
+        require(window.m_guideSlotSection->isVisibleTo(&window) && window.m_guideBuildSection->isVisibleTo(&window),
+                "the slot and build steps did not appear with the painted region");
         // The brushed patch shows on the envelope, which is its own coloured layer.
         auto* paintColors = window.m_guideWrapMesh->GetPointData()->GetArray("GuidePaint");
         require(paintColors != nullptr, "the envelope is not coloured as its own layer");
@@ -926,7 +933,9 @@ public:
             window.m_guideFigureShapeCombo->findData(static_cast<int>(GuideFigureShape::Box)));
         window.m_guideFigureOperationCombo->setCurrentIndex(
             window.m_guideFigureOperationCombo->findData(static_cast<int>(GuideFigureOperation::Subtract)));
-        require(window.m_guideFigureWidthSpin->isVisibleTo(&window) && !window.m_guideFigureDiameterSpin->isVisibleTo(&window),
+        // Figures live in a folded section: visibility is relative to that section, not to the window.
+        require(window.m_guideFigureWidthSpin->isVisibleTo(window.m_guideFigureWidthSpin->parentWidget()) &&
+                    !window.m_guideFigureDiameterSpin->isVisibleTo(window.m_guideFigureDiameterSpin->parentWidget()),
                 "the box does not show its own measurements");
         window.m_guideFigureWidthSpin->setValue(6.0);
         window.m_guideFigureHeightSpin->setValue(1.0);
@@ -962,6 +971,7 @@ public:
         require(window.m_guideReportLabel->text().contains(QStringLiteral("1 restada")),
                 "the report does not count the subtracted figure: " + window.m_guideReportLabel->text().toStdString());
         require(window.m_guideExportButton->isEnabled(), "the guide cannot be exported");
+        require(window.m_guideExportSection->isVisibleTo(&window), "the export step did not appear with the guide");
         // Screenshots of the finished guide alone, to look at its rim and surface.
         window.m_guideShowWrapCheck->setChecked(false);
         window.m_guideShowFiguresCheck->setChecked(false);
