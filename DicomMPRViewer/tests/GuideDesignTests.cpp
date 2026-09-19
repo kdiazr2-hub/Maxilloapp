@@ -195,7 +195,13 @@ void testPreparationIsReused()
     const GuideDesignResult drilled =
         GuideDesignCore::Build(prepared, patchContour(), {}, {{center, normal, 3.0}}, params(3.0, 0.0));
     require(drilled.ok && drilled.pieces == 1, "the drilled guide is not one piece");
-    require(volumeOf(drilled.mesh) < volumeOf(thick.mesh), "the fixation hole removed nothing");
+    GuideDesignParams noCollar = params(3.0, 0.0);
+    noCollar.holeCollarWidthMm = 0.0;
+    noCollar.holeCollarHeightMm = 0.0;
+    const GuideDesignResult plainDrilled =
+        GuideDesignCore::Build(prepared, patchContour(), {}, {{center, normal, 3.0}}, noCollar);
+    require(plainDrilled.ok && volumeOf(drilled.mesh) > volumeOf(plainDrilled.mesh),
+            "the fixation-hole collar added no stop material");
     require(drilled.report.contains(QStringLiteral("1 agujero")),
             "the report does not mention the hole: " + drilled.report.toStdString());
 }
@@ -274,6 +280,32 @@ void testFiguresAddAndSubtract()
     require(grown.report.contains(QStringLiteral("1 figura(s) sumada(s)")),
             "the report does not count the added figure: " + grown.report.toStdString());
 
+    // A three-point connector becomes a smooth, round tube and joins the guide at both ends.
+    GuideFigure tube;
+    tube.shape = GuideFigureShape::CurvedTube;
+    tube.operation = GuideFigureOperation::Add;
+    tube.diameterMm = 3.0;
+    tube.controlPoints = {{{-6.0, midWall, 8.0}, {0.0, 7.0, 11.0}, {6.0, midWall, 14.0}}};
+    const auto tubePreview = GuideDesignCore::FigurePreview(tube);
+    require(tubePreview && tubePreview->GetNumberOfPolys() > 500, "the curved tube has no smooth preview");
+    const GuideDesignResult connected =
+        GuideDesignCore::Build(prepared, patchContour(), {}, {}, {tube}, params(thickness, clearance));
+    require(connected.ok && connected.pieces == 1, "the curved tube did not remain joined to the guide");
+    require(volumeOf(connected.mesh) > plainVolume + 30.0, "the curved tube did not add material");
+
+    // A copied splint-like solid remains separate data but becomes one printed piece through the connector.
+    GuideFigure copiedSplint;
+    copiedSplint.shape = GuideFigureShape::Mesh;
+    copiedSplint.operation = GuideFigureOperation::Add;
+    copiedSplint.sourceLabel = 215;
+    copiedSplint.mesh = boxMesh({-4.0, 4.0, 6.0, 8.0, 8.0, 14.0}, false, false);
+    GuideFigure bridge = tube;
+    bridge.controlPoints = {{{0.0, midWall, 10.0}, {0.0, 4.5, 11.0}, {0.0, 6.2, 11.0}}};
+    const GuideDesignResult integrated = GuideDesignCore::Build(prepared, patchContour(), {}, {},
+                                                                {copiedSplint, bridge}, params(thickness, clearance));
+    require(integrated.ok && integrated.pieces == 1,
+            "the copied splint and curved connector did not become one guide");
+
     // An imported shape works the same way as a primitive: here, the same box as a mesh.
     GuideFigure imported = slotBox;
     imported.shape = GuideFigureShape::Mesh;
@@ -301,6 +333,19 @@ void testFiguresAddAndSubtract()
     empty.shape = GuideFigureShape::Mesh;
     require(!GuideDesignCore::Build(prepared, patchContour(), {}, {}, {empty}, params(thickness, clearance)).ok,
             "an empty imported figure was accepted");
+
+    const auto outward = GuideDesignCore::OutwardTubeControlPoints(
+        {{{-5.0, 0.0, 0.0}, {1.0, -6.0, 2.0}, {5.0, 0.0, 4.0}}}, {0.0, 1.0, 0.0}, 4.0);
+    require(outward.size() == 3 && outward[1][1] >= 4.0,
+            "an inward connector bend was not reflected away from the anatomy");
+    require(std::abs(outward[1][0] - 1.0) < 1e-9 && std::abs(outward[1][2] - 2.0) < 1e-9,
+            "correcting the connector changed its tangential placement");
+    GuideFigure outwardTube;
+    outwardTube.shape = GuideFigureShape::CurvedTube;
+    outwardTube.controlPoints = outward;
+    const auto centerline = GuideDesignCore::CurvedTubeCenterline(outwardTube);
+    require(centerline.size() == 49 && std::abs(centerline[24][1] - outward[1][1]) < 1e-9,
+            "the clearance check does not sample the tube through its requested midpoint");
 }
 } // namespace
 

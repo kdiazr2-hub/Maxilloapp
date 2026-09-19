@@ -13,6 +13,8 @@
 #include <QLocale>
 #include <QPushButton>
 #include <QSignalBlocker>
+#include <QSizePolicy>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -58,6 +60,42 @@ void setCheck(QCheckBox* check, bool value)
     const QSignalBlocker blocker(check);
     check->setChecked(value);
 }
+
+void addCollapsible(QVBoxLayout* layout, QGroupBox* box, bool expanded)
+{
+    auto* holder = new QWidget(layout->parentWidget());
+    holder->setMinimumWidth(0);
+    holder->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    auto* holderLayout = new QVBoxLayout(holder);
+    holderLayout->setContentsMargins(0, 0, 0, 0);
+    holderLayout->setSpacing(4);
+    auto* header = new QToolButton(holder);
+    header->setObjectName(QStringLiteral("CollapsibleHeader"));
+    header->setText(box->title());
+    header->setCheckable(true);
+    header->setChecked(expanded);
+    header->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    header->setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
+    header->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    header->setMinimumWidth(0);
+    header->setStyleSheet(QStringLiteral(
+        "QToolButton#CollapsibleHeader { color:#d1d1d6; background:#292b30; border:1px solid #34363c;"
+        " border-radius:6px; font-weight:600; text-align:left; padding:7px 9px; }"
+        "QToolButton#CollapsibleHeader:hover { background:#34373d; color:#ffffff; }"
+        "QToolButton#CollapsibleHeader:checked { background:#252b33; color:#ffffff;"
+        " border-color:#3a3d43; border-left:3px solid #0a84ff; }"));
+    box->setTitle(QString());
+    box->setMinimumWidth(0);
+    box->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    box->setVisible(expanded);
+    QObject::connect(header, &QToolButton::toggled, box, [header, box](bool open) {
+        header->setArrowType(open ? Qt::DownArrow : Qt::RightArrow);
+        box->setVisible(open);
+    });
+    holderLayout->addWidget(header);
+    holderLayout->addWidget(box);
+    layout->addWidget(holder);
+}
 } // namespace
 
 SplintDesignPanel::SplintDesignPanel(QWidget* parent)
@@ -96,14 +134,10 @@ SplintDesignPanel::SplintDesignPanel(QWidget* parent)
     auto* sourceForm = new QFormLayout();
     m_upperSourceCombo = new QComboBox(designBox);
     m_lowerSourceCombo = new QComboBox(designBox);
-    sourceForm->addRow(tr("Maxilar:"), m_upperSourceCombo);
-    sourceForm->addRow(tr("Mandíbula:"), m_lowerSourceCombo);
+    sourceForm->addRow(tr("Superior:"), m_upperSourceCombo);
+    sourceForm->addRow(tr("Inferior:"), m_lowerSourceCombo);
     designLayout->addLayout(sourceForm);
-    auto* testStlButton = new QPushButton(tr("Cargar STL de prueba…"), designBox);
-    testStlButton->setToolTip(tr("Carga un STL superior y uno inferior como fuentes, sin DICOM ni planificación."));
-    connect(testStlButton, &QPushButton::clicked, this, &SplintDesignPanel::loadTestStlRequested);
-    designLayout->addWidget(testStlButton);
-    layout->addWidget(designBox);
+    addCollapsible(layout, designBox, true);
 
     connect(m_designCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
         if (!m_updating && index >= 0)
@@ -129,9 +163,9 @@ SplintDesignPanel::SplintDesignPanel(QWidget* parent)
     m_upperPointsButton->setCheckable(true);
     m_lowerPointsButton->setCheckable(true);
     m_upperPointsButton->setStyleSheet(QStringLiteral(
-        "QPushButton:checked { background-color: rgb(255,128,0); color: black; }"));
+        "QPushButton:checked { background-color:#0a84ff; border-color:#0a84ff; color:#ffffff; }"));
     m_lowerPointsButton->setStyleSheet(QStringLiteral(
-        "QPushButton:checked { background-color: rgb(0,0,255); color: white; }"));
+        "QPushButton:checked { background-color:#0a84ff; border-color:#0a84ff; color:#ffffff; }"));
     pointButtons->addWidget(new QLabel(tr("Marcar:"), pointsBox));
     pointButtons->addWidget(m_upperPointsButton);
     pointButtons->addWidget(m_lowerPointsButton);
@@ -182,7 +216,7 @@ SplintDesignPanel::SplintDesignPanel(QWidget* parent)
     form->addRow(m_undercutUpperCheck);
     form->addRow(m_impressionLowerCheck);
     form->addRow(m_undercutLowerCheck);
-    layout->addWidget(paramsBox);
+    addCollapsible(layout, paramsBox, false);
 
     // ── Thickness ─────────────────────────────────────────────────────────
     auto* thicknessBox = new QGroupBox(tr("Grosor"), this);
@@ -194,7 +228,7 @@ SplintDesignPanel::SplintDesignPanel(QWidget* parent)
     thicknessForm->addRow(tr("Mínimo:"), m_minThicknessSpin);
     thicknessForm->addRow(tr("Máximo:"), m_maxThicknessSpin);
     thicknessForm->addRow(makeMuted(tr("Rojo: bajo el mínimo · amarillo: en rango · morado: sobre el máximo."), thicknessBox));
-    layout->addWidget(thicknessBox);
+    addCollapsible(layout, thicknessBox, false);
 
     const auto paramChanged = [this] {
         updateUndercutEnabled();
@@ -232,7 +266,7 @@ SplintDesignPanel::SplintDesignPanel(QWidget* parent)
            "Los cambios del contorno se pierden si se mueven los puntos guía."),
         contourBox);
     contourLayout->addWidget(m_contourNote);
-    layout->addWidget(contourBox);
+    addCollapsible(layout, contourBox, false);
 
     connect(m_editContourButton, &QPushButton::toggled, this, [this](bool editing) {
         if (!m_updating)
@@ -304,7 +338,7 @@ SplintDesignPanel::SplintDesignPanel(QWidget* parent)
         extrasBox));
     m_extrasSummary = makeMuted(QString(), extrasBox);
     extrasLayout->addWidget(m_extrasSummary);
-    layout->addWidget(extrasBox);
+    addCollapsible(layout, extrasBox, false);
 
     for (auto [button, tool] : {std::pair{m_bevelButton, int(BevelTool)}, std::pair{m_holeButton, int(WireHoleTool)},
                                 std::pair{m_bracketButton, int(BracketTool)}}) {
@@ -344,17 +378,20 @@ SplintDesignPanel::SplintDesignPanel(QWidget* parent)
     m_exportButton = new QPushButton(tr("Exportar STL"), this);
     connect(m_exportButton, &QPushButton::clicked, this, &SplintDesignPanel::exportRequested);
     layout->addWidget(m_exportButton);
+    auto* resultsBox = new QGroupBox(tr("Más resultados"), this);
+    auto* resultsLayout = new QVBoxLayout(resultsBox);
     auto* extraExports = new QHBoxLayout();
-    auto* exportPoints = new QPushButton(tr("Exportar puntos"), this);
-    auto* exportReport = new QPushButton(tr("Exportar informe"), this);
+    auto* exportPoints = new QPushButton(tr("Exportar puntos"), resultsBox);
+    auto* exportReport = new QPushButton(tr("Exportar informe"), resultsBox);
     connect(exportPoints, &QPushButton::clicked, this, &SplintDesignPanel::exportPointsRequested);
     connect(exportReport, &QPushButton::clicked, this, &SplintDesignPanel::exportReportRequested);
     extraExports->addWidget(exportPoints);
     extraExports->addWidget(exportReport);
-    layout->addLayout(extraExports);
-    m_report = makeMuted(QString(), this);
+    resultsLayout->addLayout(extraExports);
+    m_report = makeMuted(QString(), resultsBox);
     m_report->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    layout->addWidget(m_report);
+    resultsLayout->addWidget(m_report);
+    addCollapsible(layout, resultsBox, false);
     layout->addStretch(1);
 
     setParams(SplintHeightmapParams{});

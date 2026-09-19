@@ -261,7 +261,8 @@ void MainWindow::refreshOsteotomyWizard()
                                          : m_ostWizard.planError;
         break;
     case OsteotomyWizardPanel::FinalizeStep:
-        nextText = tr("Finalizar");
+        nextText = panel->nextAction() == OsteotomyWizardPanel::AnotherOsteotomy
+            ? tr("Continuar") : tr("Finalizar osteotomías");
         status = tr("%1 aplicada.").arg(OsteotomyCore::TypeName(type));
         break;
     default:
@@ -373,9 +374,9 @@ void MainWindow::finishOsteotomyWizard()
 {
     const int action = m_osteotomyWizard ? m_osteotomyWizard->nextAction() : OsteotomyWizardPanel::AnotherOsteotomy;
     if (action == OsteotomyWizardPanel::OcclusionRegistration) {
-        setBiteRegistrationWorkspace(true);
+        selectOrthognathicStep(4);
     } else if (action == OsteotomyWizardPanel::Reposition) {
-        setRepositionWorkspace(true);
+        selectOrthognathicStep(5);
     } else {
         startOsteotomyWizard();
         statusBar()->showMessage(tr("Seleccione la siguiente osteotomía."));
@@ -814,6 +815,9 @@ bool MainWindow::applyOsteotomyCut()
         rememberOsteotomyCut(tr("Le Fort I"), m_ostWizard.path, GuideType::LeFort); // offered as a saw slot in GUIAS
         if (m_leFortExportAct)
             m_leFortExportAct->setEnabled(true);
+        setObjectEntryVisible(kUpperCompositeLabel, false);
+        setObjectEntryVisible(kLeFortCranialLabel, true);
+        setObjectEntryVisible(kLeFortSegLabel, true);
     } else if (type == OsteotomyType::Bsso) {
         const BssoSplitResult split = OsteotomyCore::SplitBsso(bone, m_ostWizard.bsso);
         if (!split.ok) {
@@ -842,6 +846,10 @@ bool MainWindow::applyOsteotomyCut()
         commit(kBssoDistalLabel, m_bssoDistalMesh);
         commit(kBssoProximalRightLabel, m_bssoRightProximalMesh);
         commit(kBssoProximalLeftLabel, m_bssoLeftProximalMesh);
+        setObjectEntryVisible(kLowerCompositeLabel, false);
+        setObjectEntryVisible(kBssoDistalLabel, true);
+        setObjectEntryVisible(kBssoProximalRightLabel, true);
+        setObjectEntryVisible(kBssoProximalLeftLabel, true);
     } else {
         const OsteotomySplitResult split = OsteotomyCore::SplitByPath(bone, m_ostWizard.path);
         if (!split.ok) {
@@ -860,6 +868,9 @@ bool MainWindow::applyOsteotomyCut()
         commit(kGenioSegmentLabel, m_genioSegmentMesh);
         m_segmentReferences[kGenioSegmentLabel] = OsteotomyCore::CaptureSegmentReference(m_genioSegmentMesh, m_ostWizard.path.points);
         rememberOsteotomyCut(tr("Mentoplastia"), m_ostWizard.path, GuideType::Chin); // offered as a saw slot in GUIAS
+        setObjectEntryVisible(boneLabel, false);
+        setObjectEntryVisible(kGenioBodyLabel, true);
+        setObjectEntryVisible(kGenioSegmentLabel, true);
     }
 
     m_ostWizard.planReady = false;

@@ -68,8 +68,8 @@ constexpr double kCoarsePreviewGridMm = 0.4;
 const QColor kUpperPointColor(255, 128, 0);
 const QColor kLowerPointColor(0, 0, 255);
 const QColor kContourColor(230, 30, 30);
-const QColor kUpperSourceColor(128, 112, 210);
-const QColor kLowerSourceColor(220, 82, 78);
+const QColor kUpperSourceColor(72, 156, 205);
+const QColor kLowerSourceColor(232, 176, 72);
 const QColor kSplintColor(244, 238, 220);
 // Editable point groups in the combined splint view (0/1 are the guide points).
 constexpr int kBevelGroup = 2;
@@ -868,7 +868,6 @@ void MainWindow::onSplintPreviewReady(quint64 generation, const SplintHeightmapR
     m_splintLastReport = result.report;
     updateSplintPreviewMesh();
     updateSplintContourOverlay();
-    applySplintOcclusalCameras(false);
     if (m_splintContourEditing) {
         for (Mesh3DView* view : {m_splintUpperView, m_splintLowerView})
             if (view) view->setPlaneDragMode(true, result.frame.origin, result.frame.normal);
@@ -1085,12 +1084,8 @@ void MainWindow::syncSplintHeightmapView()
     updateSplintContourOverlay();
     updateSplintExtrasDisplay();
     applySplintToolPickability();
-    if (m_splintCameraFrameSet && m_splintPreviewValid) {
-        applySplintOcclusalCameras(true);
-    } else {
-        if (m_splintUpperView) m_splintUpperView->setStandardView(3);
-        if (m_splintLowerView) m_splintLowerView->setStandardView(4);
-    }
+    // Synchronizing objects or adding points must not move the cameras. Their
+    // initial occlusal framing is established once when the module opens.
     for (Mesh3DView* view : {m_splintUpperView, m_splintLowerView, m_splintView})
         if (view) view->render();
 }

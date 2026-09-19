@@ -62,7 +62,8 @@ enum class GuideFigureShape
     Cylinder, // diameter, length along local z
     Box,      // width (x), height (y), depth (z)
     Sphere,   // diameter
-    Mesh      // imported STL, in local coordinates
+    Mesh,     // imported STL or a copied project object, in local coordinates
+    CurvedTube // quadratic curve through three control points, diameterMm
 };
 
 enum class GuideFigureOperation
@@ -85,6 +86,8 @@ struct GuideFigure
     double depthMm = 12.0;
     vtkSmartPointer<vtkPolyData> mesh; // Mesh shape only
     QString sourcePath;                // Mesh shape: the imported file, kept in the project
+    int sourceLabel = 0;               // Mesh shape: copied project object (the original remains untouched)
+    std::vector<std::array<double, 3>> controlPoints; // CurvedTube: start, bend and end
 };
 
 struct GuideDesignParams
@@ -93,6 +96,8 @@ struct GuideDesignParams
     CutSlotParams slot;
     double holeLengthMm = 30.0; // cylinder length, through the wall either way
     double edgeMarginMm = 2.0;  // material left between any slot and the edge of the guide
+    double holeCollarWidthMm = 1.5;  // radial stop around each fixation hole
+    double holeCollarHeightMm = 1.2; // height above the outer guide surface
 };
 
 // The slow half: the wrap measured once.
@@ -146,6 +151,16 @@ std::array<double, 3> SurfaceNormalAt(const GuidePreparation& prepared, const st
 
 // A local frame at `center` whose z axis is `zAxis` (a figure placed on the surface points out of it).
 std::array<double, 16> FrameAt(const std::array<double, 3>& center, const std::array<double, 3>& zAxis);
+
+// Keeps a three-point connector outside the anatomy. The middle point keeps
+// its tangential placement, while its component along `outwardNormal` is
+// reflected outward and given at least `minimumBulgeMm` clearance.
+std::vector<std::array<double, 3>> OutwardTubeControlPoints(
+    const std::vector<std::array<double, 3>>& points,
+    const std::array<double, 3>& outwardNormal,
+    double minimumBulgeMm);
+// Sampled centreline used to verify that the connector clears anatomy.
+std::vector<std::array<double, 3>> CurvedTubeCenterline(const GuideFigure& figure);
 // The figure as a field node in world coordinates; nullptr (and `error`) when it has no geometry.
 ImplicitCore::NodePtr FigureNode(const GuideFigure& figure, double detailMm, QString* error = nullptr);
 // The figure as a mesh in world coordinates, for display and the gizmo.

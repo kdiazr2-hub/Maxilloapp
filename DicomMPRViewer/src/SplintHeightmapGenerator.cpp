@@ -21,6 +21,7 @@
 #include <vtkStripper.h>
 #include <vtkTransform.h>
 #include <vtkTransformPolyDataFilter.h>
+#include <vtkWindowedSincPolyDataFilter.h>
 #include <vtkTriangleFilter.h>
 #include <vtkUnsignedCharArray.h>
 
@@ -1796,6 +1797,22 @@ SplintHeightmapResult SplintHeightmapGenerator::Build(const SplintHeightmapPrepa
             decimationNote = QStringLiteral("decimado descartado (abría la malla)");
         }
     }
+
+    // Flying Edges follows the voxel lattice closely, which can leave regular striations on the outer wall.
+    // A conservative, topology-preserving pass evens that wall before normals and thickness are calculated,
+    // while the low displacement keeps the dental impressions intact.
+    auto finish = vtkSmartPointer<vtkWindowedSincPolyDataFilter>::New();
+    finish->SetInputData(localMesh);
+    finish->SetNumberOfIterations(18);
+    finish->SetPassBand(0.12);
+    finish->BoundarySmoothingOn();
+    finish->FeatureEdgeSmoothingOff();
+    finish->NonManifoldSmoothingOn();
+    finish->NormalizeCoordinatesOn();
+    finish->Update();
+    if (finish->GetOutput() && finish->GetOutput()->GetNumberOfPolys() > 0 &&
+        openEdgeCount(finish->GetOutput()) == 0)
+        localMesh = finish->GetOutput();
 
     auto normals = vtkSmartPointer<vtkPolyDataNormals>::New();
     normals->SetInputData(localMesh);

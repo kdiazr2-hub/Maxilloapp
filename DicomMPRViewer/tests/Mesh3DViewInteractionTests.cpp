@@ -102,6 +102,23 @@ void testInteraction()
     require(vtkWidget != nullptr, "missing VTK widget");
     const QPointF center(vtkWidget->width() / 2.0, vtkWidget->height() / 2.0);
 
+    // Full-screen changes and disabling another tool must not erase the active
+    // point-capture cursor. A click also gets immediate visual feedback.
+    view.setPointPickMode(true);
+    view.setPointEditMode(false);
+    view.setFullScreenActive(true);
+    require(vtkWidget->cursor().shape() == Qt::CrossCursor,
+            "full-screen mode lost the active point-pick cursor");
+    mouse(vtkWidget, QEvent::MouseButtonPress, center, Qt::LeftButton, Qt::LeftButton);
+    auto* clickFeedback = view.findChild<QWidget*>("clickFeedback");
+    require(clickFeedback && clickFeedback->isVisible(),
+            "point click did not show visual feedback");
+    mouse(vtkWidget, QEvent::MouseButtonRelease, center, Qt::LeftButton, Qt::NoButton);
+    view.setPointPickMode(false);
+    view.setFullScreenActive(false);
+    require(vtkWidget->cursor().shape() == Qt::ArrowCursor,
+            "cursor was not restored after point capture");
+
     std::vector<PointEvent> added, moved, finished, removed;
     std::vector<PlaneEvent> planeStarted, planeMoved, planeFinished;
     QObject::connect(&view, &Mesh3DView::editablePointAdded, [&](int g, double x, double y, double z) {

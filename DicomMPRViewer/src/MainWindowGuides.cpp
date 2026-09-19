@@ -46,6 +46,7 @@
 #include <QVBoxLayout>
 
 #include <vtkIdList.h>
+#include <vtkImplicitPolyDataDistance.h>
 #include <vtkMatrix4x4.h>
 #include <vtkPointData.h>
 #include <vtkPointLocator.h>
@@ -57,6 +58,7 @@
 #include <vtkTransformPolyDataFilter.h>
 
 #include <algorithm>
+#include <limits>
 #include <utility>
 
 // Defined in MainWindowModels.cpp.
@@ -73,6 +75,7 @@ constexpr int kModeHoles = 3;
 constexpr int kModeFigure = 4;
 constexpr int kModeSculpt = 5;
 constexpr int kModeTrim = 6;
+constexpr int kModeTube = 7;
 
 // The EDITAR palette, in the order the buttons sit in the grid.
 constexpr int kToolSmooth = 0;
@@ -269,12 +272,21 @@ const QColor kGuideColor(214, 226, 240);
 const QColor kWrapColor(120, 196, 214);  // the envelope: its own layer, teal so it is not mistaken for bone
 const QColor kPaintColor(10, 132, 255);  // the brushed region on the envelope
 const QColor kRegionColor(10, 132, 255);
-const QColor kSlotEndColor(255, 159, 10);
+const QColor kSlotEndColor(10, 132, 255);
 const QColor kHoleColor(52, 199, 89);
 const QColor kSubtractColor(255, 69, 58);
 const QColor kAddColor(48, 209, 88);
 
 int figureActorKey(size_t index) { return kGuideFigureActorBase - static_cast<int>(index); }
+
+bool identityFigureMatrix(const std::array<double, 16>& matrix)
+{
+    const auto identity = SplintDesignCore::IdentityMatrix();
+    for (size_t i = 0; i < matrix.size(); ++i)
+        if (std::abs(matrix[i] - identity[i]) > 1e-6)
+            return false;
+    return true;
+}
 
 QString figureName(const GuideFigure& figure)
 {
@@ -291,7 +303,11 @@ QString figureName(const GuideFigure& figure)
     case GuideFigureShape::Sphere:
         return QObject::tr("%1 · Esfera Ø%2 mm").arg(op).arg(figure.diameterMm, 0, 'f', 1);
     case GuideFigureShape::Mesh:
-        return QObject::tr("%1 · %2").arg(op, QFileInfo(figure.sourcePath).fileName());
+        return figure.sourceLabel != 0
+            ? QObject::tr("%1 · Copia de %2").arg(op, meshLabelName(figure.sourceLabel))
+            : QObject::tr("%1 · %2").arg(op, QFileInfo(figure.sourcePath).fileName());
+    case GuideFigureShape::CurvedTube:
+        return QObject::tr("%1 · Tubo curvo Ø%2 mm").arg(op).arg(figure.diameterMm, 0, 'f', 1);
     }
     return op;
 }
@@ -325,36 +341,42 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
 {
     auto* scroll = new QScrollArea(parent);
     scroll->setWidgetResizable(true);
-    scroll->setFixedWidth(330);
+    scroll->setFixedWidth(320);
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     auto* panel = new QWidget();
     panel->setObjectName(QStringLiteral("GuideControlPanel"));
     panel->setStyleSheet(guidedSidePanelStyle(panel->objectName()) +
-                         QStringLiteral("#GuideControlPanel QPushButton { background:#2c2c2e; color:#f5f5f7;"
-                                        "  border:1px solid #3a3a3c; border-radius:8px; padding:7px 10px;"
-                                        "  font-size:11px; }"
-                                        "#GuideControlPanel QPushButton:hover { background:#3a3a3c; }"
+                         QStringLiteral("#GuideControlPanel QPushButton { background:#292b30; color:#f5f5f7;"
+                                        "  border:1px solid #3a3d43; border-radius:6px; padding:8px 10px;"
+                                        "  min-height:20px; font-size:12px; text-align:left; }"
+                                        "#GuideControlPanel QPushButton:hover { background:#34373d; border-color:#4b4e55; }"
+                                        "#GuideControlPanel QPushButton:pressed { background:#0a84ff;"
+                                        "  border-color:#64d2ff; color:#ffffff; }"
                                         "#GuideControlPanel QPushButton:checked { background:#0a84ff;"
                                         "  border-color:#64d2ff; color:#ffffff; font-weight:700; }"
-                                        "#GuideControlPanel QPushButton:disabled { background:#232325;"
-                                        "  border-color:#2c2c2e; color:#6e6e73; }"
+                                        "#GuideControlPanel QPushButton:focus { border-color:#0a84ff; }"
+                                        "#GuideControlPanel QPushButton:disabled { background:#202226;"
+                                        "  border-color:#2c2e33; color:#6e6e73; }"
                                         "#GuideControlPanel QPushButton#GuideFold { background:transparent;"
                                         "  border:none; color:#8e8e93; font-weight:700; text-align:left;"
                                         "  padding:6px 0 2px 0; }"
                                         "#GuideControlPanel QPushButton#GuideFold:checked { background:transparent;"
                                         "  border:none; color:#c7c7cc; }"
-                                        "#GuideControlPanel QListWidget { background:#242426; color:#f5f5f7;"
-                                        "  border:1px solid #3a3a3c; border-radius:8px; font-size:11px; }"
-                                        "#GuideControlPanel QComboBox { background:#2c2c2e; color:#f5f5f7;"
-                                        "  border:1px solid #3a3a3c; border-radius:8px; padding:4px 8px; }"
-                                        "#GuideControlPanel QToolButton { background:#2c2c2e; color:#f5f5f7;"
-                                        "  border:1px solid #3a3a3c; border-radius:8px; }"
-                                        "#GuideControlPanel QToolButton:hover { background:#3a3a3c; }"
+                                        "#GuideControlPanel QListWidget { background:#202226; color:#f5f5f7;"
+                                        "  border:1px solid #3a3d43; border-radius:4px; font-size:11px; }"
+                                        "#GuideControlPanel QComboBox { background:#292b30; color:#f5f5f7;"
+                                        "  border:1px solid #3a3d43; border-radius:6px; padding:5px 8px; }"
+                                        "#GuideControlPanel QToolButton { background:#292b30; color:#f5f5f7;"
+                                        "  border:1px solid #3a3d43; border-radius:6px; }"
+                                        "#GuideControlPanel QToolButton:hover { background:#34373d; }"
+                                        "#GuideControlPanel QToolButton:pressed { background:#0a84ff;"
+                                        "  border-color:#64d2ff; }"
                                         "#GuideControlPanel QToolButton:checked { background:#0a84ff;"
                                         "  border-color:#64d2ff; }"
-                                        "#GuideControlPanel QToolButton:disabled { background:#232325;"
-                                        "  border-color:#2c2c2e; color:#6e6e73; }"
+                                        "#GuideControlPanel QToolButton:focus { border-color:#0a84ff; }"
+                                        "#GuideControlPanel QToolButton:disabled { background:#202226;"
+                                        "  border-color:#2c2e33; color:#6e6e73; }"
                                         "#GuideControlPanel QToolButton#GuideMode { font-size:10px;"
                                         "  padding:3px 7px; }"
                                         "#GuideControlPanel QCheckBox { color:#c7c7cc; font-size:11px; }"
@@ -532,6 +554,23 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
     auto* importFigure = new QPushButton(tr("Importar figura STL…"), panel);
     connect(importFigure, &QPushButton::clicked, this, &MainWindow::importGuideFigure);
     figureBox->addWidget(importFigure);
+
+    auto* connectorForm = new QFormLayout();
+    m_guideSplintCopyCombo = new QComboBox(panel);
+    m_guideSplintCopyCombo->addItem(tr("Férula intermedia"), kIntermediateSplintLabel);
+    m_guideSplintCopyCombo->addItem(tr("Férula final"), kFinalSplintLabel);
+    connectorForm->addRow(tr("Copia integrada:"), m_guideSplintCopyCombo);
+    auto* addSplintCopy = new QPushButton(tr("Añadir copia de férula"), panel);
+    connect(addSplintCopy, &QPushButton::clicked, this, &MainWindow::addGuideSplintCopy);
+    connectorForm->addRow(addSplintCopy);
+    m_guideTubeDiameterSpin = spin(3.0, 1.0, 8.0, 0.25);
+    connectorForm->addRow(tr("Diámetro del tubo:"), m_guideTubeDiameterSpin);
+    figureBox->addLayout(connectorForm);
+    m_guideTubeButton = new QPushButton(tr("Colocar tubo curvo (3 puntos)"), panel);
+    m_guideTubeButton->setCheckable(true);
+    connect(m_guideTubeButton, &QPushButton::toggled, this,
+            [this](bool on) { setGuidePointMode(on ? kModeTube : kModeNone); });
+    figureBox->addWidget(m_guideTubeButton);
     m_guideFigureList = new QListWidget(panel);
     m_guideFigureList->setMaximumHeight(80);
     connect(m_guideFigureList, &QListWidget::currentRowChanged, this, [this](int) { updateGuideUi(); });
@@ -745,6 +784,19 @@ void MainWindow::setGuidesWorkspace(bool enabled)
             m_guideMoveFigureButton->setChecked(false);
         return;
     }
+    // Older plans stored copied splints with an identity matrix even though
+    // their Le Fort had already moved. Migrate those copies once on entry.
+    if (m_guidePlan.type == GuideType::LeFort) {
+        const auto movedLeFort = repositionMeshForLabel(kLeFortSegLabel);
+        const auto guideLeFort = guideSourceMeshForLabel(kLeFortSegLabel);
+        const auto toPreoperative = SplintDesignCore::RigidMotion(movedLeFort, guideLeFort, 0.2);
+        if (toPreoperative)
+            for (GuideFigure& figure : m_guidePlan.figures)
+                if (figure.shape == GuideFigureShape::Mesh &&
+                    (figure.sourceLabel == kIntermediateSplintLabel || figure.sourceLabel == kFinalSplintLabel) &&
+                    identityFigureMatrix(figure.matrix))
+                    figure.matrix = *toPreoperative;
+    }
     refreshGuideSources();
     refreshGuideCutList();
     refreshGuideFigureList();
@@ -882,6 +934,18 @@ void MainWindow::computeGuideWrap()
     }
     m_guideWrapMesh = wrap.mesh;
     m_guidePrepared = prepared;
+    if (m_guidePrepared.ok) {
+        for (GuideFigure& figure : m_guidePlan.figures) {
+            if (figure.shape != GuideFigureShape::CurvedTube || figure.controlPoints.size() < 3)
+                continue;
+            const auto& start = figure.controlPoints.front();
+            const auto& end = figure.controlPoints.back();
+            const double chord = std::hypot(std::hypot(end[0] - start[0], end[1] - start[1]), end[2] - start[2]);
+            const double minimumBulge = std::max({8.0, 2.5 * figure.diameterMm, 0.25 * chord});
+            figure.controlPoints = GuideDesignCore::OutwardTubeControlPoints(
+                figure.controlPoints, GuideDesignCore::SurfaceNormalAt(m_guidePrepared, start), minimumBulge);
+        }
+    }
     repaintGuideWrap();
     // The envelope replaces the bone while designing: bone layers hidden, envelope opaque.
     if (m_guideShowModelsCheck) {
@@ -908,10 +972,13 @@ void MainWindow::setGuidePointMode(int mode)
     m_guidePointMode = mode;
     if (mode != kModeSlotEnds)
         m_guidePendingEnds.clear();
+    if (mode != kModeTube)
+        m_guidePendingTubePoints.clear();
     const std::vector<std::pair<QPushButton*, int>> owners = {{m_guideRegionButton, kModeRegion},
                                                               {m_guideSlotEndsButton, kModeSlotEnds},
                                                               {m_guideHoleButton, kModeHoles},
-                                                              {m_guidePlaceFigureButton, kModeFigure}};
+                                                              {m_guidePlaceFigureButton, kModeFigure},
+                                                              {m_guideTubeButton, kModeTube}};
     for (const auto& [button, owned] : owners) {
         if (!button)
             continue;
@@ -929,7 +996,10 @@ void MainWindow::setGuidePointMode(int mode)
         // The region and the sculpting tools use the surface brush; the other modes pick points.
         m_guideView->setSurfaceBrushMode(mode == kModeRegion || mode == kModeSculpt);
         m_guideView->setPointPickMode(mode == kModeSlotEnds || mode == kModeHoles || mode == kModeFigure ||
-                                      mode == kModeTrim);
+                                      mode == kModeTrim || mode == kModeTube);
+        for (size_t i = 0; i < m_guidePlan.figures.size(); ++i)
+            m_guideView->setMeshPickable(figureActorKey(i), mode == kModeTube &&
+                                                               m_guidePlan.figures[i].sourceLabel != 0);
     }
     updateGuideUi();
 }
@@ -1105,6 +1175,50 @@ void MainWindow::onGuidePointPicked(int, double x, double y, double z)
         syncGuideView();
         break;
     }
+    case kModeTube: {
+        m_guidePendingTubePoints.push_back(point);
+        if (m_guidePendingTubePoints.size() < 3)
+            break;
+        GuideFigure tube;
+        tube.shape = GuideFigureShape::CurvedTube;
+        tube.operation = GuideFigureOperation::Add;
+        tube.diameterMm = m_guideTubeDiameterSpin ? m_guideTubeDiameterSpin->value() : 3.0;
+        const auto outward = normalAt(m_guidePendingTubePoints.front());
+        const auto& start = m_guidePendingTubePoints.front();
+        const auto& end = m_guidePendingTubePoints.back();
+        const double chord = std::hypot(std::hypot(end[0] - start[0], end[1] - start[1]), end[2] - start[2]);
+        double minimumBulge = std::max({8.0, 2.5 * tube.diameterMm, 0.25 * chord});
+        const auto leFort = m_guidePlan.type == GuideType::LeFort
+            ? guideSourceMeshForLabel(kLeFortSegLabel) : vtkSmartPointer<vtkPolyData>{};
+        for (int attempt = 0; attempt < 10; ++attempt) {
+            tube.controlPoints = GuideDesignCore::OutwardTubeControlPoints(
+                m_guidePendingTubePoints, outward, minimumBulge);
+            if (!leFort || leFort->GetNumberOfPolys() == 0)
+                break;
+
+            auto distance = vtkSmartPointer<vtkImplicitPolyDataDistance>::New();
+            distance->SetInput(leFort);
+            const auto centerline = GuideDesignCore::CurvedTubeCenterline(tube);
+            double closest = std::numeric_limits<double>::max();
+            // The ends intentionally meet the guide and splint. The remaining
+            // centreline must clear the bone by the tube radius plus 2 mm.
+            const size_t margin = std::max<size_t>(3, centerline.size() / 10);
+            for (size_t i = margin; i + margin < centerline.size(); ++i) {
+                double sample[3] = {centerline[i][0], centerline[i][1], centerline[i][2]};
+                closest = std::min(closest, std::abs(distance->EvaluateFunction(sample)));
+            }
+            if (closest >= 0.5 * tube.diameterMm + 2.0)
+                break;
+            minimumBulge += std::max(3.0, 0.08 * chord);
+        }
+        m_guidePlan.figures.push_back(tube);
+        m_guidePendingTubePoints.clear();
+        refreshGuideFigureList();
+        if (m_guideFigureList)
+            m_guideFigureList->setCurrentRow(static_cast<int>(m_guidePlan.figures.size()) - 1);
+        syncGuideView();
+        break;
+    }
     default:
         return;
     }
@@ -1206,6 +1320,59 @@ void MainWindow::importGuideFigure()
     statusBar()->showMessage(tr("Guías: figura importada; muévala con «Mover figura (gizmo)»."));
 }
 
+void MainWindow::resolveGuideFigureMesh(GuideFigure& figure)
+{
+    if (figure.shape != GuideFigureShape::Mesh || figure.mesh)
+        return;
+    if (figure.sourceLabel != 0) {
+        const auto source = repositionMeshForLabel(figure.sourceLabel);
+        if (source && source->GetNumberOfPolys() > 0) {
+            figure.mesh = vtkSmartPointer<vtkPolyData>::New();
+            figure.mesh->DeepCopy(source);
+        }
+        return;
+    }
+    figure.mesh = loadFigureMesh(figure.sourcePath);
+}
+
+void MainWindow::addGuideSplintCopy()
+{
+    const int label = m_guideSplintCopyCombo ? m_guideSplintCopyCombo->currentData().toInt() : 0;
+    const auto source = repositionMeshForLabel(label);
+    if (!source || source->GetNumberOfPolys() == 0) {
+        QMessageBox::warning(this, tr("Guías"), tr("Primero cree la férula seleccionada."));
+        return;
+    }
+    GuideFigure copy;
+    copy.shape = GuideFigureShape::Mesh;
+    copy.operation = GuideFigureOperation::Add;
+    copy.sourceLabel = label;
+    copy.mesh = vtkSmartPointer<vtkPolyData>::New();
+    copy.mesh->DeepCopy(source);
+    if (m_guidePlan.type == GuideType::LeFort) {
+        const auto movedLeFort = repositionMeshForLabel(kLeFortSegLabel);
+        const auto guideLeFort = guideSourceMeshForLabel(kLeFortSegLabel);
+        const auto toPreoperative = SplintDesignCore::RigidMotion(movedLeFort, guideLeFort, 0.2);
+        if (!toPreoperative) {
+            QMessageBox::warning(
+                this, tr("Guías"),
+                tr("No se pudo alinear la férula con el Le Fort preoperatorio. Revise que el segmento conserve su geometría rígida."));
+            return;
+        }
+        copy.matrix = *toPreoperative;
+    }
+    m_guidePlan.figures.push_back(copy);
+    refreshGuideFigureList();
+    if (m_guideFigureList)
+        m_guideFigureList->setCurrentRow(static_cast<int>(m_guidePlan.figures.size()) - 1);
+    syncGuideView();
+    updateGuideUi();
+    statusBar()->showMessage(
+        m_guidePlan.type == GuideType::LeFort
+            ? tr("Guías: la copia de la férula quedó encajada con el Le Fort preoperatorio. Únala con tubos curvos.")
+            : tr("Guías: se añadió una copia independiente de la férula. Únala con tubos curvos."));
+}
+
 void MainWindow::removeGuideFigure()
 {
     const int row = m_guideFigureList ? m_guideFigureList->currentRow() : -1;
@@ -1274,6 +1441,8 @@ void MainWindow::rebuildGuideMarkers()
         }
     for (const auto& p : m_guidePendingEnds)
         m_guideView->addPointMarker(p[0], p[1], p[2], kSlotEndColor);
+    for (const auto& p : m_guidePendingTubePoints)
+        m_guideView->addPointMarker(p[0], p[1], p[2], kAddColor);
     for (const auto& hole : m_guidePlan.holes)
         m_guideView->addPointMarker(hole.center[0], hole.center[1], hole.center[2], kHoleColor);
 
@@ -1378,10 +1547,9 @@ void MainWindow::buildGuideMesh()
     m_guidePlan.design.edgeMarginMm = m_guideMarginSpin->value();
 
     const std::vector<GuideSlot> chosen = guideChosenSlots();
-    // Imported figures reloaded from their file if the mesh is not in memory (after opening a project).
+    // Imported figures and copied splints are reloaded when a project is opened.
     for (GuideFigure& figure : m_guidePlan.figures)
-        if (figure.shape == GuideFigureShape::Mesh && !figure.mesh)
-            figure.mesh = loadFigureMesh(figure.sourcePath);
+        resolveGuideFigureMesh(figure);
 
     QApplication::setOverrideCursor(Qt::WaitCursor);
     statusBar()->showMessage(tr("Guías: construyendo…"));
@@ -1507,8 +1675,7 @@ void MainWindow::syncGuideView()
     }
     for (size_t i = 0; i < m_guidePlan.figures.size(); ++i) {
         GuideFigure& figure = m_guidePlan.figures[i];
-        if (figure.shape == GuideFigureShape::Mesh && !figure.mesh)
-            figure.mesh = loadFigureMesh(figure.sourcePath);
+        resolveGuideFigureMesh(figure);
         const auto preview = GuideDesignCore::FigurePreview(figure);
         if (!preview || preview->GetNumberOfPolys() == 0)
             continue;
@@ -1516,7 +1683,7 @@ void MainWindow::syncGuideView()
         m_guideView->addMesh(key, preview, figureName(figure));
         m_guideView->setMeshColor(key, figure.operation == GuideFigureOperation::Add ? kAddColor : kSubtractColor);
         m_guideView->setMeshOpacity(key, 0.55);
-        m_guideView->setMeshPickable(key, false); // clicks go through to the surface while placing
+        m_guideView->setMeshPickable(key, m_guidePointMode == kModeTube && figure.sourceLabel != 0);
     }
     rebuildGuideMarkers();
     applyGuideLayers();
@@ -1564,6 +1731,11 @@ void MainWindow::updateGuideUi()
                                           : tr("Marque el final de la ranura.");
     else if (m_guidePointMode == kModeFigure)
         hint = tr("Haga clic donde quiera la figura.");
+    else if (m_guidePointMode == kModeTube)
+        hint = m_guidePendingTubePoints.empty()
+            ? tr("Marque el inicio del tubo sobre la guía.")
+            : (m_guidePendingTubePoints.size() == 1 ? tr("Marque el punto que define la curva.")
+                                                    : tr("Marque el final sobre la copia de la férula."));
     else if (m_guidePointMode == kModeHoles)
         hint = tr("Haga clic en cada agujero de fijación.");
     else if (m_guidePointMode == kModeTrim)
@@ -1586,8 +1758,18 @@ QJsonObject MainWindow::guidePlanJson() const
 
 void MainWindow::restoreGuidePlan(const ProjectState& state)
 {
-    if (state.guidesPlan.isEmpty())
+    m_guideCuts.clear();
+    if (state.guidesPlan.isEmpty()) {
+        m_guidePlan = GuidePlan{};
+        m_guideWrapMesh = nullptr;
+        m_guideMesh = nullptr;
+        m_guidePrepared = GuidePreparation{};
+        refreshGuideSources();
+        refreshGuideCutList();
+        refreshGuideFigureList();
+        updateGuideUi();
         return;
+    }
     m_guidePlan = GuidePlanCore::FromJson(state.guidesPlan);
     m_guideWrapMesh = nullptr;
     m_guideMesh = nullptr;
@@ -1597,9 +1779,12 @@ void MainWindow::restoreGuidePlan(const ProjectState& state)
     for (const GuideSlot& slot : m_guidePlan.slotPlan)
         rememberOsteotomyCut(tr("Osteotomía %1").arg(index++), slot.path, m_guidePlan.type);
     QStringList missingFiles;
-    for (GuideFigure& figure : m_guidePlan.figures)
-        if (figure.shape == GuideFigureShape::Mesh && !(figure.mesh = loadFigureMesh(figure.sourcePath)))
-            missingFiles << figure.sourcePath;
+    for (GuideFigure& figure : m_guidePlan.figures) {
+        resolveGuideFigureMesh(figure);
+        if (figure.shape == GuideFigureShape::Mesh && !figure.mesh) {
+            missingFiles << (figure.sourceLabel != 0 ? meshLabelName(figure.sourceLabel) : figure.sourcePath);
+        }
+    }
     if (m_guideTypeCombo) {
         QSignalBlocker blocker(m_guideTypeCombo);
         m_guideTypeCombo->setCurrentIndex(m_guideTypeCombo->findData(static_cast<int>(m_guidePlan.type)));

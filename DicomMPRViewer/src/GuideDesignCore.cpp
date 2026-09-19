@@ -9,6 +9,9 @@
 #include <vtkTransform.h>
 #include <vtkTransformPolyDataFilter.h>
 #include <vtkTriangleFilter.h>
+#include <vtkTubeFilter.h>
+#include <vtkPoints.h>
+#include <vtkCellArray.h>
 
 #include <algorithm>
 #include <cmath>
@@ -44,6 +47,30 @@ Vec3 normalized(const Vec3& v, const Vec3& fallback)
 Vec3 cross(const Vec3& a, const Vec3& b)
 {
     return {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
+}
+
+std::vector<Vec3> curvedTubeSamples(const GuideFigure& figure)
+{
+    if (figure.controlPoints.size() < 3)
+        return {};
+    const Vec3& a = figure.controlPoints[0];
+    const Vec3& b = figure.controlPoints[1];
+    const Vec3& c = figure.controlPoints[2];
+    // Convert the requested midpoint into a quadratic control point. A regular
+    // Bézier only approaches its control point; this form passes through b at t=.5.
+    const Vec3 q{2.0 * b[0] - 0.5 * (a[0] + c[0]),
+                 2.0 * b[1] - 0.5 * (a[1] + c[1]),
+                 2.0 * b[2] - 0.5 * (a[2] + c[2])};
+    std::vector<Vec3> samples;
+    samples.reserve(49);
+    for (int i = 0; i <= 48; ++i) {
+        const double t = i / 48.0;
+        const double s = 1.0 - t;
+        samples.push_back({s * s * a[0] + 2.0 * s * t * q[0] + t * t * c[0],
+                           s * s * a[1] + 2.0 * s * t * q[1] + t * t * c[1],
+                           s * s * a[2] + 2.0 * s * t * q[2] + t * t * c[2]});
+    }
+    return samples;
 }
 
 // Everything that must stay empty in the finished guide: the saw slots, the fixation holes and the figures
@@ -154,6 +181,34 @@ std::array<double, 16> FrameAt(const std::array<double, 3>& center, const std::a
     return {x[0], y[0], z[0], center[0], x[1], y[1], z[1], center[1], x[2], y[2], z[2], center[2], 0.0, 0.0, 0.0, 1.0};
 }
 
+std::vector<std::array<double, 3>> OutwardTubeControlPoints(
+    const std::vector<std::array<double, 3>>& points,
+    const std::array<double, 3>& outwardNormal,
+    double minimumBulgeMm)
+{
+    if (points.size() < 3)
+        return points;
+
+    std::vector<std::array<double, 3>> corrected = points;
+    const Vec3 normal = normalized(outwardNormal, {0.0, 1.0, 0.0});
+    const Vec3 midpoint{0.5 * (points[0][0] + points[2][0]),
+                        0.5 * (points[0][1] + points[2][1]),
+                        0.5 * (points[0][2] + points[2][2])};
+    const Vec3 offset{points[1][0] - midpoint[0], points[1][1] - midpoint[1],
+                      points[1][2] - midpoint[2]};
+    const double signedBulge = offset[0] * normal[0] + offset[1] * normal[1] + offset[2] * normal[2];
+    const double outwardBulge = std::max(std::abs(signedBulge), std::max(0.0, minimumBulgeMm));
+    const double correction = outwardBulge - signedBulge;
+    for (int axis = 0; axis < 3; ++axis)
+        corrected[1][static_cast<size_t>(axis)] += correction * normal[static_cast<size_t>(axis)];
+    return corrected;
+}
+
+std::vector<std::array<double, 3>> CurvedTubeCenterline(const GuideFigure& figure)
+{
+    return curvedTubeSamples(figure);
+}
+
 ImplicitCore::NodePtr FigureNode(const GuideFigure& figure, double detailMm, QString* error)
 {
     ImplicitCore::NodePtr local;
@@ -178,6 +233,21 @@ ImplicitCore::NodePtr FigureNode(const GuideFigure& figure, double detailMm, QSt
         }
         local = ImplicitCore::MeshField(figure.mesh, std::max(0.1, detailMm), 2.0, nullptr, error);
         break;
+    case GuideFigureShape::CurvedTube: {
+        const auto samples = curvedTubeSamples(figure);
+        if (samples.size() < 2) {
+            if (error)
+                *error = QStringLiteral("El tubo curvo necesita tres puntos.");
+            return nullptr;
+        }
+        std::vector<ImplicitCore::NodePtr> pieces;
+        pieces.reserve(samples.size() - 1);
+        const double radius = 0.5 * std::clamp(figure.diameterMm, 0.5, 10.0);
+        for (size_t i = 1; i < samples.size(); ++i)
+            pieces.push_back(ImplicitCore::Capsule(samples[i - 1], samples[i], radius));
+        local = ImplicitCore::Union(pieces);
+        break;
+    }
     }
     if (!local)
         return nullptr;
@@ -225,6 +295,29 @@ vtkSmartPointer<vtkPolyData> FigurePreview(const GuideFigure& figure)
     case GuideFigureShape::Mesh:
         local = figure.mesh;
         break;
+    case GuideFigureShape::CurvedTube: {
+        const auto samples = curvedTubeSamples(figure);
+        if (samples.size() < 2)
+            return nullptr;
+        auto points = vtkSmartPointer<vtkPoints>::New();
+        for (const auto& point : samples)
+            points->InsertNextPoint(point.data());
+        auto lines = vtkSmartPointer<vtkCellArray>::New();
+        lines->InsertNextCell(static_cast<vtkIdType>(samples.size()));
+        for (vtkIdType i = 0; i < static_cast<vtkIdType>(samples.size()); ++i)
+            lines->InsertCellPoint(i);
+        auto curve = vtkSmartPointer<vtkPolyData>::New();
+        curve->SetPoints(points);
+        curve->SetLines(lines);
+        auto tube = vtkSmartPointer<vtkTubeFilter>::New();
+        tube->SetInputData(curve);
+        tube->SetRadius(0.5 * std::clamp(figure.diameterMm, 0.5, 10.0));
+        tube->SetNumberOfSides(24);
+        tube->CappingOn();
+        tube->Update();
+        local = tube->GetOutput();
+        break;
+    }
     }
     if (!local)
         return nullptr;
@@ -324,6 +417,26 @@ GuideDesignResult Build(const GuidePreparation& prepared, const GuideRegion& reg
         solids.push_back(node);
         ++added;
     }
+    // Add a short annular boss around every fixation hole. The through-hole is
+    // subtracted later, leaving a positive stop/collar like a surgical drill guide.
+    const double wallOffset = std::clamp(params.base.clearanceMm, 0.0, 5.0) +
+                              std::clamp(params.base.thicknessMm, 0.3, 20.0);
+    const double collarHeight = std::clamp(params.holeCollarHeightMm, 0.0, 5.0);
+    const double collarWidth = std::clamp(params.holeCollarWidthMm, 0.0, 5.0);
+    if (collarHeight > 0.0 && collarWidth > 0.0) {
+        for (const GuideFixationHole& hole : holes) {
+            if (!(hole.diameterMm > 0.0))
+                continue;
+            const Vec3 axis = normalized(hole.axis, {0.0, 0.0, 1.0});
+            // Sink half the boss into the guide wall so polygonization cannot
+            // leave a numerically tangent, detached collar.
+            const Vec3 center{hole.center[0] + axis[0] * (wallOffset + 0.25 * collarHeight),
+                              hole.center[1] + axis[1] * (wallOffset + 0.25 * collarHeight),
+                              hole.center[2] + axis[2] * (wallOffset + 0.25 * collarHeight)};
+            solids.push_back(ImplicitCore::Cylinder(center, axis,
+                0.5 * hole.diameterMm + collarWidth, 0.75 * collarHeight));
+        }
+    }
     const auto grown = ImplicitCore::Union(solids);
     double bounds[6] = {};
     if (!ImplicitCore::Bounds(grown, bounds)) {
@@ -343,8 +456,8 @@ GuideDesignResult Build(const GuidePreparation& prepared, const GuideRegion& reg
 
     const auto solid = cutters.empty() ? grown : ImplicitCore::Subtract(grown, ImplicitCore::Union(cutters));
     ImplicitCore::PolygonizeOptions options;
-    options.smoothingIterations = params.base.smoothingIterations;
-    options.passBand = 0.05; // a finished, smooth surface; features stay because the field already carries them
+    options.smoothingIterations = std::max(params.base.smoothingIterations, 40);
+    options.passBand = 0.035; // smooth the painted support while retaining slots and collars
     options.repair = true;
     const ImplicitCore::BuildResult built = ImplicitCore::Build(solid, bounds, detail, options, cancel);
     if (!built.ok) {

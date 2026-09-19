@@ -27,6 +27,7 @@
 #include <QPushButton>
 #include <QSurfaceFormat>
 #include <QTemporaryDir>
+#include <QTableWidget>
 #include <QThread>
 #include <QTimer>
 #include <QVTKOpenGLNativeWidget.h>
@@ -34,6 +35,7 @@
 #include <QDoubleSpinBox>
 #include <QMessageBox>
 #include <QStackedWidget>
+#include <QTabWidget>
 #include <QStatusBar>
 
 #include <vtkAppendPolyData.h>
@@ -113,14 +115,13 @@ public:
         window.show();
         settle();
 
-        // Ribbon: ARCHIVO, MEDIDAS and ORTOGNÁTICA; the planning modules are steps of the ORTOGNÁTICA rail.
+        // Ribbon: MEDIDAS now lives inside ARCHIVO; planning remains in ORTOGNÁTICA.
         QStringList visibleTabs;
         for (auto* tab : window.findChildren<QToolButton*>(QStringLiteral("MT")))
             if (tab->isVisibleTo(&window))
                 visibleTabs << tab->text();
-        require(visibleTabs == QStringList({QStringLiteral("ARCHIVO"), QStringLiteral("MEDIDAS"),
-                                            QString::fromUtf8("ORTOGN\xc3\x81TICA")}),
-                "ribbon tabs are not ARCHIVO, MEDIDAS, ORTOGNATICA: " + visibleTabs.join(", ").toStdString());
+        require(visibleTabs == QStringList({QStringLiteral("ARCHIVO"), QString::fromUtf8("ORTOGN\xc3\x81TICA")}),
+                "ribbon tabs are not ARCHIVO, ORTOGNATICA: " + visibleTabs.join(", ").toStdString());
         require(!window.m_orthoStepPanel->isVisibleTo(&window), "step rail shown outside ORTOGNATICA");
         window.m_orthoTab->click();
         settle();
@@ -148,12 +149,12 @@ public:
         window.m_orthoStepButtons[6]->click();
         settle();
         for (auto* tab : window.findChildren<QToolButton*>(QStringLiteral("MT")))
-            if (tab->text() == QStringLiteral("MEDIDAS"))
+            if (tab->text() == QStringLiteral("ARCHIVO"))
                 tab->click();
         settle();
         require(!window.m_orthoStepPanel->isVisibleTo(&window) && window.m_viewModeStack->currentIndex() == 0 &&
                     !window.m_orthoTab->isChecked(),
-                "MEDIDAS did not leave the ORTOGNATICA steps");
+                "ARCHIVO did not leave the ORTOGNATICA steps");
         window.m_orthoTab->click();
         settle();
         require(window.m_orthoStep == 6 && window.m_viewModeStack->currentIndex() == 6,
@@ -179,6 +180,8 @@ public:
         require(!window.m_splintMethodCombo->isVisibleTo(&window), "the classic splint method is still offered");
         auto* splintScroll = window.findChild<QScrollArea*>(QStringLiteral("SplintDesignScroll"));
         require(splintScroll != nullptr, "splint panel scroll area missing");
+        require(window.m_objectTable->contextMenuPolicy() == Qt::CustomContextMenu,
+                "the object list has no right-click actions");
         require(window.m_splintDesignPanel->minimumSizeHint().width() <= splintScroll->viewport()->width(),
                 "the splint panel is wider than its column: " +
                     std::to_string(window.m_splintDesignPanel->minimumSizeHint().width()) + " > " +
@@ -434,21 +437,41 @@ public:
         window.syncModelViews();
         window.updateModelWorkflowUi();
         window.setDentalPointCapture(MainWindow::DentalPointSet::MaxillaBone);
-        for (int i = 0; i < 3; ++i) window.onDentalPointPicked(5, i * 10.0, 0, 0);
+        window.onDentalPointPicked(5, 0.0, 0, 0);
         require(!window.m_matchUpperAct->isEnabled(), "unpaired points allowed registration");
-        window.setDentalPointCapture(MainWindow::DentalPointSet::UpperArch);
-        for (int i = 0; i < 3; ++i) window.onDentalPointPicked(objectActorKey(kUpperArchLabel), i * 10.0, 0, 0);
+        require(window.m_dentalPointSet == MainWindow::DentalPointSet::UpperArch,
+                "point workflow did not alternate to the upper STL");
+        window.onDentalPointPicked(objectActorKey(kUpperArchLabel), 0.0, 0, 0);
+        for (int i = 1; i < 3; ++i) {
+            window.onDentalPointPicked(5, i * 10.0, 0, 0);
+            window.onDentalPointPicked(objectActorKey(kUpperArchLabel), i * 10.0, 0, 0);
+        }
         require(window.m_matchUpperAct->isEnabled(), "paired points did not unlock registration");
         require(window.m_modelGuidePoints->text().contains("3"), "point counts not displayed");
         require(window.m_modelGuideSteps[2]->property("current").toBool(), "guide did not advance to registration");
-        window.onDentalPointPicked(objectActorKey(kUpperArchLabel), 0, 10, 0);
+        window.m_upperRegistrationCalculated = true;
+        window.m_dentalGizmoActive = true;
+        window.updateModelWorkflowUi();
+        require(window.m_compositeAct->isEnabled() && window.m_compositeButton->isEnabled(),
+                "active registration gizmo disabled direct composite creation");
+        require(window.m_modelGuideMessage->text().contains("Crear modelo compuesto"),
+                "model guide still requests a separate gizmo acceptance");
+        window.m_upperRegistrationCalculated = false;
+        window.m_dentalGizmoActive = false;
+        window.updateModelWorkflowUi();
+        window.onDentalPointPicked(5, 0, 10, 0);
         require(!window.m_matchUpperAct->isEnabled(), "unpaired extra point allowed registration");
-        // Guided panel on the left: the step actions are buttons there, not in the ribbon.
+        // Point tools are automatic; only the registration action remains in the side panel.
         settle();
-        bool panelButton = false;
+        bool pointButton = false;
+        bool registerButton = false;
         for (auto* button : window.findChildren<QToolButton*>())
-            panelButton = panelButton || (button->defaultAction() == window.m_upperPtsAct && button->isVisibleTo(&window));
-        require(window.m_modelControlPopulated && panelButton, "point actions are not in the MODELOS side panel");
+            if (button->isVisibleTo(&window)) {
+                pointButton = pointButton || button->defaultAction() == window.m_upperPtsAct;
+                registerButton = registerButton || button->defaultAction() == window.m_matchUpperAct;
+            }
+        require(window.m_modelControlPopulated && !pointButton && registerButton,
+                "MODELOS did not simplify the automatic point workflow");
         // Atrás undoes the last step of the jaw: first the capture, then the points; the STL stays.
         window.goBackModelWorkflow();
         window.goBackModelWorkflow();
@@ -648,6 +671,11 @@ public:
         settle();
         require(window.m_orientationView->meshData(objectActorKey(kUpperCompositeLabel)) != nullptr,
                 "ORIENTACION did not receive the accepted composite");
+        require(window.m_frankfurtCapturingIdx == 0, "ORIENTACION did not start Porion derecho automatically");
+        window.onFrankfurtPointPicked(0, -30.0, -5.0, 20.0);
+        settle();
+        require(window.m_frankfurtCapturingIdx == 1,
+                "ORIENTACION did not activate Porion izquierdo after the first point");
         window.m_frankfurtPoints = {QVector3D(-30.0f, -5.0f, 20.0f), QVector3D(30.0f, -5.0f, 20.0f),
                                     QVector3D(-25.0f, 30.0f, 26.0f), QVector3D(25.0f, 30.0f, 26.0f)};
         window.alignFrankfurtPlane();
@@ -829,6 +857,25 @@ public:
 
     // GUIAS: choose the guide, wrap its models, mark the support region, slot the planned cut, add a Boolean
     // figure, build and save.
+    // The inspector has no mask tab: segmentation publishes objects, and the objects tab is where it lands.
+    static void runInspectorTabs()
+    {
+        MainWindow window;
+        window.setAttribute(Qt::WA_DontShowOnScreen);
+        window.show();
+        settle();
+        require(window.m_inspectorTabs != nullptr, "the inspector has no tabs");
+        QStringList titles;
+        for (int index = 0; index < window.m_inspectorTabs->count(); ++index)
+            titles << window.m_inspectorTabs->tabText(index);
+        require(!titles.contains(QStringLiteral("Mascaras")) && !titles.contains(QStringLiteral("Máscaras")),
+                "the inspector still shows a mask tab: " + titles.join(QStringLiteral(", ")).toStdString());
+        require(window.m_objectsInspectorTab != nullptr &&
+                    window.m_inspectorTabs->indexOf(window.m_objectsInspectorTab) >= 0,
+                "the inspector has no objects tab");
+        std::cout << "Inspector tabs OK\n";
+    }
+
     static void runGuidesWorkflow(const QString& artifactsDir)
     {
         MainWindow window;
@@ -904,6 +951,41 @@ public:
         require(window.m_guidePlan.paint.size() > 20, "the brushed region was not collected");
         require(window.m_guideSlotSection->isVisibleTo(&window) && window.m_guideBuildSection->isVisibleTo(&window),
                 "the slot and build steps did not appear with the painted region");
+
+        // A splint is copied into the guide plan, never reused by pointer, and a connector is placed with 3 points.
+        // The splint was made against the repositioned Le Fort (+30 mm in z).
+        // Its integrated copy must return to the preoperative Le Fort frame.
+        const auto splintSource = boxMesh({-8.0, 8.0, 4.0, 7.0, 34.0, 48.0}, false, false);
+        window.addObjectEntry(QStringLiteral("Férula intermedia"), QColor(235, 243, 248), kIntermediateSplintLabel);
+        window.setRepositionMeshForLabel(kIntermediateSplintLabel, splintSource);
+        const size_t figuresBeforeConnection = window.m_guidePlan.figures.size();
+        window.m_guideSplintCopyCombo->setCurrentIndex(
+            window.m_guideSplintCopyCombo->findData(kIntermediateSplintLabel));
+        window.addGuideSplintCopy();
+        require(window.m_guidePlan.figures.size() == figuresBeforeConnection + 1 &&
+                    window.m_guidePlan.figures.back().sourceLabel == kIntermediateSplintLabel &&
+                    window.m_guidePlan.figures.back().mesh != window.repositionMeshForLabel(kIntermediateSplintLabel),
+                "the integrated splint is not an independent copy");
+        double alignedSplintBounds[6] = {};
+        GuideDesignCore::FigurePreview(window.m_guidePlan.figures.back())->GetBounds(alignedSplintBounds);
+        require(alignedSplintBounds[4] < 5.0 && alignedSplintBounds[5] < 20.0,
+                "the integrated splint did not return to the preoperative Le Fort frame");
+        window.m_guideTubeButton->setChecked(true);
+        for (const auto& point : {std::array<double, 3>{-5.0, 0.0, 8.0},
+                                  std::array<double, 3>{0.0, -5.0, 11.0},
+                                  std::array<double, 3>{5.0, 5.0, 14.0}})
+            window.onGuidePointPicked(0, point[0], point[1], point[2]);
+        require(window.m_guidePlan.figures.size() == figuresBeforeConnection + 2 &&
+                    window.m_guidePlan.figures.back().shape == GuideFigureShape::CurvedTube &&
+                    window.m_guidePlan.figures.back().controlPoints.size() == 3,
+                "the curved connector was not collected");
+        require(window.m_guidePlan.figures.back().controlPoints[1][1] > 8.0,
+                "the connector still bends too close to the Le Fort segment");
+        window.m_guideTubeButton->setChecked(false);
+        window.m_guidePlan.figures.resize(figuresBeforeConnection); // keep the original geometry test focused
+        window.refreshGuideFigureList();
+        window.syncGuideView();
+        window.m_guideRegionButton->setChecked(true);
         // The brushed patch shows on the envelope, which is its own coloured layer.
         auto* paintColors = window.m_guideWrapMesh->GetPointData()->GetArray("GuidePaint");
         require(paintColors != nullptr, "the envelope is not coloured as its own layer");
@@ -1118,6 +1200,58 @@ public:
         require(window.m_guideSourcesLabel->text().contains(QStringLiteral("falta")),
                 "the chin guide does not say its models are missing");
         std::cout << "Guides workflow OK\n";
+    }
+
+    static void runBiteRegistrationWorkflow()
+    {
+        MainWindow window;
+        window.setAttribute(Qt::WA_DontShowOnScreen);
+        window.resize(1500, 900);
+        window.show();
+        settle();
+
+        window.m_leFortSegmentMesh = gridBox(-24.0, 24.0, -8.0, 8.0, 0.0, 18.0);
+        window.m_genioBodyMesh = gridBox(-25.0, 25.0, -8.0, 8.0, -20.0, -2.0);
+        window.m_biteScanMesh = gridBox(-22.0, 22.0, -6.0, 6.0, -3.0, 4.0);
+        window.setBiteRegistrationWorkspace(true);
+        settle();
+        require(window.m_biteSegmentView->meshData(objectActorKey(kLeFortSegLabel)) != nullptr &&
+                    window.m_biteSegmentView->meshData(objectActorKey(kGenioBodyLabel)) == nullptr,
+                "upper bite stage does not isolate Le Fort");
+        require(window.m_biteSegmentView->findChild<QLabel*>()->text().contains(QStringLiteral("LE FORT")),
+                "upper bite stage title is not Le Fort");
+
+        window.m_biteLeFortRegistered = true;
+        window.syncBiteRegistrationView();
+        settle();
+        require(window.m_biteSegmentView->meshData(objectActorKey(kLeFortSegLabel)) == nullptr &&
+                    window.m_biteSegmentView->meshData(objectActorKey(kGenioBodyLabel)) != nullptr,
+                "lower bite stage does not switch to the mandible");
+
+        const auto target = gridBox(-18.0, 18.0, -7.0, 7.0, -5.0, 7.0);
+        auto shift = vtkSmartPointer<vtkTransform>::New();
+        shift->Translate(1.2, -0.8, 0.6);
+        auto shiftedFilter = vtkSmartPointer<vtkTransformPolyDataFilter>::New();
+        shiftedFilter->SetInputData(target);
+        shiftedFilter->SetTransform(shift);
+        shiftedFilter->Update();
+        QVector<QVector3D> movingHints {{-10.0f + 1.2f, -7.0f - 0.8f, 0.0f + 0.6f},
+                                        {0.0f + 1.2f, -7.0f - 0.8f, 0.0f + 0.6f},
+                                        {10.0f + 1.2f, -7.0f - 0.8f, 0.0f + 0.6f}};
+        QVector<QVector3D> targetHints {{-10.0f, -7.0f, 0.0f}, {0.0f, -7.0f, 0.0f}, {10.0f, -7.0f, 0.0f}};
+        QString report;
+        QString error;
+        auto correction = vtkSmartPointer<vtkMatrix4x4>::New();
+        correction->Identity();
+        const auto refined = window.refineBiteRegistrationWithIcp(
+            shiftedFilter->GetOutput(), target, &report, &error, movingHints, targetHints, correction);
+        require(refined && report.contains(QStringLiteral("ICP local mordida")) && error.isEmpty(),
+                "landmark-local bite ICP did not run");
+        require(std::abs(correction->GetElement(0, 3) + 1.2) < 0.25 &&
+                    std::abs(correction->GetElement(1, 3) - 0.8) < 0.25 &&
+                    std::abs(correction->GetElement(2, 3) + 0.6) < 0.25,
+                "landmark-local bite ICP did not recover the rigid offset");
+        std::cout << "Bite registration stages and local ICP OK\n";
     }
 
     // OSTEOTOMIA wizard: Le Fort I → BSSO (6 points, both sides) → genioplasty on the distal segment.
@@ -1383,7 +1517,9 @@ int main(int argc, char** argv)
         SplintWorkspaceTests::runOrientationWithBonesOnly();
         SplintWorkspaceTests::runSplintFollowsReposition();
         SplintWorkspaceTests::runRepositionAnalysis();
+        SplintWorkspaceTests::runBiteRegistrationWorkflow();
         SplintWorkspaceTests::runOsteotomyWorkflow(artifacts);
+        SplintWorkspaceTests::runInspectorTabs();
         SplintWorkspaceTests::runGuidesWorkflow(artifacts);
         if (!unexpectedDialogs.isEmpty()) {
             std::cerr << "FAIL unexpected dialogs: " << unexpectedDialogs.join(QStringLiteral(" | ")).toStdString() << '\n';

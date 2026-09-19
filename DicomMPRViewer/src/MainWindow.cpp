@@ -68,6 +68,7 @@
 #include <QProgressDialog>
 #include <QPushButton>
 #include <QRadioButton>
+#include <QRegularExpression>
 #include <QDebug>
 #include <QScrollArea>
 #include <QSet>
@@ -411,6 +412,9 @@ QString meshLabelName(int label)
     }
 }
 
+// Shared by the guided clinical side panels; implemented in MainWindowModels.cpp.
+QString guidedSidePanelStyle(const QString& objectName);
+
 static bool isEditableSegmentationLabel(int label)
 {
     return label > 0 && label < kUpperArchLabel;
@@ -515,38 +519,41 @@ MainWindow::MainWindow(QWidget* parent)
     m_lowerArchRegistrationMatrix = identityMatrix();
 
     setStyleSheet(
-        "QMainWindow, QDialog { background-color:#1c1c1e; color:#f5f5f7; font-family:'Segoe UI Variable','Segoe UI'; }"
-        "QWidget { selection-background-color:#0a84ff; selection-color:#ffffff; }"
+        "QMainWindow, QDialog { background-color:#17181b; color:#f5f5f7; font-family:'Segoe UI Variable','Segoe UI'; }"
+        "QWidget { selection-background-color:#0a84ff; selection-color:#ffffff; font-size:13px; }"
         "QMenuBar { background-color:#1c1c1e; color:#d1d1d6; border-bottom:1px solid #2c2c2e; }"
-        "QMenuBar::item { padding:5px 10px; border-radius:8px; }"
+        "QMenuBar::item { padding:5px 10px; border-radius:4px; }"
         "QMenuBar::item:selected { background-color:#2c2c2e; color:#ffffff; }"
-        "QMenu { background-color:#2c2c2e; color:#f5f5f7; border:1px solid #3a3a3c; border-radius:12px; padding:6px; }"
-        "QMenu::item { padding:7px 22px; border-radius:8px; }"
+        "QMenu { background-color:#292b30; color:#f5f5f7; border:1px solid #3a3d43; border-radius:6px; padding:6px; }"
+        "QMenu::item { padding:7px 22px; border-radius:4px; }"
         "QMenu::item:selected { background-color:#0a84ff; color:#ffffff; }"
         "QStatusBar { background-color:#1c1c1e; color:#98989d; font-size:11px; border-top:1px solid #2c2c2e; }"
-        "QGroupBox { border:1px solid #3a3a3c; border-radius:12px; margin-top:12px; padding-top:12px; font-weight:600; color:#f5f5f7; background:#242426; }"
+        "QGroupBox { border:1px solid #34363c; border-radius:6px; margin-top:12px; padding-top:12px; font-weight:600; color:#f5f5f7; background:#202226; }"
         "QGroupBox::title { subcontrol-origin:margin; left:10px; padding:0 4px; color:#0a84ff; }"
-        "QProgressBar { border:1px solid #3a3a3c; border-radius:8px; background:#2c2c2e; color:#f5f5f7; text-align:center; font-size:10px; }"
-        "QProgressBar::chunk { background:#0a84ff; border-radius:8px; }"
-        "QPushButton { background-color:#3a3a3c; color:#f5f5f7; border:1px solid #4a4a4c; border-radius:12px; padding:7px 18px; font-weight:600; }"
-        "QPushButton:hover { background-color:#48484a; }"
-        "QPushButton:pressed { background-color:#2c2c2e; }"
+        "QProgressBar { border:1px solid #3a3d43; border-radius:4px; background:#292b30; color:#f5f5f7; text-align:center; font-size:10px; }"
+        "QProgressBar::chunk { background:#0a84ff; border-radius:3px; }"
+        "QPushButton { background-color:#292b30; color:#f5f5f7; border:1px solid #3a3d43; border-radius:6px; padding:7px 14px; min-height:20px; font-weight:600; }"
+        "QPushButton:hover { background-color:#34373d; border-color:#4b4e55; }"
+        "QPushButton:pressed { background-color:#202226; }"
         "QPushButton:checked { background-color:#0a84ff; border-color:#0a84ff; color:#ffffff; }"
-        "QPushButton:disabled { background-color:#242426; border-color:#2c2c2e; color:#636366; }"
+        "QPushButton:disabled { background-color:#202226; border-color:#292b30; color:#6e6e73; }"
         "QPushButton:default { background-color:#0a84ff; border-color:#0a84ff; color:#ffffff; }"
         "QPushButton:default:hover { background-color:#1d9bf0; }"
-        "QLineEdit, QComboBox, QDoubleSpinBox, QSpinBox { background:#2c2c2e; color:#f5f5f7; border:1px solid #3a3a3c; border-radius:10px; padding:5px 8px; }"
+        "QPushButton#PrimaryButton { background-color:#0a84ff; border-color:#0a84ff; color:#ffffff; }"
+        "QPushButton#PrimaryButton:hover { background-color:#1d9bf0; }"
+        "QLineEdit, QComboBox, QDoubleSpinBox, QSpinBox { background:#292b30; color:#f5f5f7; border:1px solid #3a3d43; border-radius:6px; padding:6px 8px; min-height:20px; }"
         "QLineEdit:focus, QComboBox:focus, QDoubleSpinBox:focus, QSpinBox:focus { border:1px solid #0a84ff; }"
-        "QTableWidget { background:#1f1f21; color:#f5f5f7; gridline-color:#2c2c2e; border:1px solid #2c2c2e; border-radius:10px; }"
-        "QHeaderView::section { background:#2c2c2e; color:#f5f5f7; border:0; border-bottom:1px solid #3a3a3c; padding:5px; font-weight:600; }"
+        "QTableWidget { background:#202226; color:#f5f5f7; gridline-color:#2c2e33; border:1px solid #2c2e33; border-radius:4px; }"
+        "QHeaderView::section { background:#292b30; color:#d1d1d6; border:0; border-bottom:1px solid #3a3d43; padding:6px; font-weight:600; }"
         "QTableWidget::item:selected { background:#1f3b57; color:#ffffff; }"
-        "QTabWidget::pane { border:0; background:#1f1f21; }"
-        "QTabBar::tab { background:#2c2c2e; color:#98989d; border:0; border-radius:10px; padding:7px 12px; margin:2px; }"
-        "QTabBar::tab:selected { background:#3a3a3c; color:#ffffff; }"
-        "QScrollBar:vertical { background:#1c1c1e; width:10px; margin:0; }"
-        "QScrollBar::handle:vertical { background:#4a4a4c; border-radius:5px; min-height:28px; }"
+        "QTabWidget::pane { border:0; background:#202226; }"
+        "QTabBar::tab { background:transparent; color:#98989d; border:0; border-bottom:2px solid transparent; padding:8px 12px; margin:0; }"
+        "QTabBar::tab:selected { color:#ffffff; border-bottom-color:#0a84ff; }"
+        "QScrollBar:vertical { background:#17181b; width:8px; margin:0; }"
+        "QScrollBar::handle:vertical { background:#4a4d53; border-radius:4px; min-height:28px; }"
         "QScrollBar::handle:vertical:hover { background:#5a5a5c; }"
         "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }"
+        "QToolTip { background:#292b30; color:#f5f5f7; border:1px solid #4a4d53; padding:6px; }"
         "QDialogButtonBox QPushButton { min-width:88px; }");
 
     buildMenuBar();
@@ -643,8 +650,7 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_boneSplitter, &BoneSplitterService::errorOccurred,
             this, &MainWindow::onBoneSplitError);
 
-    statusBar()->showMessage(
-        "Ready  —  File › Open DICOM Folder  (Ctrl+O)");
+    statusBar()->showMessage(tr("Listo · Abra una carpeta DICOM con Ctrl+O"));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -661,7 +667,7 @@ void MainWindow::buildMenuBar()
     // ── File ──────────────────────────────────────────────────────────────
     auto* fileMenu = menuBar()->addMenu(tr("&File"));
 
-    m_openAction = fileMenu->addAction(tr("Open DICOM Folder…"));
+    m_openAction = fileMenu->addAction(tr("Abrir carpeta DICOM…"));
     m_openAction->setShortcut(QKeySequence::Open);
     connect(m_openAction, &QAction::triggered, this, &MainWindow::onOpenDicomFolder);
 
@@ -680,14 +686,14 @@ void MainWindow::buildMenuBar()
         connect(act, &QAction::triggered, this, slot);
     };
 
-    addPreset(tr("Bone Window       (W:2000 / L:500)"),  Qt::Key_1, &MainWindow::onBoneWindow);
-    addPreset(tr("Soft Tissue       (W:400  / L:40)"),   Qt::Key_2, &MainWindow::onSoftTissueWindow);
-    addPreset(tr("Lung / Air        (W:1500 / L:-600)"), Qt::Key_3, &MainWindow::onLungWindow);
-    addPreset(tr("Brain             (W:80   / L:40)"),   Qt::Key_4, &MainWindow::onBrainWindow);
+    addPreset(tr("Hueso             (W:2000 / L:500)"),  Qt::Key_1, &MainWindow::onBoneWindow);
+    addPreset(tr("Tejido blando     (W:400  / L:40)"),   Qt::Key_2, &MainWindow::onSoftTissueWindow);
+    addPreset(tr("Pulmón / aire     (W:1500 / L:-600)"), Qt::Key_3, &MainWindow::onLungWindow);
+    addPreset(tr("Cerebro           (W:80   / L:40)"),   Qt::Key_4, &MainWindow::onBrainWindow);
 
     viewMenu->addSeparator();
 
-    auto* resetCamAct = viewMenu->addAction(tr("Reset Camera"));
+    auto* resetCamAct = viewMenu->addAction(tr("Restablecer cámara"));
     resetCamAct->setShortcut(Qt::Key_R);
     connect(resetCamAct, &QAction::triggered, this, [this] {
         if (m_axialView)    m_axialView->resetCamera();
@@ -711,7 +717,7 @@ void MainWindow::buildToolBar()
     auto* ribbon = addToolBar(tr("Ribbon"));
     ribbon->setMovable(false);
     ribbon->setFloatable(false);
-    ribbon->setStyleSheet("QToolBar { background:#1c1c1e; border:0; padding:0; spacing:0; }");
+    ribbon->setStyleSheet("QToolBar { background:#17181b; border:0; padding:0; spacing:0; }");
 
     // ── Root widget ───────────────────────────────────────────────────────
     auto* rw   = new QWidget(ribbon);
@@ -721,35 +727,34 @@ void MainWindow::buildToolBar()
 
     rw->setStyleSheet(
         // ── Module selector tabs (top row) ────────────────────────────────
-        "QToolButton#MT { background:#1c1c1e; color:#a1a1a6; border:0;"
-        "  border-right:1px solid #2c2c2e; padding:6px 26px;"
-        "  font-size:12px; font-weight:700; min-height:34px; }"
-        "QToolButton#MT:checked { color:#ffffff; background:#242426;"
-        "  border-bottom:3px solid #0a84ff; }"
-        "QToolButton#MT:hover   { color:#ffffff; background:#2c2c2e; }"
+        "QToolButton#MT { background:#17181b; color:#98989d; border:0;"
+        "  border-bottom:2px solid transparent; padding:7px 24px;"
+        "  font-size:12px; font-weight:600; min-height:36px; }"
+        "QToolButton#MT:checked { color:#ffffff; background:#17181b; border-bottom-color:#0a84ff; }"
+        "QToolButton#MT:hover   { color:#ffffff; background:#202226; }"
         // ── Content ribbon buttons (stacked pages) ────────────────────────
         "QToolButton { color:#f5f5f7; background:transparent;"
-        "  border:1px solid transparent; border-radius:12px;"
-        "  padding:5px 10px; font-size:11px;"
-        "  min-width:56px; min-height:54px; }"
-        "QToolButton:hover   { background:#2c2c2e; border-color:#3a3a3c; }"
+        "  border:1px solid transparent; border-radius:6px;"
+        "  padding:4px 10px; font-size:11px;"
+        "  min-width:56px; min-height:42px; }"
+        "QToolButton:hover   { background:#292b30; border-color:#3a3d43; }"
         "QToolButton:checked { background:#1f3b57; border-color:#0a84ff; color:#ffffff; }"
         "QToolButton:pressed { background:#3a3a3c; }"
         "QToolButton:disabled { color:#5f5f63; background:transparent; border-color:transparent; }"
-        "QToolButton[guideState=\"next\"] { background:#6e6257; border-color:#f5d7ad;"
+        "QToolButton[guideState=\"next\"] { background:#0a84ff; border-color:#0a84ff;"
         "  color:#ffffff; font-weight:700; }"
-        "QToolButton[guideState=\"next\"]:disabled { background:#4b4038; border-color:#8d765f;"
-        "  color:#ffffff; font-weight:700; }"
-        "QToolButton[guideState=\"done\"] { background:#24342a; border-color:#34c759;"
-        "  color:#d8f8df; font-weight:700; }");
+        "QToolButton[guideState=\"next\"]:disabled { background:#203b55; border-color:#31597d;"
+        "  color:#b8cee2; font-weight:700; }"
+        "QToolButton[guideState=\"done\"] { background:transparent; border-color:#3a3d43;"
+        "  color:#30d158; font-weight:600; }");
 
     // ── Tab bar (module names) ────────────────────────────────────────────
     auto* tabBar    = new QWidget(rw);
     auto* tabLayout = new QHBoxLayout(tabBar);
     tabLayout->setContentsMargins(0, 0, 0, 0);
     tabLayout->setSpacing(0);
-    tabBar->setFixedHeight(34);
-    tabBar->setStyleSheet("background:#1c1c1e; border-bottom:1px solid #2c2c2e;");
+    tabBar->setFixedHeight(38);
+    tabBar->setStyleSheet("background:#17181b; border-bottom:1px solid #292b30;");
     vbox->addWidget(tabBar);
 
     // ── ORTOGNÁTICA step bar, above the actions of the current step ───────
@@ -757,9 +762,10 @@ void MainWindow::buildToolBar()
 
     // ── Stacked content area ──────────────────────────────────────────────
     auto* stack = new QStackedWidget(rw);
-    stack->setFixedHeight(82);
+    stack->setObjectName(QStringLiteral("RibbonActionStack"));
+    stack->setFixedHeight(64);
     stack->setStyleSheet(
-        "QStackedWidget { background:#242426; border-top:1px solid #2c2c2e; border-bottom:1px solid #2c2c2e; }");
+        "QStackedWidget { background:#202226; border-bottom:1px solid #292b30; }");
     vbox->addWidget(stack);
 
     ribbon->addWidget(rw);
@@ -804,6 +810,9 @@ void MainWindow::buildToolBar()
             const bool reposition = title == tr("REPOSICIÓN");
             const bool splint     = title == tr("FERULA");
             const bool guides     = title == tr("GUIAS");
+            const bool hasTaskPanel = models || orientation || osteotomy || biteRegistration ||
+                                      reposition || splint || guides;
+            stack->setVisible(!hasTaskPanel);
             setModelsWorkspace(models);
             setOrientationWorkspace(orientation);
             setOsteotomyWorkspace(osteotomy);
@@ -880,6 +889,56 @@ void MainWindow::buildToolBar()
         connect(brainPresetAct, &QAction::triggered, this, &MainWindow::onBrainWindow);
         row->addWidget(makeActBtn(brainPresetAct, page));
 
+        addSep(row, page);
+
+        // Measurements belong to ARCHIVO. Keeping them in one menu avoids a
+        // second top-level module and leaves the ribbon usable on narrow screens.
+        auto* measurementMenuButton = new QToolButton(page);
+        measurementMenuButton->setText(tr("Medidas"));
+        measurementMenuButton->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+        measurementMenuButton->setPopupMode(QToolButton::InstantPopup);
+        measurementMenuButton->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+        auto* measurementMenu = new QMenu(measurementMenuButton);
+        measurementMenuButton->setMenu(measurementMenu);
+        auto* toolGroup = new QActionGroup(this);
+        toolGroup->setExclusive(true);
+        auto addMeasurementTool = [&](const QString& text, MeasurementToolMode mode,
+                                      const QKeySequence& key, bool checked = false) {
+            auto* act = measurementMenu->addAction(text);
+            act->setCheckable(true);
+            act->setShortcut(key);
+            toolGroup->addAction(act);
+            addAction(act);
+            connect(act, &QAction::triggered, this, [this, mode] { setMeasurementTool(mode); });
+            act->setChecked(checked);
+        };
+        addMeasurementTool(tr("Cursor"), MeasurementToolMode::Cursor, Qt::Key_C, true);
+        addMeasurementTool(tr("Distancia"), MeasurementToolMode::Distance, Qt::Key_D);
+        addMeasurementTool(tr("Ángulo"), MeasurementToolMode::Angle, Qt::Key_A);
+        addMeasurementTool(tr("Área"), MeasurementToolMode::Area, Qt::Key_P);
+        addMeasurementTool(tr("ROI circular"), MeasurementToolMode::ROICircle, Qt::Key_O);
+        addMeasurementTool(tr("ROI rectangular"), MeasurementToolMode::ROIRectangle, Qt::Key_I);
+        addMeasurementTool(tr("Distancia perpendicular"), MeasurementToolMode::PerpendicularDistance, Qt::Key_L);
+        addMeasurementTool(tr("Anotación"), MeasurementToolMode::Annotation, Qt::Key_N);
+        measurementMenu->addSeparator();
+        auto* delMeasurementAct = measurementMenu->addAction(tr("Eliminar medida seleccionada"));
+        delMeasurementAct->setShortcut(QKeySequence::Delete);
+        addAction(delMeasurementAct);
+        connect(delMeasurementAct, &QAction::triggered, this, &MainWindow::deleteSelectedMeasurement);
+        m_toggleMeasurementsAct = measurementMenu->addAction(tr("Mostrar medidas"));
+        m_toggleMeasurementsAct->setCheckable(true);
+        m_toggleMeasurementsAct->setChecked(true);
+        connect(m_toggleMeasurementsAct, &QAction::toggled, this, [this](bool visible) {
+            m_toggleMeasurementsAct->setText(visible ? tr("Mostrar medidas") : tr("Ocultar medidas"));
+            m_measurementManager.setAllVisible(visible);
+        });
+        measurementMenu->addSeparator();
+        auto* saveMeasurementsAct = measurementMenu->addAction(tr("Guardar mediciones JSON"));
+        connect(saveMeasurementsAct, &QAction::triggered, this, &MainWindow::saveMeasurements);
+        auto* loadMeasurementsAct = measurementMenu->addAction(tr("Cargar mediciones JSON"));
+        connect(loadMeasurementsAct, &QAction::triggered, this, &MainWindow::loadMeasurements);
+        row->addWidget(measurementMenuButton);
+
         row->addStretch(1);
     }
 
@@ -929,7 +988,7 @@ void MainWindow::buildToolBar()
     // ════════════════════════════════════════════════════════════════════════
     // MEASURE
     // ════════════════════════════════════════════════════════════════════════
-    {
+    if constexpr (false) {
         auto  mod  = addModule(tr("MEDIDAS"));
         auto* page = mod.first;
         auto* row  = mod.second;
@@ -1456,11 +1515,8 @@ void MainWindow::buildToolBar()
             if (m_viewFullScreen)
                 exitViewFullScreen();
 
-            // Navigate to osteotomy workspace; meshes are already transformed in-place.
-            for (auto* tab : findChildren<QToolButton*>(QStringLiteral("MT"))) {
-                if (tab && tab->text() == tr("OSTEOTOMIA")) { tab->click(); break; }
-            }
-            setOsteotomyWorkspace(true);
+            // Navigate through the shared selector so the top step rail follows.
+            selectOrthognathicStep(3);
             statusBar()->showMessage(tr("Orientacion guardada. Modulo de Osteotomia activado."));
         });
         row->addWidget(makeActBtn(m_saveOrientationAct, page));
@@ -1471,7 +1527,8 @@ void MainWindow::buildToolBar()
         m_exportOrientedAct->setEnabled(false);
         m_exportOrientedAct->setToolTip(tr("Exportar modelos compuestos orientados como STL."));
         connect(m_exportOrientedAct, &QAction::triggered, this, &MainWindow::exportOrientedCompositeStl);
-        row->addWidget(makeActBtn(m_exportOrientedAct, page));
+        // Export remains available internally for project compatibility, but is
+        // no longer a workflow step: saving the orientation advances directly.
 
         row->addStretch(1);
     }
@@ -2437,7 +2494,7 @@ void MainWindow::buildCentralWidget()
 
     // ── Bottom section: match preview ─────────────────────────────────
     m_modelMatchView = new Mesh3DView(modelSplitter);
-    m_modelMatchView->setTitle(tr("MATCH PREVIEW"));
+    m_modelMatchView->setTitle(tr("VISTA PREVIA DEL REGISTRO"));
     modelSplitter->addWidget(m_modelMatchView);
     modelSplitter->setStretchFactor(0, 2);   // top gets 2/3
     modelSplitter->setStretchFactor(1, 1);   // bottom gets 1/3
@@ -2447,7 +2504,7 @@ void MainWindow::buildCentralWidget()
     m_compositeButton->setFixedHeight(34);
     m_compositeButton->setStyleSheet(
         "QPushButton { background:#0a84ff; color:#ffffff; font-weight:700; font-size:12px;"
-        "  border:none; border-radius:12px; margin:4px 8px; }"
+        "  border:none; border-radius:6px; margin:4px 8px; }"
         "QPushButton:hover    { background:#1d9bf0; }"
         "QPushButton:pressed  { background:#0066cc; }"
         "QPushButton:disabled { background:#242426; color:#636366; }");
@@ -2532,9 +2589,50 @@ void MainWindow::buildCentralWidget()
     // REGISTRO MORDIDA workspace - page 4
     {
         auto* bitePanel = new QWidget(m_viewModeStack);
-        auto* biteLayout = new QVBoxLayout(bitePanel);
+        auto* biteLayout = new QHBoxLayout(bitePanel);
         biteLayout->setContentsMargins(0, 0, 0, 0);
         biteLayout->setSpacing(0);
+
+        auto* biteScroll = new QScrollArea(bitePanel);
+        biteScroll->setWidgetResizable(true);
+        biteScroll->setFixedWidth(300);
+        biteScroll->setFrameShape(QFrame::NoFrame);
+        auto* biteControls = new QWidget(biteScroll);
+        biteControls->setObjectName(QStringLiteral("BiteControlPanel"));
+        biteControls->setStyleSheet(guidedSidePanelStyle(biteControls->objectName()));
+        auto* biteControlLayout = new QVBoxLayout(biteControls);
+        biteControlLayout->setContentsMargins(12, 12, 12, 12);
+        biteControlLayout->setSpacing(6);
+        auto* biteTitle = new QLabel(tr("Registro de mordida"), biteControls);
+        biteTitle->setObjectName(QStringLiteral("GuidedPanelTitle"));
+        biteControlLayout->addWidget(biteTitle);
+        for (const QString& step : {tr("1. Importar mordida"), tr("2. Registrar Le Fort"),
+                                    tr("3. Registrar mandíbula"), tr("4. Aceptar ajuste")}) {
+            auto* label = new QLabel(step, biteControls);
+            label->setWordWrap(true);
+            label->setStyleSheet(QStringLiteral("color:#a7aab2;padding:7px 8px;"));
+            biteControlLayout->addWidget(label);
+        }
+        m_biteGuideMessage = new QLabel(biteControls);
+        m_biteGuideMessage->setWordWrap(true);
+        m_biteGuideMessage->setStyleSheet(QStringLiteral(
+            "color:#ffffff;background:#252b33;border-left:3px solid #0a84ff;padding:9px 10px;border-radius:3px;"));
+        biteControlLayout->addWidget(m_biteGuideMessage);
+        const auto addBiteAction = [biteControls, biteControlLayout](QAction* action) {
+            if (!action) return;
+            auto* button = new QToolButton(biteControls);
+            button->setDefaultAction(action);
+            button->setToolButtonStyle(Qt::ToolButtonTextOnly);
+            button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+            biteControlLayout->addWidget(button);
+        };
+        for (QAction* action : {m_importBiteScanAct, m_biteRegisterLeFortAct,
+                                m_biteRegisterMandibleAct, m_biteAcceptGizmoAct,
+                                m_biteClearPtsAct})
+            addBiteAction(action);
+        biteControlLayout->addStretch(1);
+        biteScroll->setWidget(biteControls);
+        biteLayout->addWidget(biteScroll);
 
         auto* biteSplitter = new QSplitter(Qt::Vertical, bitePanel);
         biteSplitter->setHandleWidth(4);
@@ -2623,7 +2721,7 @@ void MainWindow::buildCentralWidget()
         controls->setContentsMargins(14, 12, 14, 12);
         controls->setSpacing(10);
 
-        auto* title = new QLabel(tr("Diseno de ferula"), controlsHost);
+        auto* title = new QLabel(tr("Diseño de férula"), controlsHost);
         title->setObjectName("PanelTitle");
         controls->addWidget(title);
 
@@ -2634,24 +2732,24 @@ void MainWindow::buildCentralWidget()
         form->setVerticalSpacing(8);
 
         m_splintDesignCombo = new QComboBox(controlsHost);
-        m_splintDesignCombo->addItem(tr("Ferula intermedia"), 0);
-        m_splintDesignCombo->addItem(tr("Ferula final"), 1);
-        form->addRow(tr("Splint Design:"), m_splintDesignCombo);
+        m_splintDesignCombo->addItem(tr("Férula intermedia"), 0);
+        m_splintDesignCombo->addItem(tr("Férula final"), 1);
+        form->addRow(tr("Diseño:"), m_splintDesignCombo);
 
         m_splintUpperPartCombo = new QComboBox(controlsHost);
         m_splintUpperPartCombo->addItem(tr("LeFort"), kLeFortSegLabel);
         m_splintUpperPartCombo->addItem(tr("Compuesto maxilar"), kUpperCompositeLabel);
         m_splintUpperPartCombo->addItem(tr("Maxilar"), 5);
-        form->addRow(tr("Select Maxilla Parts:"), m_splintUpperPartCombo);
+        form->addRow(tr("Estructura maxilar:"), m_splintUpperPartCombo);
 
         m_splintLowerPartCombo = new QComboBox(controlsHost);
-        m_splintLowerPartCombo->addItem(tr("Mandibula inicial"), kSplintInitialMandibleChoice);
-        m_splintLowerPartCombo->addItem(tr("Mandibula final"), kSplintFinalMandibleChoice);
-        m_splintLowerPartCombo->addItem(tr("Post-menton"), kGenioBodyLabel);
+        m_splintLowerPartCombo->addItem(tr("Mandíbula inicial"), kSplintInitialMandibleChoice);
+        m_splintLowerPartCombo->addItem(tr("Mandíbula final"), kSplintFinalMandibleChoice);
+        m_splintLowerPartCombo->addItem(tr("Post-mentón"), kGenioBodyLabel);
         m_splintLowerPartCombo->addItem(tr("Distal BSSO"), kBssoDistalLabel);
         m_splintLowerPartCombo->addItem(tr("Compuesto mandibular"), kLowerCompositeLabel);
-        m_splintLowerPartCombo->addItem(tr("Mandibula"), 6);
-        form->addRow(tr("Select Mandible Parts:"), m_splintLowerPartCombo);
+        m_splintLowerPartCombo->addItem(tr("Mandíbula"), 6);
+        form->addRow(tr("Estructura mandibular:"), m_splintLowerPartCombo);
 
         m_splintThicknessSpin = new QDoubleSpinBox(controlsHost);
         m_splintThicknessSpin->setRange(1.0, 12.0);
@@ -2664,13 +2762,7 @@ void MainWindow::buildCentralWidget()
         controls->addLayout(form);
 
         auto* pointHelp = new QLabel(
-            tr("Puede crear primero una ferula en herradura automatica y luego ajustarla con gizmo.\n\n"
-               "Si quiere refinar el contorno, marque puntos opcionales sobre las superficies:\n"
-               "- Maxilar vestibular\n"
-               "- Maxilar palatino\n"
-               "- Mandibula vestibular\n"
-               "- Mandibula lingual\n\n"
-               "Use varios puntos por superficie. Si no marca puntos, se generara una herradura base automatica."),
+            tr("Cree la herradura automáticamente. Para refinar su contorno, marque puntos opcionales en las cuatro superficies."),
             controlsHost);
         pointHelp->setWordWrap(true);
         pointHelp->setObjectName("MutedText");
@@ -2685,8 +2777,8 @@ void MainWindow::buildCentralWidget()
 
         m_splintUpperVestibularButton = makePointButton(tr("Maxilar vestibular"));
         m_splintUpperPalatalButton = makePointButton(tr("Maxilar palatino"));
-        m_splintLowerVestibularButton = makePointButton(tr("Mandibula vestibular"));
-        m_splintLowerLingualButton = makePointButton(tr("Mandibula lingual"));
+        m_splintLowerVestibularButton = makePointButton(tr("Mandíbula vestibular"));
+        m_splintLowerLingualButton = makePointButton(tr("Mandíbula lingual"));
         controls->addWidget(m_splintUpperVestibularButton);
         controls->addWidget(m_splintUpperPalatalButton);
         controls->addWidget(m_splintLowerVestibularButton);
@@ -2721,7 +2813,8 @@ void MainWindow::buildCentralWidget()
                 this, &MainWindow::acceptSplintGizmo);
         controls->addWidget(m_splintAcceptAdjustButton);
 
-        m_splintCreateButton = new QPushButton(tr("Crear ferula"), controlsHost);
+        m_splintCreateButton = new QPushButton(tr("Crear férula"), controlsHost);
+        m_splintCreateButton->setDefault(true);
         connect(m_splintCreateButton, &QPushButton::clicked,
                 this, &MainWindow::createSelectedSplint);
         controls->addWidget(m_splintCreateButton);
@@ -2738,14 +2831,14 @@ void MainWindow::buildCentralWidget()
         m_splintUpperView = new Mesh3DView(topSplitter);
         m_splintUpperView->setTitle(tr("MAXILAR / LE FORT"));
         m_splintLowerView = new Mesh3DView(topSplitter);
-        m_splintLowerView->setTitle(tr("MANDIBULA"));
+        m_splintLowerView->setTitle(tr("MANDÍBULA"));
         topSplitter->addWidget(m_splintUpperView);
         topSplitter->addWidget(m_splintLowerView);
         topSplitter->setStretchFactor(0, 1);
         topSplitter->setStretchFactor(1, 1);
 
         m_splintView = new Mesh3DView(viewSplitter);
-        m_splintView->setTitle(tr("PREVIEW FERULA"));
+        m_splintView->setTitle(tr("VISTA PREVIA DE LA FÉRULA"));
         viewSplitter->addWidget(topSplitter);
         viewSplitter->addWidget(m_splintView);
         viewSplitter->setStretchFactor(0, 1);
@@ -2997,7 +3090,8 @@ void MainWindow::importBiteScanStl()
         view->render();
     }
     updateBiteRegistrationUi();
-    statusBar()->showMessage(tr("Escaneo de mordida importado. Marque puntos superiores e inferiores sobre la mordida."));
+    setBitePointCapture(BitePointSet::LeFortSegment);
+    statusBar()->showMessage(tr("Escaneo de mordida importado. Marque un punto en Le Fort; después se pedirá su homólogo."));
 }
 
 void MainWindow::setBitePointCapture(BitePointSet set)
@@ -3077,6 +3171,13 @@ void MainWindow::onBitePointPicked(int actorLabel, double x, double y, double z)
     target->append(QVector3D(static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)));
     rebuildBitePointMarkers();
     updateBiteRegistrationUi();
+    switch (m_bitePointSet) {
+    case BitePointSet::LeFortSegment: setBitePointCapture(BitePointSet::UpperBiteScan); break;
+    case BitePointSet::UpperBiteScan: setBitePointCapture(BitePointSet::LeFortSegment); break;
+    case BitePointSet::MandibleDistal: setBitePointCapture(BitePointSet::LowerBiteScan); break;
+    case BitePointSet::LowerBiteScan: setBitePointCapture(BitePointSet::MandibleDistal); break;
+    case BitePointSet::None: break;
+    }
     statusBar()->showMessage(
         tr("Registro mordida | LeFort:%1 MordSup:%2 Distal:%3 MordInf:%4")
             .arg(m_biteLeFortSegmentPoints.size())
@@ -3120,15 +3221,19 @@ void MainWindow::rebuildBitePointMarkers()
     const QColor mandibleColor(90, 190, 255);
     const QColor lowerScanColor(95, 230, 220);
 
-    addList(m_biteSegmentView, m_biteLeFortSegmentPoints, leFortColor);
-    addList(m_biteSegmentView, m_biteMandibleSegmentPoints, mandibleColor);
-    addList(m_biteScanView, m_biteUpperScanPoints, upperScanColor);
-    addList(m_biteScanView, m_biteLowerScanPoints, lowerScanColor);
-
-    addList(m_biteRegistrationView, m_biteLeFortSegmentPoints, leFortColor);
-    addList(m_biteRegistrationView, m_biteUpperScanPoints, upperScanColor);
-    addList(m_biteRegistrationView, m_biteMandibleSegmentPoints, mandibleColor);
-    addList(m_biteRegistrationView, m_biteLowerScanPoints, lowerScanColor);
+    const bool upperStage = !m_biteLeFortRegistered ||
+        (m_biteGizmoActive && m_biteGizmoTargetLabel == kBiteScanLabel);
+    if (upperStage) {
+        addList(m_biteSegmentView, m_biteLeFortSegmentPoints, leFortColor);
+        addList(m_biteScanView, m_biteUpperScanPoints, upperScanColor);
+        addList(m_biteRegistrationView, m_biteLeFortSegmentPoints, leFortColor);
+        addList(m_biteRegistrationView, m_biteUpperScanPoints, upperScanColor);
+    } else {
+        addList(m_biteSegmentView, m_biteMandibleSegmentPoints, mandibleColor);
+        addList(m_biteScanView, m_biteLowerScanPoints, lowerScanColor);
+        addList(m_biteRegistrationView, m_biteMandibleSegmentPoints, mandibleColor);
+        addList(m_biteRegistrationView, m_biteLowerScanPoints, lowerScanColor);
+    }
 }
 
 void MainWindow::syncBiteRegistrationView()
@@ -3137,7 +3242,7 @@ void MainWindow::syncBiteRegistrationView()
 
     for (Mesh3DView* view : {m_biteSegmentView, m_biteScanView, m_biteRegistrationView}) {
         if (!view) continue;
-        view->clearMeshes();
+        view->clearMeshes(true);
         view->clearPointMarkers();
     }
 
@@ -3150,14 +3255,18 @@ void MainWindow::syncBiteRegistrationView()
         view->setMeshVisible(actorKey, objectEntryVisible(label));
     };
 
-    // Le Fort segment
-    {
+    const bool upperStage = !m_biteLeFortRegistered ||
+        (m_biteGizmoActive && m_biteGizmoTargetLabel == kBiteScanLabel);
+    m_biteSegmentView->setTitle(upperStage ? tr("LE FORT") : tr("MANDÍBULA"));
+    m_biteRegistrationView->setTitle(upperStage ? tr("REGISTRO MAXILAR") : tr("REGISTRO MANDIBULAR"));
+
+    // Each phase shows only the anatomy involved in the current registration.
+    if (upperStage) {
         auto mesh = repositionMeshForLabel(kLeFortSegLabel);
         add(m_biteSegmentView, kLeFortSegLabel, mesh, 1.0);
         add(m_biteRegistrationView, kLeFortSegLabel, mesh, 1.0);
-    }
-    // Mandible target — only the single active distal segment, no proximal ramas or chin piece
-    {
+    } else {
+        // Only the active tooth-bearing mandibular block, never the proximal rami.
         const int mandTarget = currentBiteMandibleTargetLabel();
         if (mandTarget > 0) {
             auto mesh = repositionMeshForLabel(mandTarget);
@@ -3181,11 +3290,8 @@ void MainWindow::syncBiteRegistrationView()
     add(m_biteRegistrationView, kBiteScanLabel, biteMesh, 0.58);
     rebuildBitePointMarkers();
     syncVisibilityPanelToAllViews();
-    for (Mesh3DView* view : {m_biteSegmentView, m_biteScanView, m_biteRegistrationView}) {
-        if (!view) continue;
-        view->resetCamera();
-        view->render();
-    }
+    for (Mesh3DView* view : {m_biteSegmentView, m_biteScanView, m_biteRegistrationView})
+        if (view) view->render();
 }
 
 int MainWindow::currentBiteMandibleTargetLabel() const
@@ -3222,18 +3328,18 @@ void MainWindow::updateBiteRegistrationUi()
         hasBite && hasLeFort &&
         std::min(m_biteLeFortSegmentPoints.size(), m_biteUpperScanPoints.size()) >= 3;
     const bool canMandible =
-        hasBite && hasDistal &&
+        m_biteLeFortRegistered && hasBite && hasDistal &&
         std::min(m_biteMandibleSegmentPoints.size(), m_biteLowerScanPoints.size()) >= 3;
     const bool hasAnyPoints =
         !m_biteLeFortSegmentPoints.isEmpty() || !m_biteUpperScanPoints.isEmpty() ||
         !m_biteMandibleSegmentPoints.isEmpty() || !m_biteLowerScanPoints.isEmpty();
 
     if (m_importBiteScanAct) m_importBiteScanAct->setEnabled(true);
-    if (m_biteLeFortPtsAct) m_biteLeFortPtsAct->setEnabled(hasLeFort);
-    if (m_biteUpperScanPtsAct) m_biteUpperScanPtsAct->setEnabled(hasBite);
+    if (m_biteLeFortPtsAct) { m_biteLeFortPtsAct->setEnabled(hasLeFort); m_biteLeFortPtsAct->setVisible(false); }
+    if (m_biteUpperScanPtsAct) { m_biteUpperScanPtsAct->setEnabled(hasBite); m_biteUpperScanPtsAct->setVisible(false); }
     if (m_biteRegisterLeFortAct) m_biteRegisterLeFortAct->setEnabled(canLeFort);
-    if (m_biteMandiblePtsAct) m_biteMandiblePtsAct->setEnabled(hasDistal);
-    if (m_biteLowerScanPtsAct) m_biteLowerScanPtsAct->setEnabled(hasBite);
+    if (m_biteMandiblePtsAct) { m_biteMandiblePtsAct->setEnabled(hasDistal); m_biteMandiblePtsAct->setVisible(false); }
+    if (m_biteLowerScanPtsAct) { m_biteLowerScanPtsAct->setEnabled(hasBite); m_biteLowerScanPtsAct->setVisible(false); }
     if (m_biteRegisterMandibleAct) m_biteRegisterMandibleAct->setEnabled(canMandible);
     if (m_biteAdjustGizmoAct) {
         const int adjustTarget = m_biteMandibleRegistered
@@ -3254,6 +3360,23 @@ void MainWindow::updateBiteRegistrationUi()
     check(m_biteUpperScanPtsAct, m_bitePointSet == BitePointSet::UpperBiteScan);
     check(m_biteMandiblePtsAct, m_bitePointSet == BitePointSet::MandibleDistal);
     check(m_biteLowerScanPtsAct, m_bitePointSet == BitePointSet::LowerBiteScan);
+    if (m_biteGuideMessage) {
+        QString guide;
+        if (!hasBite) guide = tr("Importe el STL de mordida.");
+        else if (!m_biteLeFortRegistered && !canLeFort)
+            guide = m_biteLeFortSegmentPoints.size() <= m_biteUpperScanPoints.size()
+                ? tr("Marque el siguiente punto en Le Fort.")
+                : tr("Marque su homólogo en el escaneo de mordida.");
+        else if (!m_biteLeFortRegistered) guide = tr("Pulse Registrar Le Fort.");
+        else if (m_biteGizmoActive) guide = tr("Ajuste con el gizmo y pulse Aceptar ajuste.");
+        else if (!m_biteMandibleRegistered && !canMandible)
+            guide = m_biteMandibleSegmentPoints.size() <= m_biteLowerScanPoints.size()
+                ? tr("Marque el siguiente punto en la mandíbula post-mentón.")
+                : tr("Marque su homólogo inferior en la mordida.");
+        else if (!m_biteMandibleRegistered) guide = tr("Pulse Registrar mandíbula.");
+        else guide = tr("Registro completo. Acepte el ajuste para continuar a reposición.");
+        m_biteGuideMessage->setText(guide);
+    }
 }
 
 void MainWindow::transformBiteScanPointLists(vtkMatrix4x4* matrix)
@@ -3308,10 +3431,15 @@ void MainWindow::startBiteAdjustmentGizmo(int label)
 
     setBitePointCapture(BitePointSet::None);
     deactivateLassoTools();
+    m_biteGizmoTargetLabel = label;
+    m_biteGizmoActive = true;
     syncBiteRegistrationView();
 
     const int actorKey = objectActorKey(label);
     if (!m_biteRegistrationView->meshData(actorKey)) {
+        m_biteGizmoTargetLabel = -1;
+        m_biteGizmoActive = false;
+        syncBiteRegistrationView();
         statusBar()->showMessage(tr("Registro mordida: no se encontro el objeto en la vista de match."));
         return;
     }
@@ -3320,6 +3448,9 @@ void MainWindow::startBiteAdjustmentGizmo(int label)
         m_biteRegistrationView->stopGizmo();
     m_biteRegistrationView->startGizmo(actorKey);
     if (!m_biteRegistrationView->hasGizmo()) {
+        m_biteGizmoTargetLabel = -1;
+        m_biteGizmoActive = false;
+        syncBiteRegistrationView();
         statusBar()->showMessage(tr("Registro mordida: no se pudo activar el gizmo."));
         return;
     }
@@ -3329,20 +3460,35 @@ void MainWindow::startBiteAdjustmentGizmo(int label)
     if (!m_viewFullScreen)
         toggleViewFullScreen(m_biteRegistrationView);
 
-    m_biteGizmoTargetLabel = label;
-    m_biteGizmoActive = true;
     updateBiteRegistrationUi();
     statusBar()->showMessage(tr("Gizmo activo para %1. Ajuste y pulse Aceptar Ajuste.").arg(meshLabelName(label)));
 }
 
 void MainWindow::acceptBiteAdjustmentGizmo()
 {
+    const int completedTarget = m_biteGizmoTargetLabel;
     if (m_biteRegistrationView && m_biteRegistrationView->hasGizmo())
         m_biteRegistrationView->stopGizmo();
     m_biteGizmoActive = false;
     m_biteGizmoTargetLabel = -1;
+    syncBiteRegistrationView();
     updateBiteRegistrationUi();
-    statusBar()->showMessage(tr("Registro mordida: ajuste manual aceptado."));
+    if (completedTarget == kBiteScanLabel && !m_biteMandibleRegistered) {
+        if (m_viewFullScreen)
+            exitViewFullScreen();
+        QTimer::singleShot(0, this, [this] {
+            if (!m_biteScanView) return;
+            m_biteScanView->setStandardView(0);
+            m_biteScanView->render();
+        });
+        setBitePointCapture(BitePointSet::MandibleDistal);
+        statusBar()->showMessage(tr("Le Fort ajustado. Marque ahora la mandíbula post-mentón y su homólogo en la mordida."));
+    } else if (completedTarget > 0 && m_biteMandibleRegistered) {
+        statusBar()->showMessage(tr("Registro de mordida completado. Continuando a reposición."));
+        selectOrthognathicStep(5);
+    } else {
+        statusBar()->showMessage(tr("Registro mordida: ajuste manual aceptado."));
+    }
 }
 
 void MainWindow::onBiteGizmoMeshUpdated(int meshLabel, vtkSmartPointer<vtkPolyData> newMesh)
@@ -3391,6 +3537,8 @@ void MainWindow::onBiteGizmoMeshUpdated(int meshLabel, vtkSmartPointer<vtkPolyDa
 
 vtkSmartPointer<vtkPolyData> MainWindow::refineBiteRegistrationWithIcp(
     vtkPolyData* moving, vtkPolyData* biteScan, QString* report, QString* error,
+    const QVector<QVector3D>& movingLandmarks,
+    const QVector<QVector3D>& targetLandmarks,
     vtkMatrix4x4* outputMatrix) const
 {
     if (outputMatrix) outputMatrix->Identity();
@@ -3506,6 +3654,51 @@ vtkSmartPointer<vtkPolyData> MainWindow::refineBiteRegistrationWithIcp(
         return result;
     };
 
+    auto keepNearLandmarks = [](vtkPolyData* input, const QVector<QVector3D>& landmarks,
+                                double radius) -> vtkSmartPointer<vtkPolyData> {
+        if (!input || landmarks.isEmpty() || input->GetNumberOfCells() == 0)
+            return nullptr;
+        const double radiusSquared = radius * radius;
+        const auto closeToHint = [&](const double p[3]) {
+            for (const QVector3D& hint : landmarks) {
+                const double dx = p[0] - hint.x();
+                const double dy = p[1] - hint.y();
+                const double dz = p[2] - hint.z();
+                if (dx * dx + dy * dy + dz * dz <= radiusSquared)
+                    return true;
+            }
+            return false;
+        };
+        auto polys = vtkSmartPointer<vtkCellArray>::New();
+        auto ids = vtkSmartPointer<vtkIdList>::New();
+        double p[3] = {};
+        double center[3] = {};
+        for (vtkIdType cellId = 0; cellId < input->GetNumberOfCells(); ++cellId) {
+            input->GetCellPoints(cellId, ids);
+            const vtkIdType count = ids->GetNumberOfIds();
+            if (count < 3) continue;
+            center[0] = center[1] = center[2] = 0.0;
+            bool keep = false;
+            for (vtkIdType i = 0; i < count; ++i) {
+                input->GetPoint(ids->GetId(i), p);
+                center[0] += p[0]; center[1] += p[1]; center[2] += p[2];
+                keep = keep || closeToHint(p);
+            }
+            center[0] /= count; center[1] /= count; center[2] /= count;
+            if (keep || closeToHint(center))
+                polys->InsertNextCell(ids);
+        }
+        auto selected = vtkSmartPointer<vtkPolyData>::New();
+        selected->SetPoints(input->GetPoints());
+        selected->SetPolys(polys);
+        auto clean = vtkSmartPointer<vtkCleanPolyData>::New();
+        clean->SetInputData(selected);
+        clean->Update();
+        auto result = vtkSmartPointer<vtkPolyData>::New();
+        result->DeepCopy(clean->GetOutput());
+        return result;
+    };
+
     auto movingTri = cleanTri(moving);
     auto biteTri = cleanTri(biteScan);
     if (!movingTri || !biteTri || movingTri->GetNumberOfPoints() == 0 || biteTri->GetNumberOfPoints() == 0) {
@@ -3529,11 +3722,17 @@ vtkSmartPointer<vtkPolyData> MainWindow::refineBiteRegistrationWithIcp(
     auto movingRoi = cropByBox(movingTri, roiBox);
     const double keepDistance = std::clamp(biteDiag * 0.05, 3.0, 7.0);
     auto movingLocal = keepNearTarget(movingRoi, biteTri, keepDistance);
+    auto hintedMoving = keepNearLandmarks(movingTri, movingLandmarks, 12.0);
+    auto targetLocal = keepNearLandmarks(biteTri, targetLandmarks, 12.0);
+    if (hintedMoving && hintedMoving->GetNumberOfPoints() >= 50)
+        movingLocal = hintedMoving;
+    if (!targetLocal || targetLocal->GetNumberOfPoints() < 50)
+        targetLocal = biteTri;
     if (!movingLocal || movingLocal->GetNumberOfPoints() < 50) {
         movingLocal = movingRoi;
     }
 
-    if (!movingLocal || movingLocal->GetNumberOfPoints() < 50 || biteTri->GetNumberOfPoints() < 50) {
+    if (!movingLocal || movingLocal->GetNumberOfPoints() < 50 || targetLocal->GetNumberOfPoints() < 50) {
         if (report) {
             *report = tr("ICP local mordida: omitido; ROI insuficiente despues de landmarks.");
         }
@@ -3544,11 +3743,12 @@ vtkSmartPointer<vtkPolyData> MainWindow::refineBiteRegistrationWithIcp(
 
     auto icp = vtkSmartPointer<vtkIterativeClosestPointTransform>::New();
     icp->SetSource(movingLocal);
-    icp->SetTarget(biteTri);
+    icp->SetTarget(targetLocal);
     icp->GetLandmarkTransform()->SetModeToRigidBody();
     icp->StartByMatchingCentroidsOff();
     icp->CheckMeanDistanceOn();
-    icp->SetMaximumNumberOfIterations(80);
+    icp->SetMaximumNumberOfLandmarks(5000);
+    icp->SetMaximumNumberOfIterations(120);
     icp->SetMaximumMeanDistance(0.001);
     icp->Update();
 
@@ -3566,7 +3766,7 @@ vtkSmartPointer<vtkPolyData> MainWindow::refineBiteRegistrationWithIcp(
     localFilter->Update();
 
     auto distance = vtkSmartPointer<vtkImplicitPolyDataDistance>::New();
-    distance->SetInput(biteTri);
+    distance->SetInput(targetLocal);
 
     vtkPolyData* local = localFilter->GetOutput();
     const vtkIdType total = local ? local->GetNumberOfPoints() : 0;
@@ -3633,8 +3833,17 @@ void MainWindow::alignLeFortToBiteScan()
 
     QString icpReport;
     QString icpError;
+    QVector<QVector3D> transformedUpperPoints = m_biteUpperScanPoints;
+    for (QVector3D& point : transformedUpperPoints) {
+        const double in[4] = {point.x(), point.y(), point.z(), 1.0};
+        double out[4] = {};
+        landmarkMatrix->MultiplyPoint(in, out);
+        point = QVector3D(static_cast<float>(out[0]), static_cast<float>(out[1]), static_cast<float>(out[2]));
+    }
     if (auto refined = refineBiteRegistrationWithIcp(transformed, leFortMesh,
-                                                     &icpReport, &icpError, icpMatrix)) {
+                                                     &icpReport, &icpError,
+                                                     transformedUpperPoints, m_biteLeFortSegmentPoints,
+                                                     icpMatrix)) {
         transformed = refined;
     } else if (!icpError.isEmpty()) {
         icpReport = tr("ICP local mordida: omitido (%1)").arg(icpError);
@@ -3718,8 +3927,17 @@ void MainWindow::alignMandibleDistalToBiteScan()
 
     QString icpReport;
     QString icpError;
+    QVector<QVector3D> transformedMandiblePoints = m_biteMandibleSegmentPoints;
+    for (QVector3D& point : transformedMandiblePoints) {
+        const double in[4] = {point.x(), point.y(), point.z(), 1.0};
+        double out[4] = {};
+        landmarkMatrix->MultiplyPoint(in, out);
+        point = QVector3D(static_cast<float>(out[0]), static_cast<float>(out[1]), static_cast<float>(out[2]));
+    }
     if (auto refined = refineBiteRegistrationWithIcp(transformed, biteMesh,
-                                                     &icpReport, &icpError, icpMatrix)) {
+                                                     &icpReport, &icpError,
+                                                     transformedMandiblePoints, m_biteLowerScanPoints,
+                                                     icpMatrix)) {
         transformed = refined;
     } else if (!icpError.isEmpty()) {
         icpReport = tr("ICP local mordida: omitido (%1)").arg(icpError);
@@ -3981,46 +4199,20 @@ QWidget* MainWindow::buildRepositionControlPanel(QWidget* parent)
               [this](double d) { rotateRepositionTarget(0.0, 0.0, 1.0,  d); },
               &m_repositionRotZValue);
 
-    addSection(tr("Restricciones"));
-    auto* restrictCombo = new QComboBox(panel);
-    restrictCombo->setObjectName("RepositionRestriction");
-    restrictCombo->addItems({tr("Sin restricción"), tr("Solo traslación"), tr("Solo rotación")});
-    connect(restrictCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
-            [this](int index) { setRepositionRestriction(index); });
-    root->addWidget(restrictCombo);
-
-    addSection(tr("Análisis"));
-    auto* analysisRow = new QHBoxLayout;
-    analysisRow->setSpacing(6);
-    analysisRow->addWidget(makeButton(tr("Intersección"), [this] { analyzeRepositionIntersection(false); }));
-    m_repositionHighlightButton = makeButton(tr("Resaltar"), [this] { toggleRepositionHighlight(); });
-    analysisRow->addWidget(m_repositionHighlightButton);
-    root->addLayout(analysisRow);
+    // Keep the result labels alive for project/state code, but remove the
+    // diagnostic controls from the clinical reposition workflow.
+    m_repositionHighlightButton = new QPushButton(panel);
+    m_repositionHighlightButton->hide();
+    m_repositionPreOpButton = new QPushButton(panel);
+    m_repositionPreOpButton->hide();
     m_repositionIntersectionLabel = new QLabel(panel);
-    m_repositionIntersectionLabel->setWordWrap(true);
-    m_repositionIntersectionLabel->setStyleSheet("color:#ff9f0a; font-size:10px;");
-    root->addWidget(m_repositionIntersectionLabel);
-    m_repositionPreOpButton = makeButton(tr("Ver pre-op"), [this] { toggleRepositionPreOp(); });
-    m_repositionPreOpButton->setToolTip(tr("Muestra la posición original de las estructuras movidas en gris translúcido."));
-    root->addWidget(m_repositionPreOpButton);
-    addSection(tr("Mediciones"));
+    m_repositionIntersectionLabel->hide();
     m_repositionMeasureLabel = new QLabel(panel);
     m_repositionMeasureLabel->setWordWrap(true);
     m_repositionMeasureLabel->setStyleSheet("color:#f5f5f7; font-size:10px;");
     m_repositionMeasureLabel->setToolTip(tr("Desplazamiento de los puntos de la trayectoria de corte (P1 derecha → último izquierda).\n"
                                             "Ejes orientados: X lateral, Y antero-posterior, Z vertical (Z+ superior)."));
     m_repositionMeasureLabel->setVisible(false);
-    root->addWidget(m_repositionMeasureLabel);
-
-    root->addWidget(makeButton(tr("Toggle fixed view"), [this] {
-        if (!m_repositionView) return;
-        if (m_repositionFixedViewAct) {
-            m_repositionFixedViewAct->setChecked(!m_repositionFixedViewAct->isChecked());
-        } else {
-            m_repositionView->setStandardView(0);
-            m_repositionView->render();
-        }
-    }));
 
     root->addStretch(1);
     scroll->setWidget(panel);
@@ -4069,6 +4261,9 @@ void MainWindow::setSplintWorkspace(bool enabled)
     if (splintHeightmapMethodActive()) {
         refreshSplintDesignPanel();
         syncSplintView();
+        if (m_splintUpperView) m_splintUpperView->setStandardView(3);
+        if (m_splintLowerView) m_splintLowerView->setStandardView(4);
+        if (m_splintView) m_splintView->setStandardView(0);
         updateButtonStates();
         requestSplintPreview();
         statusBar()->showMessage(tr("Férula: elija el diseño y las fuentes, marque 3 puntos por arcada y revise la vista previa."));
@@ -5036,6 +5231,8 @@ void MainWindow::syncRepositionView()
     std::map<int, vtkSmartPointer<vtkPolyData>> sources;
     bool hadMeshes = false;
     for (int label : repositionStructureLabels()) {
+        if (!objectEntryExists(label))
+            continue;
         hadMeshes = hadMeshes || m_repositionView->meshData(objectActorKey(label)) != nullptr;
         if (auto source = repositionMeshForLabel(label)) {
             if (source->GetNumberOfPoints() <= 0) continue;
@@ -5461,6 +5658,17 @@ void MainWindow::setOrientationWorkspace(bool enabled)
                      "y después «Aceptar compuesto».")
                 : tr("Orientación: no hay modelos compuestos. Créelos en MODELOS o use «Continuar sin match» "
                      "para orientar con los huesos segmentados."));
+        } else {
+            // Start the first landmark directly. The landmark actions are hidden
+            // from the simplified UI, so capture must not depend on triggering them.
+            QTimer::singleShot(0, this, [this] {
+                m_frankfurtCapturingIdx = 0;
+                if (m_orientationView) {
+                    m_orientationView->setStandardView(1);
+                    m_orientationView->setPointPickMode(true);
+                }
+                statusBar()->showMessage(tr("Marque el Porion derecho en la vista lateral derecha."));
+            });
         }
         m_orientationView->render();
     }
@@ -5517,54 +5725,77 @@ QWidget* MainWindow::buildInfoPanel()
 {
     auto* panel = new QWidget(this);
     panel->setObjectName("RightPanel");
-    panel->setFixedWidth(300);
+    panel->setFixedWidth(296);
     panel->setStyleSheet(
-        "#RightPanel { background:#1f1f21; border-left:1px solid #2c2c2e; }"
+        "#RightPanel { background:#202226; border-left:1px solid #2c2e33; }"
         // ── QTabWidget ────────────────────────────────────────────────────────
-        "#RightPanel QTabWidget::pane  { border:0; background:#1f1f21; }"
-        "#RightPanel QTabBar::tab      { background:#242426; color:#98989d;"
-        "  padding:6px 12px; border:0; font-size:10px; min-width:70px;"
-        "  border-radius:10px; margin:3px 2px; }"
-        "#RightPanel QTabBar::tab:selected { background:#3a3a3c; color:#ffffff; font-weight:bold; }"
-        "#RightPanel QTabBar::tab:hover { background:#2c2c2e; color:#f5f5f7; }"
+        "#RightPanel QTabWidget::pane  { border:0; background:#202226; }"
+        "#RightPanel QTabBar::tab      { background:transparent; color:#98989d;"
+        "  padding:8px 10px; border:0; border-bottom:2px solid transparent; font-size:11px; min-width:68px; margin:0; }"
+        "#RightPanel QTabBar::tab:selected { color:#ffffff; border-bottom-color:#0a84ff; font-weight:600; }"
+        "#RightPanel QTabBar::tab:hover { background:#292b30; color:#f5f5f7; }"
         // ── Tables ────────────────────────────────────────────────────────────
-        "#RightPanel QTableWidget { background:#1f1f21; color:#f5f5f7;"
-        "  gridline-color:#2c2c2e; font-size:10px; border:0; }"
-        "#RightPanel QHeaderView::section { background:#2c2c2e; color:#f5f5f7;"
-        "  padding:5px; border:0; border-bottom:1px solid #3a3a3c; font-size:10px; font-weight:bold; }"
+        "#RightPanel QTableWidget { background:#202226; color:#f5f5f7;"
+        "  gridline-color:#2c2e33; font-size:11px; border:0; }"
+        "#RightPanel QHeaderView::section { background:#292b30; color:#d1d1d6;"
+        "  padding:6px; border:0; border-bottom:1px solid #3a3d43; font-size:10px; font-weight:600; }"
         "#RightPanel QTableWidget::item:selected { background:#1f3b57; color:#ffffff; }"
         // ── Buttons ───────────────────────────────────────────────────────────
-        "#RightPanel QPushButton { background:#0a84ff; color:#ffffff; border:0;"
-        "  border-radius:10px; padding:6px 10px; font-size:10px; font-weight:600; }"
-        "#RightPanel QPushButton:hover    { background:#1d9bf0; }"
+        "#RightPanel QPushButton { background:#292b30; color:#f5f5f7; border:1px solid #3a3d43;"
+        "  border-radius:6px; padding:7px 10px; font-size:11px; font-weight:600; }"
+        "#RightPanel QPushButton:hover    { background:#34373d; }"
         "#RightPanel QPushButton:checked  { background:#1f3b57; }"
-        "#RightPanel QPushButton:disabled { background:#242426; color:#636366; }"
+        "#RightPanel QPushButton:disabled { background:#202226; color:#636366; }"
         // ── Labels & misc ─────────────────────────────────────────────────────
-        "#RightPanel QLabel#PanelTitle { background:#242426; color:#f5f5f7;"
-        "  font-size:11px; font-weight:700; border-bottom:1px solid #2c2c2e; padding:7px; }"
-        "#RightPanel QGroupBox { border:1px solid #2c2c2e; border-radius:12px;"
+        "#RightPanel QWidget#InspectorHeader { background:#1c1d20; border-bottom:1px solid #2c2e33; }"
+        "#RightPanel QLabel#PanelTitle { color:#f5f5f7; font-size:12px; font-weight:600; padding:7px; }"
+        "#RightPanel QToolButton#InspectorCollapse { color:#a7aab2; background:transparent; border:0;"
+        "  border-radius:5px; font-size:15px; font-weight:700; }"
+        "#RightPanel QToolButton#InspectorCollapse:hover { color:#ffffff; background:#292b30; }"
+        "#RightPanel QGroupBox { border:1px solid #2c2e33; border-radius:6px;"
         "  margin-top:8px; padding-top:8px; font-size:9px; font-weight:700;"
-        "  color:#f5f5f7; background:#242426; }"
+        "  color:#f5f5f7; background:#202226; }"
         "#RightPanel QGroupBox::title { subcontrol-origin:margin; left:7px; color:#0a84ff; }"
-        "#RightPanel QComboBox { background:#2c2c2e; color:#f5f5f7;"
-        "  border:1px solid #3a3a3c; border-radius:10px; padding:4px; font-size:10px; }"
-        "QComboBox QAbstractItemView { background:#2c2c2e; color:#f5f5f7; selection-background-color:#1f3b57; selection-color:#ffffff; }");
+        "#RightPanel QComboBox { background:#292b30; color:#f5f5f7;"
+        "  border:1px solid #3a3d43; border-radius:6px; padding:5px; font-size:11px; }"
+        "QComboBox QAbstractItemView { background:#292b30; color:#f5f5f7; selection-background-color:#1f3b57; selection-color:#ffffff; }");
 
     auto* rootLayout = new QVBoxLayout(panel);
     rootLayout->setContentsMargins(0, 0, 0, 0);
     rootLayout->setSpacing(0);
 
-    // ── Title bar (à la "Project Management" de Mimics) ──────────────────────
-    auto* titleBar = new QLabel(tr("Project Manager"), panel);
+    auto* inspectorHeader = new QWidget(panel);
+    inspectorHeader->setObjectName(QStringLiteral("InspectorHeader"));
+    inspectorHeader->setFixedHeight(36);
+    auto* inspectorHeaderLayout = new QHBoxLayout(inspectorHeader);
+    inspectorHeaderLayout->setContentsMargins(8, 0, 6, 0);
+    inspectorHeaderLayout->setSpacing(4);
+    auto* titleBar = new QLabel(tr("Inspector"), inspectorHeader);
     titleBar->setObjectName("PanelTitle");
-    titleBar->setAlignment(Qt::AlignCenter);
-    titleBar->setFixedHeight(28);
-    rootLayout->addWidget(titleBar);
+    titleBar->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    inspectorHeaderLayout->addWidget(titleBar, 1);
+    auto* collapseButton = new QToolButton(inspectorHeader);
+    collapseButton->setObjectName(QStringLiteral("InspectorCollapse"));
+    collapseButton->setText(QStringLiteral(">"));
+    collapseButton->setToolTip(tr("Ocultar inspector"));
+    collapseButton->setFixedSize(28, 28);
+    inspectorHeaderLayout->addWidget(collapseButton);
+    rootLayout->addWidget(inspectorHeader);
 
     // ── Tab widget ────────────────────────────────────────────────────────────
     auto* tabs = new QTabWidget(panel);
+    tabs->setObjectName(QStringLiteral("InspectorTabs"));
+    m_inspectorTabs = tabs;
     tabs->setDocumentMode(true);
     rootLayout->addWidget(tabs, 1);
+    connect(collapseButton, &QToolButton::clicked, panel, [panel, tabs, titleBar, collapseButton] {
+        const bool collapse = tabs->isVisible();
+        tabs->setVisible(!collapse);
+        titleBar->setVisible(!collapse);
+        panel->setFixedWidth(collapse ? 44 : 296);
+        collapseButton->setText(collapse ? QStringLiteral("<") : QStringLiteral(">"));
+        collapseButton->setToolTip(collapse ? QObject::tr("Mostrar inspector") : QObject::tr("Ocultar inspector"));
+    });
 
     // ════════════════════════════════════════════════════════════════════════
     // Tab 0 — ESTUDIO (study info)
@@ -5572,7 +5803,7 @@ QWidget* MainWindow::buildInfoPanel()
     auto* studyTab    = new QWidget(tabs);
     auto* studyLayout = new QVBoxLayout(studyTab);
     studyLayout->setSizeConstraint(QLayout::SetMinimumSize);
-    studyTab->setStyleSheet("background:#1f1f21;");
+    studyTab->setStyleSheet("background:#202226;");
     studyLayout->setContentsMargins(8, 10, 8, 8);
     studyLayout->setSpacing(4);
 
@@ -5713,9 +5944,12 @@ QWidget* MainWindow::buildInfoPanel()
     tabs->addTab(measTab, tr("Medidas"));
 
     // ════════════════════════════════════════════════════════════════════════
-    // Tab 2 — MÁSCARAS (segmentation masks + 3D tools)
+    // Internal segmentation state. Masks remain available to project
+    // persistence and editing tools, but they are no longer a user-facing
+    // inspector destination: every generated surface is published as an object.
     // ════════════════════════════════════════════════════════════════════════
     auto* maskTab    = new QWidget(tabs);
+    maskTab->setObjectName(QStringLiteral("InternalMaskState"));
     auto* maskLayout = new QVBoxLayout(maskTab);
     maskLayout->setContentsMargins(4, 4, 4, 4);
     maskLayout->setSpacing(6);
@@ -5724,6 +5958,7 @@ QWidget* MainWindow::buildInfoPanel()
     // Col 0: color swatch — click to change  Col 1: name — double-click to edit
     // Col 2: visible checkbox
     m_maskTable = new QTableWidget(0, 3, maskTab);
+    m_maskTable->setObjectName(QStringLiteral("InternalMaskTable"));
     m_maskTable->setHorizontalHeaderLabels({tr(""), tr("Nombre"), tr("V")});
     m_maskTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_maskTable->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -5812,9 +6047,15 @@ QWidget* MainWindow::buildInfoPanel()
     maskLayout->addWidget(deleteMaskButton);
 
     maskLayout->addStretch(1);
-    tabs->addTab(maskTab, tr("Mascaras"));
+    maskTab->hide();
 
-    auto* objectBox = new QGroupBox(tr("OBJETOS"), panel);
+    m_objectsInspectorTab = new QWidget(tabs);
+    m_objectsInspectorTab->setObjectName(QStringLiteral("ObjectsInspectorTab"));
+    auto* objectsTabLayout = new QVBoxLayout(m_objectsInspectorTab);
+    objectsTabLayout->setContentsMargins(4, 4, 4, 4);
+    objectsTabLayout->setSpacing(0);
+
+    auto* objectBox = new QGroupBox(tr("OBJETOS"), m_objectsInspectorTab);
     objectBox->setObjectName("ObjectDisplayPanel");
     objectBox->setStyleSheet(
         "#ObjectDisplayPanel QLabel, #ObjectDisplayPanel QCheckBox { color:#f5f5f7; }"
@@ -5838,6 +6079,7 @@ QWidget* MainWindow::buildInfoPanel()
     m_objectTable->setColumnWidth(0, 24);
     m_objectTable->setColumnWidth(2, 26);
     m_objectTable->setShowGrid(false);
+    m_objectTable->setContextMenuPolicy(Qt::CustomContextMenu);
 
     connect(m_objectTable, &QTableWidget::itemSelectionChanged, this, [this] {
         updateObjectAppearanceControls();
@@ -5861,6 +6103,23 @@ QWidget* MainWindow::buildInfoPanel()
         syncVisibilityPanelToAllViews();
         if (m_viewModeStack && m_viewModeStack->currentIndex() == 4)
             syncBiteRegistrationView();
+    });
+
+    connect(m_objectTable, &QTableWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+        auto* item = m_objectTable ? m_objectTable->itemAt(pos) : nullptr;
+        if (!item)
+            return;
+        const int row = item->row();
+        m_objectTable->selectRow(row);
+        QMenu menu(this);
+        QAction* exportAct = menu.addAction(tr("Exportar STL…"));
+        menu.addSeparator();
+        QAction* deleteAct = menu.addAction(tr("Eliminar"));
+        QAction* chosen = menu.exec(m_objectTable->viewport()->mapToGlobal(pos));
+        if (chosen == exportAct)
+            exportObjectAtRow(row);
+        else if (chosen == deleteAct)
+            deleteObjectAtRow(row);
     });
 
     objectLayout->addWidget(m_objectTable, 1);
@@ -5910,24 +6169,12 @@ QWidget* MainWindow::buildInfoPanel()
 
     auto* deleteObjectButton = new QPushButton(tr("Eliminar objeto"), objectBox);
     connect(deleteObjectButton, &QPushButton::clicked, this, [this] {
-        if (!m_objectTable || m_objectTable->currentRow() < 0) return;
-        auto* item = m_objectTable->item(m_objectTable->currentRow(), 0);
-        if (!item) item = m_objectTable->item(m_objectTable->currentRow(), 1);
-        const int actorKey = item ? item->data(Qt::UserRole).toInt() : -1;
-        const int label = item ? item->data(Qt::UserRole + 1).toInt() : -1;
-        for (Mesh3DView* v : {m_mesh3DView, m_modelMaxillaView, m_modelUpperArchView,
-                              m_modelMandibleView, m_modelLowerArchView,
-                              m_modelMatchView, m_orientationView, m_osteotomyView,
-                              m_repositionView, m_splintUpperView, m_splintLowerView,
-                              m_splintView}) {
-            if (!v) continue;
-            if (actorKey > 0) v->removeMesh(actorKey);
-            if (label > 0) v->removeMesh(label);
-        }
-        if (label > 0) removeObjectEntry(label);
+        if (m_objectTable)
+            deleteObjectAtRow(m_objectTable->currentRow());
     });
     objectLayout->addWidget(deleteObjectButton);
-    rootLayout->addWidget(objectBox, 0);
+    objectsTabLayout->addWidget(objectBox, 1);
+    tabs->addTab(m_objectsInspectorTab, tr("Objetos"));
 
     return panel;
 }
@@ -6294,6 +6541,7 @@ void MainWindow::applyProjectState(const ProjectState& state)
     restoreSplintDesigns(state);
     restoreCompositeBlocks(state);
     restoreOsteotomyPlan(state);
+    restoreGuidePlan(state);
     syncVisibilityPanelToAllViews();
 
     // ── Populate MODELOS views ────────────────────────────────────────────
@@ -6668,11 +6916,11 @@ void MainWindow::updateModelWorkflowActions()
         showOnly(m_modelBackAct, upperLoaded || anyPoints || m_upperRegistrationCalculated,
                  upperLoaded || anyPoints || m_upperRegistrationCalculated);
         showOnly(m_importUpperAct, !upperLoaded, hasMaxilla);
-        showOnly(m_maxPtsAct, upperLoaded && !m_upperCompositeMesh, canUpperPoints);
-        showOnly(m_upperPtsAct, upperLoaded && !m_upperCompositeMesh, canUpperPoints);
+        showOnly(m_maxPtsAct, false, false);
+        showOnly(m_upperPtsAct, false, false);
         showOnly(m_matchUpperAct, upperLoaded && !m_upperCompositeMesh, canUpperMatch);
-        showOnly(m_adjustArchAct, m_upperRegistrationCalculated && !m_upperCompositeMesh, m_upperArchMesh != nullptr);
-        showOnly(m_acceptGizmoAct, m_dentalGizmoActive, m_dentalGizmoActive);
+        showOnly(m_adjustArchAct, false, false);
+        showOnly(m_acceptGizmoAct, false, false);
         showOnly(m_compositeAct, upperLoaded && !m_upperCompositeMesh, canUpperComposite);
         showOnly(m_continueNoMatchAct, true, (hasMaxilla || hasMandible) && !m_compositeInProgress);
         showOnly(m_clearPtsAct, anyPoints, anyPoints);
@@ -6693,10 +6941,10 @@ void MainWindow::updateModelWorkflowActions()
                 setGuidedNext(m_upperPtsAct, tr("Marque el punto correspondiente en el STL superior."));
         } else if (!m_upperRegistrationCalculated) {
             setGuidedNext(m_matchUpperAct, tr("Calcule el registro superior y ajuste el gizmo si es necesario."));
-        } else if (m_dentalGizmoActive) {
-            setGuidedNext(m_acceptGizmoAct, tr("Acepte el ajuste manual del STL superior."));
         } else if (!m_upperCompositeMesh) {
-            setGuidedNext(m_compositeAct, tr("Cree el modelo compuesto maxilar."));
+            setGuidedNext(m_compositeAct, m_dentalGizmoActive
+                ? tr("Ajuste el STL con el gizmo y cree directamente el compuesto maxilar.")
+                : tr("Cree el modelo compuesto maxilar."));
         }
         if (m_compositeButton) {
             m_compositeButton->setVisible(upperLoaded && !m_upperCompositeMesh);
@@ -6715,11 +6963,11 @@ void MainWindow::updateModelWorkflowActions()
 
         showOnly(m_modelBackAct, true, true);
         showOnly(m_importLowerAct, !lowerLoaded, hasMandible);
-        showOnly(m_mandPtsAct, lowerLoaded && !m_lowerCompositeMesh, canLowerPoints);
-        showOnly(m_lowerPtsAct, lowerLoaded && !m_lowerCompositeMesh, canLowerPoints);
+        showOnly(m_mandPtsAct, false, false);
+        showOnly(m_lowerPtsAct, false, false);
         showOnly(m_matchLowerAct, lowerLoaded && !m_lowerCompositeMesh, canLowerMatch);
-        showOnly(m_adjustArchAct, m_lowerRegistrationCalculated && !m_lowerCompositeMesh, m_lowerArchMesh != nullptr);
-        showOnly(m_acceptGizmoAct, m_dentalGizmoActive, m_dentalGizmoActive);
+        showOnly(m_adjustArchAct, false, false);
+        showOnly(m_acceptGizmoAct, false, false);
         showOnly(m_compositeAct, lowerLoaded && !m_lowerCompositeMesh, canLowerComposite);
         showOnly(m_continueNoMatchAct, true, (hasMaxilla || hasMandible) && !m_compositeInProgress);
         showOnly(m_clearPtsAct, anyPoints, anyPoints);
@@ -6740,10 +6988,10 @@ void MainWindow::updateModelWorkflowActions()
                 setGuidedNext(m_lowerPtsAct, tr("Marque el punto correspondiente en el STL inferior."));
         } else if (!m_lowerRegistrationCalculated) {
             setGuidedNext(m_matchLowerAct, tr("Calcule el registro inferior y ajuste el gizmo si es necesario."));
-        } else if (m_dentalGizmoActive) {
-            setGuidedNext(m_acceptGizmoAct, tr("Acepte el ajuste manual del STL inferior."));
         } else if (!m_lowerCompositeMesh) {
-            setGuidedNext(m_compositeAct, tr("Cree el modelo compuesto mandibular."));
+            setGuidedNext(m_compositeAct, m_dentalGizmoActive
+                ? tr("Ajuste el STL con el gizmo y cree directamente el compuesto mandibular.")
+                : tr("Cree el modelo compuesto mandibular."));
         }
         if (m_compositeButton) {
             m_compositeButton->setVisible(lowerLoaded && !m_lowerCompositeMesh);
@@ -6822,7 +7070,7 @@ void MainWindow::goBackModelWorkflow()
         if (upper) m_appState.setUpperCompositeReady(false);
         else m_appState.setLowerCompositeReady(false);
         if (m_modelStepStack) m_modelStepStack->setVisible(true);
-        if (m_modelMatchView) m_modelMatchView->setTitle(tr("MATCH PREVIEW"));
+        if (m_modelMatchView) m_modelMatchView->setTitle(tr("VISTA PREVIA DEL REGISTRO"));
         if (m_compositeButton) {
             disconnect(m_compositeButton, &QPushButton::clicked, this, &MainWindow::exportDentalCompositeStl);
             connect(m_compositeButton, &QPushButton::clicked, this, &MainWindow::createDentalCompositeModels,
@@ -8011,11 +8259,26 @@ void MainWindow::onSegmentationFinished(const QString& outputSegmentationPath)
         } else {
             addMaskEntry(meshLabelName(currentLabel), meshLabelColor(currentLabel),
                          currentLabel);
+            addObjectEntry(meshLabelName(currentLabel), meshLabelColor(currentLabel),
+                           currentLabel);
             publishSegmentationMesh(currentLabel, mesh);
+            if (m_objectTable) {
+                for (int row = 0; row < m_objectTable->rowCount(); ++row) {
+                    auto* item = m_objectTable->item(row, 0);
+                    if (item && item->data(Qt::UserRole + 1).toInt() == currentLabel) {
+                        m_objectTable->selectRow(row);
+                        m_objectTable->scrollToItem(item, QAbstractItemView::PositionAtCenter);
+                        break;
+                    }
+                }
+            }
             statusBar()->showMessage(
                 tr("Malla 3D generada: %1").arg(meshLabelName(currentLabel)));
         }
     }
+
+    if (!labelsToGenerate.empty() && m_inspectorTabs && m_objectsInspectorTab)
+        m_inspectorTabs->setCurrentWidget(m_objectsInspectorTab);
 
     if (m_aiSegmentationService) {
         m_aiSegmentationService->clearAirwaySeed();
@@ -8685,6 +8948,90 @@ void MainWindow::removeObjectEntry(int label)
     }
 }
 
+void MainWindow::deleteObjectAtRow(int row)
+{
+    if (!m_objectTable || row < 0 || row >= m_objectTable->rowCount())
+        return;
+    auto* item = m_objectTable->item(row, 0);
+    if (!item)
+        item = m_objectTable->item(row, 1);
+    const int actorKey = item ? item->data(Qt::UserRole).toInt() : -1;
+    const int label = item ? item->data(Qt::UserRole + 1).toInt() : -1;
+    if (label <= 0)
+        return;
+    for (Mesh3DView* view : {m_mesh3DView, m_modelMaxillaView, m_modelUpperArchView,
+                             m_modelMandibleView, m_modelLowerArchView, m_modelMatchView,
+                             m_orientationView, m_osteotomyView, m_biteSegmentView, m_biteScanView,
+                             m_biteRegistrationView, m_repositionView, m_splintUpperView,
+                             m_splintLowerView, m_splintView, m_guideView}) {
+        if (!view)
+            continue;
+        if (actorKey != 0)
+            view->removeMesh(actorKey);
+        view->removeMesh(label);
+        view->removeMesh(objectActorKey(label));
+    }
+    switch (label) {
+    case kUpperArchLabel: m_upperArchMesh = nullptr; m_upperArchOriginalMesh = nullptr; break;
+    case kLowerArchLabel: m_lowerArchMesh = nullptr; m_lowerArchOriginalMesh = nullptr; break;
+    case kUpperCompositeLabel: m_upperCompositeMesh = nullptr; break;
+    case kLowerCompositeLabel: m_lowerCompositeMesh = nullptr; break;
+    case kLeFortCranialLabel: m_leFortCranialMesh = nullptr; break;
+    case kLeFortSegLabel: m_leFortSegmentMesh = nullptr; break;
+    case kBssoDistalLabel: m_bssoDistalMesh = nullptr; break;
+    case kBssoProximalLabel: m_bssoProximalMesh = nullptr; break;
+    case kBssoProximalRightLabel: m_bssoRightProximalMesh = nullptr; break;
+    case kBssoProximalLeftLabel: m_bssoLeftProximalMesh = nullptr; break;
+    case kGenioBodyLabel: m_genioBodyMesh = nullptr; break;
+    case kGenioSegmentLabel: m_genioSegmentMesh = nullptr; break;
+    case kIntermediateSplintLabel: m_intermediateSplintMesh = nullptr; break;
+    case kFinalSplintLabel: m_finalSplintMesh = nullptr; break;
+    case kBiteScanLabel: m_biteScanMesh = nullptr; break;
+    case kGuideMeshLabel: m_guideMesh = nullptr; break;
+    default: break;
+    }
+    m_repositionOriginalMeshes.erase(label);
+    m_repositionTranslationMm.remove(label);
+    m_repositionRotationDeg.remove(label);
+    for (SplintDesign& design : m_splintDesigns) {
+        if (design.label == label)
+            design.createdSourceKey.clear();
+    }
+    removeObjectEntry(label);
+    updateButtonStates();
+    statusBar()->showMessage(tr("Objeto eliminado."));
+}
+
+void MainWindow::exportObjectAtRow(int row)
+{
+    if (!m_objectTable || row < 0 || row >= m_objectTable->rowCount())
+        return;
+    auto* item = m_objectTable->item(row, 0);
+    if (!item)
+        item = m_objectTable->item(row, 1);
+    const int label = item ? item->data(Qt::UserRole + 1).toInt() : -1;
+    const auto mesh = label > 0 ? repositionMeshForLabel(label) : nullptr;
+    if (!mesh || mesh->GetNumberOfPolys() == 0) {
+        QMessageBox::warning(this, tr("Exportar STL"), tr("El objeto seleccionado no tiene una malla exportable."));
+        return;
+    }
+    QString name = m_objectTable->item(row, 1) ? m_objectTable->item(row, 1)->text() : meshLabelName(label);
+    name.replace(QRegularExpression(QStringLiteral("[^A-Za-z0-9_-]+")), QStringLiteral("_"));
+    const QString path = QFileDialog::getSaveFileName(this, tr("Exportar objeto STL"), name + QStringLiteral(".stl"),
+                                                       tr("STL (*.stl)"));
+    if (path.isEmpty())
+        return;
+    auto writer = vtkSmartPointer<vtkSTLWriter>::New();
+    writer->SetFileName(path.toUtf8().constData());
+    writer->SetInputData(mesh);
+    writer->SetFileTypeToBinary();
+    if (writer->Write() != 1) {
+        QMessageBox::warning(this, tr("Exportar STL"), tr("No se pudo escribir %1.").arg(path));
+        return;
+    }
+    statusBar()->showMessage(tr("Objeto exportado: %1").arg(path));
+}
+
 void MainWindow::deleteSelectedMask()
 {
     if (!m_maskTable || m_maskTable->rowCount() == 0) {
@@ -9003,6 +9350,23 @@ void MainWindow::pushLabelmapUndo()
 // ─────────────────────────────────────────────────────────────────────────────
 void MainWindow::undoLastEdit()
 {
+    if (m_viewModeStack && m_viewModeStack->currentIndex() == 6 && splintHeightmapMethodActive()) {
+        SplintDesign* design = activeSplintDesign();
+        std::vector<SplintPoint3>* points = nullptr;
+        if (m_splintPointGroup == 0) points = &design->upperPoints;
+        else if (m_splintPointGroup == 1) points = &design->lowerPoints;
+        else if (!design->lowerPoints.empty()) points = &design->lowerPoints;
+        else points = &design->upperPoints;
+        if (points && !points->empty()) {
+            points->pop_back();
+            rebuildSplintEditablePoints();
+            requestSplintPreview();
+            updateSplintPanelState();
+            statusBar()->showMessage(tr("Ctrl+Z: último punto de férula eliminado."));
+            return;
+        }
+    }
+
     // ── Priority 0: dental registration points ────────────────────────────
     auto pointsForSet = [this](DentalPointSet set) -> QVector<QVector3D>* {
         switch (set) {
@@ -9786,7 +10150,8 @@ void MainWindow::importUpperArchStl()
 
     // Refresh individual views + match preview (bone + arch together)
     syncModelViews();
-    statusBar()->showMessage(tr("Arco superior STL importado. Marque Pts Sup para registrar."));
+    setDentalPointCapture(DentalPointSet::MaxillaBone);
+    statusBar()->showMessage(tr("Arco superior importado. Marque un punto en el maxilar; después se pedirá su homólogo en el STL."));
 }
 
 void MainWindow::importLowerArchStl()
@@ -9848,7 +10213,8 @@ void MainWindow::importLowerArchStl()
 
     // Refresh individual views + match preview (bone + arch together)
     syncModelViews();
-    statusBar()->showMessage(tr("Arco inferior STL importado. Marque Pts Inf para registrar."));
+    setDentalPointCapture(DentalPointSet::MandibleBone);
+    statusBar()->showMessage(tr("Arco inferior importado. Marque un punto en la mandíbula; después se pedirá su homólogo en el STL."));
 }
 
 void MainWindow::setDentalPointCapture(DentalPointSet set)
@@ -9921,6 +10287,17 @@ void MainWindow::onDentalPointPicked(int actorLabel, double x, double y, double 
         m_modelLowerArchView->addPointMarker(x, y, z, markerColor);
     updateDentalPointStatus();
     updateButtonStates();
+
+    // Registration points are paired one by one. After every accepted point,
+    // move directly to the homologous surface so the user never has to select
+    // a separate point tool.
+    switch (m_dentalPointSet) {
+    case DentalPointSet::MaxillaBone: setDentalPointCapture(DentalPointSet::UpperArch); break;
+    case DentalPointSet::UpperArch: setDentalPointCapture(DentalPointSet::MaxillaBone); break;
+    case DentalPointSet::MandibleBone: setDentalPointCapture(DentalPointSet::LowerArch); break;
+    case DentalPointSet::LowerArch: setDentalPointCapture(DentalPointSet::MandibleBone); break;
+    case DentalPointSet::None: break;
+    }
 }
 
 void MainWindow::updateDentalPointStatus()
@@ -10021,14 +10398,8 @@ void MainWindow::showFinalCompositeView(bool advanceToOrientation)
         return;
     }
 
-    // Transition to the PLAN/Orientación workspace (page 2 of m_viewModeStack)
-    for (auto* tab : findChildren<QToolButton*>(QStringLiteral("MT"))) {
-        if (tab && tab->text() == tr("ORIENTACION")) {
-            tab->click();
-            break;
-        }
-    }
-    setOrientationWorkspace(true);
+    // Use the central step selector so workspace and top navigation remain in sync.
+    selectOrthognathicStep(2);
 
     // Sequential Frankfurt buttons: only PorionD is enabled on entry.
     // Remaining buttons unlock via updateFrankfurtPointStatus() as points are placed.
@@ -10078,6 +10449,22 @@ void MainWindow::onFrankfurtPointPicked(int /*actorLabel*/, double x, double y, 
     m_frankfurtCapturingIdx = -1;
     if (m_orientationView) m_orientationView->setPointPickMode(false);
     updateFrankfurtPointStatus();
+
+    const int next = static_cast<int>(m_frankfurtPoints.size());
+    if (next >= 0 && next < 4) {
+        QTimer::singleShot(0, this, [this, next] {
+            m_frankfurtCapturingIdx = next;
+            if (m_orientationView) {
+                // Right Porion: right lateral; left Porion: left lateral;
+                // both orbital landmarks: frontal.
+                m_orientationView->setStandardView(next == 0 ? 1 : next == 1 ? 2 : 0);
+                m_orientationView->setPointPickMode(true);
+            }
+            const QStringList names = {tr("Porion derecho"), tr("Porion izquierdo"),
+                                       tr("Orbitale derecho"), tr("Orbitale izquierdo")};
+            statusBar()->showMessage(tr("Marque el %1.").arg(names[next]));
+        });
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -10088,6 +10475,8 @@ void MainWindow::updateFrankfurtPointStatus()
         m_frankfortPorionDAct, m_frankfortPorionIAct,
         m_frankfortOrbitalDAct, m_frankfortOrbitalIAct
     };
+    for (QAction* action : pointActions)
+        if (action) action->setVisible(false);
     const QVector<QAction*> orientationActions = {
         m_frankfortPorionDAct, m_frankfortPorionIAct,
         m_frankfortOrbitalDAct, m_frankfortOrbitalIAct,

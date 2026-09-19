@@ -39,23 +39,23 @@ QWidget* MainWindow::buildModelGuide(QWidget* parent)
     return m_modelGuide;
 }
 
-// Style shared by the guided side panels (MODELOS, ORIENTACION): next step amber, done green,
-// active or pressed blue.
+// Shared task-panel language: one blue next action, quiet completed actions and
+// enough spacing to scan the workflow without turning every control into a card.
 QString guidedSidePanelStyle(const QString& objectName)
 {
     return QStringLiteral(
-        "#%1 { background:#1c1c1e; }"
-        "#%1 QLabel#GuidedPanelTitle { color:#ffffff; font-size:14px; font-weight:700; }"
-        "#%1 QLabel#GuidedPanelSection { color:#98989d; font-size:10px; font-weight:700; padding-top:8px; }"
-        "#%1 QToolButton { background:#2c2c2e; color:#f5f5f7; border:1px solid #3a3a3c;"
-        "  border-radius:8px; padding:7px 10px; font-size:11px; }"
-        "#%1 QToolButton:hover { background:#3a3a3c; }"
-        "#%1 QToolButton[guideState=\"done\"] { background:#24342a; border-color:#34c759; color:#d8f8df; }"
-        "#%1 QToolButton[guideState=\"next\"] { background:#6e6257; border-color:#f5d7ad;"
+        "#%1 { background:#202226; border-right:1px solid #2c2e33; }"
+        "#%1 QLabel#GuidedPanelTitle { color:#ffffff; font-size:17px; font-weight:600; padding:2px 0 8px 0; }"
+        "#%1 QLabel#GuidedPanelSection { color:#8e8e93; font-size:10px; font-weight:700; padding-top:12px; }"
+        "#%1 QToolButton { background:#292b30; color:#f5f5f7; border:1px solid #3a3d43;"
+        "  border-radius:6px; padding:8px 10px; min-height:20px; font-size:12px; text-align:left; }"
+        "#%1 QToolButton:hover { background:#34373d; border-color:#4b4e55; }"
+        "#%1 QToolButton[guideState=\"done\"] { background:transparent; border-color:#34363c; color:#30d158; }"
+        "#%1 QToolButton[guideState=\"next\"] { background:#0a84ff; border-color:#0a84ff;"
         "  color:#ffffff; font-weight:700; }"
-        "#%1 QToolButton:disabled { background:#232325; border-color:#2c2c2e; color:#6e6e73; }"
+        "#%1 QToolButton:disabled { background:#202226; border-color:#2c2e33; color:#6e6e73; }"
         "#%1 QToolButton:pressed, #%1 QToolButton:checked {"
-        "  background:#0a84ff; border-color:#64d2ff; color:#ffffff; font-weight:700; }").arg(objectName);
+        "  background:#0a84ff; border-color:#0a84ff; color:#ffffff; font-weight:700; }").arg(objectName);
 }
 
 // Guided panel on the left, like the other modules: steps, instruction and the actions of the current
@@ -105,9 +105,8 @@ void MainWindow::populateModelControlPanel()
         button->setVisible(action->isVisible());
         connect(action, &QAction::changed, button, [button, action] { button->setVisible(action->isVisible()); });
     };
-    for (QAction* action : {m_importUpperAct, m_importLowerAct, m_maxPtsAct, m_upperPtsAct, m_mandPtsAct,
-                            m_lowerPtsAct, m_matchUpperAct, m_matchLowerAct, m_matchBothAct, m_adjustArchAct,
-                            m_acceptGizmoAct, m_compositeAct, m_continueNoMatchAct, m_exportAct, m_exportPackAct,
+    for (QAction* action : {m_importUpperAct, m_importLowerAct, m_matchUpperAct, m_matchLowerAct,
+                            m_matchBothAct, m_compositeAct, m_continueNoMatchAct, m_exportAct, m_exportPackAct,
                             m_clearPtsAct, m_resetArchAct})
         addButton(action);
     auto* divider = new QFrame();
@@ -149,23 +148,19 @@ void MainWindow::updateModelWorkflowUi()
         label->setProperty("complete", state.done[i]);
         label->setProperty("current", state.current == i);
         label->setStyleSheet(state.current == i
-            ? QStringLiteral("color:#ffffff;background:#006ecb;padding:4px;font-weight:700;border-radius:4px;")
-            : state.done[i] ? QStringLiteral("color:#65d696;padding:4px;")
-                            : QStringLiteral("color:#ababaf;padding:4px;"));
+            ? QStringLiteral("color:#ffffff;background:#252b33;border-left:3px solid #0a84ff;padding:7px 8px;font-weight:600;border-radius:3px;")
+            : state.done[i] ? QStringLiteral("color:#30d158;padding:7px 8px;")
+                            : QStringLiteral("color:#a7aab2;padding:7px 8px;"));
     }
     m_modelGuideMessage->setText(state.instruction);
     m_modelGuidePoints->setText(state.points);
     m_modelGuidePoints->setVisible(!state.points.isEmpty());
     const auto limit = [](QAction* action, bool allowed) { if (action) action->setEnabled(action->isEnabled() && allowed); };
-    for (auto* action : {m_maxPtsAct, m_upperPtsAct, m_mandPtsAct, m_lowerPtsAct}) limit(action, state.canCapture);
     for (auto* action : {m_matchUpperAct, m_matchLowerAct}) limit(action, state.canRegister);
     limit(m_adjustArchAct, state.canAdjust);
     limit(m_compositeAct, state.canBuild);
     if (m_compositeButton && state.current >= 0)
         m_compositeButton->setEnabled(m_compositeButton->isEnabled() && state.canBuild);
-    if (state.canCapture && !state.canRegister) {
-        clearGuidedActionStates({m_maxPtsAct, m_upperPtsAct, m_mandPtsAct, m_lowerPtsAct, m_matchUpperAct, m_matchLowerAct});
-        const bool bone = state.nextTarget == ModelWorkflowCore::PointTarget::Bone;
-        setGuidedNext(input.jaw == 0 ? (bone ? m_maxPtsAct : m_upperPtsAct) : (bone ? m_mandPtsAct : m_lowerPtsAct), state.points);
-    }
+    if (state.canCapture && !state.canRegister)
+        clearGuidedActionStates({m_matchUpperAct, m_matchLowerAct});
 }

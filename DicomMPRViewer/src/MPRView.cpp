@@ -153,20 +153,20 @@ MPRView::~MPRView() = default;
 void MPRView::buildLayout()
 {
     setStyleSheet(
-        "MPRView { background-color:#1f1f21; border:1px solid #2c2c2e; border-radius:14px; }"
-        "QVTKOpenGLNativeWidget { border-radius:10px; }");
+        "MPRView { background-color:#1c1d20; border:1px solid #292b30; border-radius:4px; }"
+        "QVTKOpenGLNativeWidget { border:0; }");
 
     auto* outer = new QVBoxLayout(this);
-    outer->setContentsMargins(6, 6, 6, 6);
-    outer->setSpacing(6);
+    outer->setContentsMargins(0, 0, 0, 0);
+    outer->setSpacing(0);
 
     // ── Title bar ─────────────────────────────────────────────────────────
     m_titleLabel = new QLabel(this);
     m_titleLabel->setAlignment(Qt::AlignCenter);
-    m_titleLabel->setFixedHeight(22);
+    m_titleLabel->setFixedHeight(24);
     m_titleLabel->setStyleSheet(
-        "color:#f5f5f7; font-weight:700; font-size:11px;"
-        "background-color:#2c2c2e; border-radius:10px;");
+        "color:#d1d1d6; font-weight:600; font-size:11px;"
+        "background-color:#202226; border:0; border-bottom:1px solid #292b30;");
 
     switch (m_orientation) {
         case MPROrientation::Axial:    m_titleLabel->setText("AXIAL");    break;
@@ -195,6 +195,7 @@ void MPRView::buildLayout()
         "QSlider::handle:horizontal { background:#0a84ff; width:14px; height:14px;"
         "  margin:-5px 0; border-radius:7px; }"
         "QSlider::handle:horizontal:hover { background:#1d9bf0; }");
+    m_slider->setContentsMargins(8, 0, 8, 0);
     outer->addWidget(m_slider);
 
     // ── Slice counter ─────────────────────────────────────────────────────

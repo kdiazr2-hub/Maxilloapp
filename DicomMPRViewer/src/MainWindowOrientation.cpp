@@ -62,12 +62,11 @@ QWidget* MainWindow::buildOrientationControlPanel(QWidget* parent)
 
 void MainWindow::populateOrientationControlPanel()
 {
-    if (m_orientationControlPopulated || !m_orientationControlButtons || !m_frankfortPorionDAct || !m_exportOrientedAct)
+    if (m_orientationControlPopulated || !m_orientationControlButtons || !m_alignFrankfurtAct)
         return;
     m_orientationControlPopulated = true;
-    for (QAction* action : {m_frankfortPorionDAct, m_frankfortPorionIAct, m_frankfortOrbitalDAct, m_frankfortOrbitalIAct,
-                            m_alignFrankfurtAct, m_midlineGizmoAct, m_midlineAcceptGizmoAct, m_saveOrientationAct,
-                            m_exportOrientedAct}) {
+    for (QAction* action : {m_alignFrankfurtAct, m_midlineGizmoAct,
+                            m_midlineAcceptGizmoAct, m_saveOrientationAct}) {
         auto* button = new QToolButton();
         button->setDefaultAction(action);
         button->setToolButtonStyle(Qt::ToolButtonTextOnly);
@@ -95,15 +94,15 @@ void MainWindow::updateOrientationGuide()
         label->setText((done ? QStringLiteral("✓ ") : QString()) + label->property("stepTitle").toString());
         label->setProperty("current", current == i);
         label->setStyleSheet(current == i
-            ? QStringLiteral("color:#ffffff;background:#006ecb;padding:4px;font-weight:700;border-radius:4px;")
-            : done ? QStringLiteral("color:#65d696;padding:4px;")
-                   : QStringLiteral("color:#ababaf;padding:4px;"));
+            ? QStringLiteral("color:#ffffff;background:#252b33;border-left:3px solid #0a84ff;padding:7px 8px;font-weight:600;border-radius:3px;")
+            : done ? QStringLiteral("color:#30d158;padding:7px 8px;")
+                   : QStringLiteral("color:#a7aab2;padding:7px 8px;"));
     }
     static const char* const landmarkHints[4] = {
-        QT_TR_NOOP("Pulse «Porion derecho» y marque el punto más alto del conducto auditivo en la vista lateral derecha."),
-        QT_TR_NOOP("Pulse «Porion izquierdo» y marque el punto más alto del conducto auditivo en la vista lateral izquierda."),
-        QT_TR_NOOP("Pulse «Orbitale derecho» y marque el punto más bajo del reborde orbitario en la vista frontal."),
-        QT_TR_NOOP("Pulse «Orbitale izquierdo» y marque el punto más bajo del reborde orbitario en la vista frontal.")};
+        QT_TR_NOOP("Marque el Porion derecho: punto más alto del conducto auditivo en la vista lateral derecha."),
+        QT_TR_NOOP("Marque el Porion izquierdo: punto más alto del conducto auditivo en la vista lateral izquierda."),
+        QT_TR_NOOP("Marque el Orbitale derecho: punto más bajo del reborde orbitario en la vista frontal."),
+        QT_TR_NOOP("Marque el Orbitale izquierdo: punto más bajo del reborde orbitario en la vista frontal.")};
     QString message;
     if (!hasModels)
         message = tr("No hay modelos que orientar: créelos en MODELOS o use «Continuar sin escaneo».");

@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// MainWindow — ORTOGNÁTICA. The ribbon shows ARCHIVO, MEDIDAS and ORTOGNÁTICA;
+// MainWindow — ORTOGNÁTICA. The ribbon shows ARCHIVO and ORTOGNÁTICA;
 // the planning modules (segmentation → splints) are steps of a bar at the top
 // of the ribbon, above the actions of the current module. Each step keeps its
 // hidden ribbon tab, so selecting a step clicks that tab and the module switches
@@ -63,20 +63,20 @@ QWidget* MainWindow::buildOrthognathicStepPanel(QWidget* parent)
     panel->setAttribute(Qt::WA_StyledBackground, true);
     // ID selectors outrank the ribbon's tall QToolButton style: compact stepper buttons.
     panel->setStyleSheet(QStringLiteral(
-        "#OrthognathicStepPanel { background:#1f1f21; border-bottom:1px solid #2c2c2e; }"
-        "#OrthognathicStepPanel QToolButton, #OrthognathicStepPanel QPushButton { background:#2c2c2e; color:#f5f5f7;"
-        "  border:1px solid #3a3a3c; border-radius:8px; padding:4px 12px; font-size:11px;"
+        "#OrthognathicStepPanel { background:#1c1d20; border-bottom:1px solid #292b30; }"
+        "#OrthognathicStepPanel QToolButton { background:transparent; color:#8e8e93;"
+        "  border:0; border-bottom:2px solid transparent; border-radius:0; padding:7px 9px; font-size:11px;"
         "  min-width:0px; min-height:22px; }"
-        "#OrthognathicStepPanel QToolButton:hover, #OrthognathicStepPanel QPushButton:hover { background:#3a3a3c; }"
-        "#OrthognathicStepPanel QToolButton[guideState=\"done\"] { background:#24342a; border-color:#34c759;"
-        "  color:#d8f8df; }"
-        "#OrthognathicStepPanel QToolButton:checked { background:#0a84ff; border-color:#64d2ff; color:#ffffff;"
-        "  font-weight:700; }"
-        "#OrthognathicStepPanel QPushButton:disabled { background:#232325; border-color:#2c2c2e; color:#6e6e73; }"
-        "#OrthognathicStepPanel QLabel { color:#98989d; font-size:11px; }"));
+        "#OrthognathicStepPanel QPushButton { background:transparent; color:#a7aab2; border:0;"
+        "  border-radius:6px; padding:4px 8px; min-width:0px; min-height:22px; font-size:15px; }"
+        "#OrthognathicStepPanel QToolButton:hover, #OrthognathicStepPanel QPushButton:hover { background:#292b30; color:#ffffff; }"
+        "#OrthognathicStepPanel QToolButton[guideState=\"done\"] { color:#30d158; }"
+        "#OrthognathicStepPanel QToolButton:checked { color:#ffffff; border-bottom-color:#0a84ff; font-weight:700; }"
+        "#OrthognathicStepPanel QPushButton:disabled { color:#48484a; }"
+        "#OrthognathicStepPanel QLabel { color:#8e8e93; font-size:11px; padding-left:8px; }"));
     auto* layout = new QHBoxLayout(panel);
-    layout->setContentsMargins(8, 5, 8, 5);
-    layout->setSpacing(6);
+    layout->setContentsMargins(8, 3, 8, 3);
+    layout->setSpacing(2);
     m_orthoPrevButton = new QPushButton(QStringLiteral("‹"), panel);
     m_orthoPrevButton->setToolTip(tr("Paso anterior"));
     connect(m_orthoPrevButton, &QPushButton::clicked, this, [this] { selectOrthognathicStep(m_orthoStep - 1); });
@@ -121,7 +121,7 @@ void MainWindow::onModuleTabActivated(const QString& title)
     if (step >= 0) {
         m_orthoStep = step;
         if (m_orthoTab)
-            m_orthoTab->setChecked(true); // exclusive with ARCHIVO and MEDIDAS
+            m_orthoTab->setChecked(true); // exclusive with ARCHIVO
     }
     if (m_orthoStepPanel)
         m_orthoStepPanel->setVisible(step >= 0);

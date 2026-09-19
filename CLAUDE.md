@@ -63,7 +63,10 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   classic `SplintGenerator` and its panel stay in the code but the "Método" selector is hidden (delete only if the user
   confirms). The automatic contour keeps only teeth within the arch span of the guide points (+6 mm). Built-in designs:
   Intermedia = repositioned Le Fort on the unmoved mandible, Final = on the repositioned distal / post-genioplasty mandible.
-  Extras (bevel, wire holes, bracket margins) are applied in the Build voxel domain so the splint stays closed.
+  Extras (bevel, wire holes, bracket margins) are applied in the Build voxel domain so the splint stays closed. The
+  panel keeps the main design/point/create flow visible and folds parameters, thickness, contour, extras and secondary
+  exports. After Flying Edges/decimation, a conservative windowed-sinc pass regularizes voxel striations before normals
+  and thickness are computed.
   `MeshRepairCore` validates/repairs STL (created splints are repaired automatically, export validates again).
 - Osteotomies: `OsteotomyCore` (line-segment cutting paths for Le Fort I / genioplasty, bilateral BSSO from 6 landmarks,
   kerf split by a signed field that keeps cell data, guide slabs from the same field). ProPlan-style wizard in
@@ -121,8 +124,8 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   `edgeMarginMm`, so it never reaches the rim and the guide stays in one piece (user's decision, 2026-09-15). `GuidePlanCore`
   holds what the user decided (sources, region, slots with their ends, holes, parameters) and saves it under the
   optional `guidesPlan` project key; `OsteotomyCore::PathToJson` / `PathFromJson` persist the cut a slot follows.
-  `GuideFigure`s are the Boolean tools (cylinder, box, sphere with exact measurements, or an imported STL centred on
-  its middle): a local frame (`FrameAt`, z along the surface normal) and Add/Subtract, carved into the same field
+  `GuideFigure`s are the Boolean tools (cylinder, box, sphere with exact measurements, imported STL, copied project
+  object, or a three-point curved tube): a local frame (`FrameAt`, z along the surface normal) and Add/Subtract, carved into the same field
   (guide = (base ∪ added) − slots − holes − subtracted); `FigurePreview` draws them.
   `GuideDesignCore::KeepOutNode` returns slots + holes + subtracted figures as one node: `Build` and the edit
   session's protected field both come from that one list, so an edit can never fill in what the plan cut away.
@@ -159,8 +162,11 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   position. Those optional pre-reposition meshes are persisted with the project. A saw slot is centred on the exact
   saved osteotomy path and clipped by the configured edge margin so guide material remains on both sides. The slot list only shows that
   type's cuts (`m_guideCuts`, filled by `rememberOsteotomyCut` when the wizard executes a Le Fort or genioplasty and by
-  the plan on reload). Imported figures are saved by file path and reloaded from it.
-- Object label constants and `objectActorKey` live in `ObjectLabels.h`.
+  the plan on reload). Imported figures reload by file path; integrated splint copies reload by object label while
+  keeping their own mesh/transform, and curved tubes persist their three control points. A splint copy plus tubes is
+  unioned with the painted guide in the same Boolean build and never modifies the original bite splint.
+- Object label constants and `objectActorKey` live in `ObjectLabels.h`. OBJETOS has a row-specific context menu for
+  STL export and deletion; its visible delete button calls the same deletion path.
 - Mask conversion uses `MaskToObjectCore` and `MainWindowSegmentation.cpp`: extract the current
   label without smoothing or new filling; update object actors only, leaving mask data and display intact.
 - Composites: `CompositeBlockCore` cuts bone outside / intraoral scan inside an oriented block and merges them into one

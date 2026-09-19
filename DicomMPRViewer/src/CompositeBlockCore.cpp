@@ -34,6 +34,7 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <limits>
 #include <thread>
 #include <unordered_map>
 
@@ -543,21 +544,35 @@ double spanField(const ContourFrame& frame, double x, double y)
     return std::min(offset - frame.spanWidth, 2.0 * kContourPi - offset) * radius;
 }
 
-// Height of the scan border line above (x, y): inverse-distance weighting of the points.
+// Height of the scan border line above (x, y). Use the closest marked segment
+// instead of radial interpolation so the boundary remains straight between
+// consecutive points.
 double lineHeight(const ContourFrame& frame, double x, double y)
 {
-    double weights = 0.0;
-    double sum = 0.0;
-    for (size_t i = 0; i < frame.polygon.size(); ++i) {
-        const double dx = x - frame.polygon[i][0];
-        const double dy = y - frame.polygon[i][1];
-        const double d2 = dx * dx + dy * dy;
-        if (d2 < 1e-12)
-            return frame.height[i];
-        weights += 1.0 / d2;
-        sum += frame.height[i] / d2;
+    if (frame.polygon.empty() || frame.height.empty())
+        return 0.0;
+    if (frame.polygon.size() == 1)
+        return frame.height.front();
+    double bestDistance2 = std::numeric_limits<double>::max();
+    double bestHeight = frame.height.front();
+    for (size_t i = 1; i < frame.polygon.size(); ++i) {
+        const auto& a = frame.polygon[i - 1];
+        const auto& b = frame.polygon[i];
+        const double dx = b[0] - a[0];
+        const double dy = b[1] - a[1];
+        const double length2 = dx * dx + dy * dy;
+        const double t = length2 > 1e-12
+            ? std::clamp(((x - a[0]) * dx + (y - a[1]) * dy) / length2, 0.0, 1.0)
+            : 0.0;
+        const double px = a[0] + t * dx;
+        const double py = a[1] + t * dy;
+        const double distance2 = (x - px) * (x - px) + (y - py) * (y - py);
+        if (distance2 < bestDistance2) {
+            bestDistance2 = distance2;
+            bestHeight = frame.height[i - 1] + t * (frame.height[i] - frame.height[i - 1]);
+        }
     }
-    return weights > 0.0 ? sum / weights : 0.0;
+    return bestHeight;
 }
 
 // Everything below the line of the points (toward the occlusal side) within their widened outline;

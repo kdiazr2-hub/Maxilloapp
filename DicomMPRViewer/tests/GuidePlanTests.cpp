@@ -56,7 +56,13 @@ GuidePlan samplePlan()
     stl.shape = GuideFigureShape::Mesh;
     stl.operation = GuideFigureOperation::Add;
     stl.sourcePath = QStringLiteral("C:/casos/tope.stl");
-    plan.figures = {box, stl};
+    stl.sourceLabel = 215;
+    GuideFigure tube;
+    tube.shape = GuideFigureShape::CurvedTube;
+    tube.operation = GuideFigureOperation::Add;
+    tube.diameterMm = 3.2;
+    tube.controlPoints = {{{0.0, 0.0, 0.0}, {2.0, 4.0, 6.0}, {5.0, 7.0, 8.0}}};
+    plan.figures = {box, stl, tube};
     plan.paint = {{{1.0, 2.0, 3.0}, 4.0, false}, {{1.5, 2.0, 3.0}, 2.5, true}};
     return plan;
 }
@@ -98,13 +104,17 @@ void testRoundTrip()
                 std::abs(back.design.base.edgeThicknessFraction - 0.35) < 1e-9 &&
                 std::abs(back.design.base.edgeRoundMm - 0.8) < 1e-9,
             "the rim finish was lost");
-    require(back.figures.size() == 2 && back.figures[0].shape == GuideFigureShape::Box &&
+    require(back.figures.size() == 3 && back.figures[0].shape == GuideFigureShape::Box &&
                 back.figures[0].operation == GuideFigureOperation::Subtract &&
                 back.figures[0].matrix == plan.figures[0].matrix && std::abs(back.figures[0].heightMm - 0.8) < 1e-9,
             "the box figure was lost");
     require(back.figures[1].shape == GuideFigureShape::Mesh && back.figures[1].operation == GuideFigureOperation::Add &&
-                back.figures[1].sourcePath == plan.figures[1].sourcePath,
-            "the imported figure's file was lost");
+                back.figures[1].sourcePath == plan.figures[1].sourcePath && back.figures[1].sourceLabel == 215,
+            "the copied mesh source was lost");
+    require(back.figures[2].shape == GuideFigureShape::CurvedTube &&
+                std::abs(back.figures[2].diameterMm - 3.2) < 1e-9 &&
+                back.figures[2].controlPoints == plan.figures[2].controlPoints,
+            "the curved tube was lost");
     require(GuidePlanCore::SourceLabelsFor(GuideType::LeFort) == std::vector<int>{206, 205} &&
                 GuidePlanCore::SourceLabelsFor(GuideType::Chin) == std::vector<int>{213, 212},
             "the guide types do not wrap their own models");

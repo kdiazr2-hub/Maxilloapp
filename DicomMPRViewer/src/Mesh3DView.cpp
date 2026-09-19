@@ -9,6 +9,7 @@
 #include <QPainter>
 #include <QPen>
 #include <QSignalBlocker>
+#include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QVTKOpenGLNativeWidget.h>
@@ -193,25 +194,25 @@ void Mesh3DView::setTitle(const QString& title)
 void Mesh3DView::buildLayout()
 {
     setStyleSheet(
-        "Mesh3DView { background-color:#1f1f21; border:1px solid #2c2c2e; border-radius:14px; }"
-        "QVTKOpenGLNativeWidget { border-radius:10px; }");
+        "Mesh3DView { background-color:#1c1d20; border:1px solid #292b30; border-radius:4px; }"
+        "QVTKOpenGLNativeWidget { border:0; }");
 
     auto* outer = new QVBoxLayout(this);
-    outer->setContentsMargins(6, 6, 6, 6);
-    outer->setSpacing(6);
+    outer->setContentsMargins(0, 0, 0, 0);
+    outer->setSpacing(0);
 
     m_titleLabel = new QLabel("3D", this);
     m_titleLabel->setAlignment(Qt::AlignCenter);
-    m_titleLabel->setFixedHeight(22);
+    m_titleLabel->setFixedHeight(24);
     m_titleLabel->setStyleSheet(
-        "color:#f5f5f7; font-weight:700; font-size:11px;"
-        "background-color:#2c2c2e; border-radius:10px;");
+        "color:#d1d1d6; font-weight:600; font-size:11px;"
+        "background-color:#202226; border:0; border-bottom:1px solid #292b30;");
     outer->addWidget(m_titleLabel);
 
     m_vtkWidget = new QVTKOpenGLNativeWidget(this);
     m_vtkWidget->setMinimumSize(256, 256);
     m_vtkWidget->setFocusPolicy(Qt::StrongFocus);
-    m_vtkWidget->setStyleSheet("background-color:#1f1f21;");
+    m_vtkWidget->setStyleSheet("background-color:#1c1d20;");
     m_vtkWidget->installEventFilter(this);
     outer->addWidget(m_vtkWidget, 1);
 
@@ -221,18 +222,27 @@ void Mesh3DView::buildLayout()
     m_lassoCanvas->hide();
     m_lassoCanvas->raise();
 
+    m_clickFeedback = new QWidget(m_vtkWidget);
+    m_clickFeedback->setObjectName("clickFeedback");
+    m_clickFeedback->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_clickFeedback->setFixedSize(18, 18);
+    m_clickFeedback->setStyleSheet(
+        "background-color:rgba(10,132,255,70);"
+        "border:2px solid #0a84ff; border-radius:9px;");
+    m_clickFeedback->hide();
+
     m_gridToggleButton = new QToolButton(m_vtkWidget);
     m_gridToggleButton->setCheckable(true);
     m_gridToggleButton->setChecked(true);
-    m_gridToggleButton->setText("G");
+    m_gridToggleButton->setText("#");
     m_gridToggleButton->setToolTip(tr("Mostrar/ocultar cuadricula 3D"));
-    m_gridToggleButton->setFixedSize(30, 30);
+    m_gridToggleButton->setFixedSize(28, 28);
     m_gridToggleButton->setStyleSheet(
         "QToolButton {"
-        " background-color:rgba(44,44,46,220);"
-        " color:#f5f5f7;"
-        " border:1px solid rgba(255,255,255,55);"
-        " border-radius:10px;"
+        " background-color:rgba(32,34,38,225);"
+        " color:#a7aab2;"
+        " border:1px solid rgba(255,255,255,38);"
+        " border-radius:6px;"
         " font-weight:bold;"
         "}"
         "QToolButton:checked {"
@@ -256,7 +266,7 @@ void Mesh3DView::initRenderer()
 
     m_backgroundRenderer = vtkSmartPointer<vtkRenderer>::New();
     m_backgroundRenderer->SetLayer(0);
-    m_backgroundRenderer->SetBackground(0.12, 0.12, 0.14);
+    m_backgroundRenderer->SetBackground(0.102, 0.106, 0.118);
     m_backgroundRenderer->InteractiveOff();
 
     m_renderer     = vtkSmartPointer<vtkRenderer>::New();
@@ -306,8 +316,8 @@ void Mesh3DView::initRenderer()
 
     m_gridActor = vtkSmartPointer<vtkActor2D>::New();
     m_gridActor->SetMapper(gridMapper);
-    m_gridActor->GetProperty()->SetColor(0.35, 0.35, 0.40);
-    m_gridActor->GetProperty()->SetOpacity(0.34);
+    m_gridActor->GetProperty()->SetColor(0.38, 0.39, 0.43);
+    m_gridActor->GetProperty()->SetOpacity(0.18);
     m_gridActor->GetProperty()->SetLineWidth(1.0);
     m_gridActor->SetVisibility(m_gridVisible ? 1 : 0);
     m_backgroundRenderer->AddActor2D(m_gridActor);
@@ -338,6 +348,12 @@ bool Mesh3DView::eventFilter(QObject* watched, QEvent* event)
 
     if (event->type() == QEvent::MouseButtonPress) {
         m_vtkWidget->setFocus(Qt::MouseFocusReason);
+        auto* mouseEvent = static_cast<QMouseEvent*>(event);
+        if (mouseEvent->button() == Qt::LeftButton &&
+            (m_pointPickActive || m_pointEditActive || m_planeDragActive ||
+             m_brushActive || m_lassoActive)) {
+            showClickFeedback(mouseEvent->position());
+        }
     }
 
     if (event->type() == QEvent::KeyPress) {
@@ -553,20 +569,55 @@ void Mesh3DView::setLassoEraseMode(bool active)
         static_cast<LassoCanvas3D*>(m_lassoCanvas)->clearPoints();
         m_lassoCanvas->setVisible(false);
     }
-    const Qt::CursorShape cur = active ? Qt::CrossCursor : Qt::ArrowCursor;
-    setCursor(cur);
-    if (m_vtkWidget) m_vtkWidget->setCursor(cur);
+    updateInteractionCursor();
 }
 
 void Mesh3DView::setFullScreenActive(bool active)
 {
-    if (!m_titleLabel) return;
-    m_titleLabel->setStyleSheet(
-        active
-            ? "color:#ffffff; font-weight:700; font-size:11px;"
-              "background-color:#0a84ff; border-radius:10px;"
-            : "color:#f5f5f7; font-weight:700; font-size:11px;"
-              "background-color:#2c2c2e; border-radius:10px;");
+    if (m_titleLabel) {
+        m_titleLabel->setStyleSheet(
+            active
+                ? "color:#ffffff; font-weight:700; font-size:11px;"
+                  "background-color:#0a84ff; border-radius:10px;"
+                : "color:#f5f5f7; font-weight:700; font-size:11px;"
+                  "background-color:#2c2c2e; border-radius:10px;");
+    }
+    updateInteractionCursor();
+    if (active && m_vtkWidget)
+        m_vtkWidget->setFocus(Qt::OtherFocusReason);
+}
+
+void Mesh3DView::updateInteractionCursor()
+{
+    Qt::CursorShape cursor = Qt::ArrowCursor;
+    if (m_planeDragActive)
+        cursor = Qt::SizeAllCursor;
+    else if (m_brushActive)
+        cursor = Qt::PointingHandCursor;
+    else if (m_pointPickActive || m_pointEditActive || m_lassoActive)
+        cursor = Qt::CrossCursor;
+
+    setCursor(cursor);
+    if (m_vtkWidget)
+        m_vtkWidget->setCursor(cursor);
+}
+
+void Mesh3DView::showClickFeedback(const QPointF& position)
+{
+    if (!m_clickFeedback || !m_vtkWidget)
+        return;
+
+    const int x = qRound(position.x()) - m_clickFeedback->width() / 2;
+    const int y = qRound(position.y()) - m_clickFeedback->height() / 2;
+    m_clickFeedback->move(x, y);
+    m_clickFeedback->show();
+    m_clickFeedback->raise();
+
+    const int generation = ++m_clickFeedbackGeneration;
+    QTimer::singleShot(450, this, [this, generation] {
+        if (m_clickFeedback && generation == m_clickFeedbackGeneration)
+            m_clickFeedback->hide();
+    });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -591,6 +642,9 @@ void Mesh3DView::positionOverlayControls()
 
     if (m_lassoCanvas)
         m_lassoCanvas->raise();
+
+    if (m_clickFeedback && m_clickFeedback->isVisible())
+        m_clickFeedback->raise();
 
     if (m_gridToggleButton) {
         const int margin = 8;
@@ -767,9 +821,7 @@ vtkSmartPointer<vtkPolyData> Mesh3DView::meshData(int label) const
 void Mesh3DView::setPointPickMode(bool active)
 {
     m_pointPickActive = active;
-    const Qt::CursorShape cursor = active ? Qt::CrossCursor : Qt::ArrowCursor;
-    setCursor(cursor);
-    if (m_vtkWidget) m_vtkWidget->setCursor(cursor);
+    updateInteractionCursor();
 }
 
 void Mesh3DView::addPointMarker(double x, double y, double z, const QColor& color)
@@ -1026,9 +1078,7 @@ void Mesh3DView::setPointEditMode(bool active, int activeGroup)
     m_pointEditGroup = active ? activeGroup : -1;
     m_draggedPointGroup = m_draggedPointIndex = -1;
     m_rightPressGroup = m_rightPressIndex = -1;
-    const Qt::CursorShape cursor = active ? Qt::CrossCursor : Qt::ArrowCursor;
-    setCursor(cursor);
-    if (m_vtkWidget) m_vtkWidget->setCursor(cursor);
+    updateInteractionCursor();
 }
 
 void Mesh3DView::setOverlayPolyline(int key, vtkSmartPointer<vtkPolyData> lines, const QColor& color, double lineWidth)
@@ -1117,9 +1167,7 @@ void Mesh3DView::setPlaneDragMode(bool active, const std::array<double, 3>& orig
     const double length = std::sqrt(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]);
     m_planeNormal = length > 1e-9 ? std::array<double, 3>{normal[0] / length, normal[1] / length, normal[2] / length}
                                   : std::array<double, 3>{0.0, 0.0, 1.0};
-    const Qt::CursorShape cursor = active ? Qt::SizeAllCursor : Qt::ArrowCursor;
-    setCursor(cursor);
-    if (m_vtkWidget) m_vtkWidget->setCursor(cursor);
+    updateInteractionCursor();
 }
 
 bool Mesh3DView::pickSurface(int px, int py, std::array<double, 3>& world) const
@@ -1310,9 +1358,7 @@ void Mesh3DView::setSurfaceBrushMode(bool active)
     m_brushActive = active;
     m_brushing = false;
     m_brushResizing = false;
-    const Qt::CursorShape cursor = active ? Qt::PointingHandCursor : Qt::ArrowCursor;
-    setCursor(cursor);
-    if (m_vtkWidget) m_vtkWidget->setCursor(cursor);
+    updateInteractionCursor();
 }
 
 std::array<double, 3> Mesh3DView::viewDirection() const
@@ -1449,9 +1495,9 @@ void Mesh3DView::buildGizmoVisuals(const double bounds[6])
     const double dy = std::max(1.0, bounds[3] - bounds[2]);
     const double dz = std::max(1.0, bounds[5] - bounds[4]);
     const double size = std::max({dx, dy, dz});
-    const double arrowLength = size * 0.72;
-    const double ringRadius = size * 0.58;
-    const double tubeRadius = std::max(0.35, size * 0.006);
+    const double arrowLength = std::clamp(size * 0.52, 8.0, 38.0);
+    const double ringRadius = std::clamp(size * 0.40, 6.0, 30.0);
+    const double tubeRadius = std::clamp(size * 0.0045, 0.28, 0.85);
 
     auto makeActor = [&](vtkPolyData* pd, double r, double g, double b, double opacity = 0.92) {
         auto mapper = vtkSmartPointer<vtkPolyDataMapper>::New();
@@ -1515,7 +1561,7 @@ void Mesh3DView::buildGizmoVisuals(const double bounds[6])
     makeRing(0.0, 0.0, 1.0, 0.15, 0.35, 1.0);
 
     auto cube = vtkSmartPointer<vtkCubeSource>::New();
-    const double cubeSize = std::max(3.0, size * 0.08);
+    const double cubeSize = std::clamp(size * 0.055, 2.5, 5.0);
     cube->SetCenter(cx, cy, cz);
     cube->SetXLength(cubeSize);
     cube->SetYLength(cubeSize);
@@ -1525,7 +1571,7 @@ void Mesh3DView::buildGizmoVisuals(const double bounds[6])
 
     auto makeScaleHandle = [&](double ax, double ay, double az, double r, double g, double b) {
         auto handle = vtkSmartPointer<vtkCubeSource>::New();
-        const double handleSize = std::max(4.0, size * 0.095);
+        const double handleSize = std::clamp(size * 0.060, 3.0, 5.0);
         handle->SetCenter(cx + ax * arrowLength * 1.08,
                           cy + ay * arrowLength * 1.08,
                           cz + az * arrowLength * 1.08);

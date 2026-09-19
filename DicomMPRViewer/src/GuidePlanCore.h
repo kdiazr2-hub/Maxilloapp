@@ -37,7 +37,8 @@ struct GuidePlan
     GuideBrushPaint paint;  // region painted with the brush; used when not empty
     std::vector<GuideSlot> slotPlan; // not "slots": Qt defines that as a keyword macro
     std::vector<GuideFixationHole> holes;
-    // Boolean tools. Imported figures keep only their file here: the UI reloads the mesh from `sourcePath`.
+    // Boolean tools. Imported figures reload from `sourcePath`; project-object copies reload from `sourceLabel`.
+    // Curved tubes keep their three control points directly in the plan.
     std::vector<GuideFigure> figures;
 };
 

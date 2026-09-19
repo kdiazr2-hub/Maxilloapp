@@ -66,6 +66,7 @@ class QPushButton;
 class QDoubleSpinBox;
 class QRadioButton;
 class QTableWidget;
+class QTabWidget;
 class QToolButton;
 class QTimer;
 QT_END_NAMESPACE
@@ -238,6 +239,8 @@ private:
     GuideFigure guideFigureFromInputs() const;
     void refreshGuideFigureList();
     void importGuideFigure();
+    void addGuideSplintCopy();
+    void resolveGuideFigureMesh(GuideFigure& figure);
     void removeGuideFigure();
     void setGuideFigureGizmo(bool active);
     void onGuideGizmoUpdated(int label, vtkSmartPointer<vtkPolyData> mesh);
@@ -294,8 +297,11 @@ private:
     QDoubleSpinBox* m_guideFigureWidthSpin = nullptr;
     QDoubleSpinBox* m_guideFigureHeightSpin = nullptr;
     QDoubleSpinBox* m_guideFigureDepthSpin = nullptr;
+    QComboBox* m_guideSplintCopyCombo = nullptr;
+    QDoubleSpinBox* m_guideTubeDiameterSpin = nullptr;
     QListWidget* m_guideFigureList = nullptr;
     QPushButton* m_guidePlaceFigureButton = nullptr;
+    QPushButton* m_guideTubeButton = nullptr;
     QPushButton* m_guideMoveFigureButton = nullptr;
     QListWidget* m_guideCutList = nullptr;
     QPushButton* m_guideWrapButton = nullptr;
@@ -358,6 +364,7 @@ private:
     vtkSmartPointer<vtkPolyData> m_guideMesh;
     std::vector<GuideCutOption> m_guideCuts; // all remembered cuts; the list shows those of the guide type
     std::vector<std::array<double, 3>> m_guidePendingEnds;
+    std::vector<std::array<double, 3>> m_guidePendingTubePoints;
     int m_guidePointMode = 0;
 
     // ORTOGNÁTICA: the planning modules are steps in a left rail; their ribbon tabs stay hidden
@@ -419,6 +426,8 @@ private:
     void addMaskEntry(const QString& name, const QColor& color, int label);
     void addObjectEntry(const QString& name, const QColor& color, int label);
     void removeObjectEntry(int label);
+    void deleteObjectAtRow(int row);
+    void exportObjectAtRow(int row);
     void deleteSelectedMask();
     // Called when the user finishes drawing a lasso on any MPR view.
     void onLassoEdit(MPRView* source, QVector<QPointF> vtkDisplayPoints,
@@ -599,6 +608,8 @@ private:
     void transformBiteScanPointLists(vtkMatrix4x4* matrix);
     vtkSmartPointer<vtkPolyData> refineBiteRegistrationWithIcp(
         vtkPolyData* moving, vtkPolyData* biteScan, QString* report, QString* error,
+        const QVector<QVector3D>& movingLandmarks,
+        const QVector<QVector3D>& targetLandmarks,
         vtkMatrix4x4* outputMatrix = nullptr) const;
     QWidget* buildRepositionControlPanel(QWidget* parent);
     void syncRepositionView();
@@ -669,6 +680,7 @@ private:
     Mesh3DView* m_biteSegmentView      = nullptr; // bite registration: Le Fort + mandible
     Mesh3DView* m_biteScanView         = nullptr; // bite registration: bite scan reference
     Mesh3DView* m_biteRegistrationView = nullptr; // bite registration: match preview
+    QLabel*     m_biteGuideMessage      = nullptr;
     Mesh3DView* m_repositionView      = nullptr;  // postoperative reposition workspace
     Mesh3DView* m_splintUpperView     = nullptr;  // occlusal splint: upper source
     Mesh3DView* m_splintLowerView     = nullptr;  // occlusal splint: lower source
@@ -698,6 +710,8 @@ private:
     QComboBox*    m_structureCombo          = nullptr;
     QTableWidget* m_maskTable               = nullptr;   // dynamic mask list
     QTableWidget* m_objectTable             = nullptr;   // calculated mesh objects
+    QTabWidget*   m_inspectorTabs           = nullptr;
+    QWidget*      m_objectsInspectorTab     = nullptr;
     QSlider*      m_objectOpacitySlider     = nullptr;
     QLabel*       m_objectOpacityValue      = nullptr;
     QCheckBox*    m_objectOnTopCheck         = nullptr;

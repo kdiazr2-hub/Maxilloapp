@@ -9,7 +9,7 @@ ModelWorkflowCore::State ModelWorkflowCore::Evaluate(const Input& input)
         const bool paired = jaw.bonePoints >= 3 && jaw.bonePoints == jaw.dentalPoints;
         out.done[j * 4] = jaw.accepted || jaw.dental;
         out.done[j * 4 + 1] = jaw.accepted || jaw.registered || paired;
-        out.done[j * 4 + 2] = jaw.accepted || (jaw.registered && !(input.jaw == j && input.adjusting));
+        out.done[j * 4 + 2] = jaw.accepted || jaw.registered;
         out.done[j * 4 + 3] = jaw.accepted;
     }
     if (input.jaws[0].accepted && input.jaws[1].accepted) {
@@ -37,12 +37,15 @@ ModelWorkflowCore::State ModelWorkflowCore::Evaluate(const Input& input)
         out.instruction = QStringLiteral("Cargue el %1, o use Continuar sin match si no dispone de escaneo.").arg(arch);
         return out;
     }
-    const bool idle = input.phase == Phase::Registration && !input.adjusting;
+    const bool registrationPhase = input.phase == Phase::Registration;
+    const bool idle = registrationPhase && !input.adjusting;
     const bool paired = jaw.bonePoints >= 3 && jaw.bonePoints == jaw.dentalPoints;
     out.canCapture = idle && !jaw.registered;
     out.canRegister = out.canCapture && paired;
     out.canAdjust = idle && jaw.registered;
-    out.canBuild = idle && jaw.registered;
+    // Creating the composite commits the active gizmo internally, so there is
+    // no separate "Aceptar ajuste" requirement.
+    out.canBuild = registrationPhase && jaw.registered;
     if (input.phase != Phase::Registration) {
         out.current += 3;
         switch (input.phase) {
@@ -52,8 +55,8 @@ ModelWorkflowCore::State ModelWorkflowCore::Evaluate(const Input& input)
         default: break;
         }
     } else if (input.adjusting) {
-        out.current += 2;
-        out.instruction = QStringLiteral("Ajuste el %1 y pulse Aceptar ajuste antes de continuar.").arg(arch);
+        out.current += 3;
+        out.instruction = QStringLiteral("Ajuste el %1 con el gizmo y pulse Crear modelo compuesto.").arg(arch);
     } else if (jaw.registered) {
         out.current += 3;
         out.instruction = QStringLiteral("Registro listo. Puede hacer un ajuste fino o crear el compuesto para definir el bloque.");

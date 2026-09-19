@@ -25,7 +25,11 @@ int main() {
             jaw.registered = true;
             input.adjusting = true;
             state = Core::Evaluate(input);
-            require(!state.canBuild && !state.canCapture && !state.done[j * 4 + 2], "Unaccepted gizmo was completed");
+            require(state.canBuild && !state.canCapture && state.done[j * 4 + 2] &&
+                        state.current == j * 4 + 3,
+                    "Active gizmo did not allow direct composite creation");
+            require(state.instruction.contains(QStringLiteral("Crear modelo compuesto")),
+                    "Active gizmo still asks for a separate acceptance");
             input.adjusting = false;
             require(Core::Evaluate(input).canBuild, "Registered jaw cannot build");
             for (auto phase : {Core::Phase::Block, Core::Phase::Computing, Core::Phase::Review}) {

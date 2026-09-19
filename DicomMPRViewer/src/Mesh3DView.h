@@ -158,11 +158,15 @@ private:
     void updateGizmoVisuals(vtkTransform* transform);
     void updateGridGeometry();
     void positionOverlayControls();
+    void updateInteractionCursor();
+    void showClickFeedback(const QPointF& position);
     void sceneBounds(double bounds[6]) const;
 
     QVTKOpenGLNativeWidget* m_vtkWidget  = nullptr;
     QLabel*                 m_titleLabel = nullptr;
     QToolButton*            m_gridToggleButton = nullptr;
+    QWidget*                m_clickFeedback = nullptr;
+    int                     m_clickFeedbackGeneration = 0;
 
     vtkSmartPointer<vtkGenericOpenGLRenderWindow> m_renderWindow;
     vtkSmartPointer<vtkRenderer>                  m_renderer;

@@ -21,6 +21,7 @@ QString shapeName(GuideFigureShape shape)
     case GuideFigureShape::Box: return QStringLiteral("box");
     case GuideFigureShape::Sphere: return QStringLiteral("sphere");
     case GuideFigureShape::Mesh: return QStringLiteral("mesh");
+    case GuideFigureShape::CurvedTube: return QStringLiteral("curvedTube");
     }
     return QStringLiteral("cylinder");
 }
@@ -33,6 +34,8 @@ GuideFigureShape shapeFromName(const QString& name)
         return GuideFigureShape::Sphere;
     if (name == QStringLiteral("mesh"))
         return GuideFigureShape::Mesh;
+    if (name == QStringLiteral("curvedTube"))
+        return GuideFigureShape::CurvedTube;
     return GuideFigureShape::Cylinder;
 }
 } // namespace
@@ -77,6 +80,14 @@ QJsonObject ToJson(const GuidePlan& plan)
                       {QStringLiteral("depthMm"), figure.depthMm}};
         if (!figure.sourcePath.isEmpty())
             o[QStringLiteral("sourcePath")] = figure.sourcePath;
+        if (figure.sourceLabel != 0)
+            o[QStringLiteral("sourceLabel")] = figure.sourceLabel;
+        if (!figure.controlPoints.empty()) {
+            QJsonArray points;
+            for (const auto& point : figure.controlPoints)
+                points.append(pointJson(point));
+            o[QStringLiteral("controlPoints")] = points;
+        }
         figures.append(o);
     }
 
@@ -189,6 +200,9 @@ GuidePlan FromJson(const QJsonObject& object)
         figure.heightMm = o.value(QStringLiteral("heightMm")).toDouble(figure.heightMm);
         figure.depthMm = o.value(QStringLiteral("depthMm")).toDouble(figure.depthMm);
         figure.sourcePath = o.value(QStringLiteral("sourcePath")).toString();
+        figure.sourceLabel = o.value(QStringLiteral("sourceLabel")).toInt();
+        for (const QJsonValue& point : o.value(QStringLiteral("controlPoints")).toArray())
+            figure.controlPoints.push_back(pointFromJson(point.toArray(), {0.0, 0.0, 0.0}));
         plan.figures.push_back(figure);
     }
     return plan;
