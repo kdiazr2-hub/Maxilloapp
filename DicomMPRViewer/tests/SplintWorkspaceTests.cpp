@@ -1376,6 +1376,12 @@ public:
         // 4. The cutting guide, laid out from the plates and the cut on the bone before it: one piece, the slit on
         //    the osteotomy in pieces between bridges, a sleeve at every predictive hole, four 1.5 mm screws.
         require(window.m_guideGenerateButton->isEnabled(), "the cutting guide cannot be generated from the plates");
+        // With plates there is one way to make the Le Fort guide: the hand-drawn steps wait until it exists.
+        window.setGuidePlateView(false);
+        window.computeGuideWrap();
+        settle();
+        require(!window.m_guideRegionSection->isVisibleTo(&window) && !window.m_guideBuildSection->isVisibleTo(&window),
+                "the hand-drawn guide steps compete with «Generar guía de corte»");
         window.m_guideGenerateButton->click();
         settle();
         require(window.m_guideWrapMesh && window.m_guidePrepared.ok, "the guide envelope was not built");
@@ -1393,6 +1399,9 @@ public:
         require(guideReport.contains(QStringLiteral("1 pieza(s)")), "the guide came apart: " + guideReport.toStdString());
         require(guideReport.contains(QStringLiteral("4 agujero(s)")) && guideReport.contains(QStringLiteral("ranura")),
                 "the guide report lacks its screws or slit: " + guideReport.toStdString());
+        require(window.m_guideBuildSection->isVisibleTo(&window) &&
+                    window.m_guideBuildButton->text() == QStringLiteral("Reconstruir guía"),
+                "the generated guide cannot be retouched and rebuilt");
         // The sleeve's bore is open where the drill goes, and its body is solid around it.
         auto guideDistance = vtkSmartPointer<vtkImplicitPolyDataDistance>::New();
         guideDistance->SetInput(window.m_guideMesh);
@@ -1435,6 +1444,8 @@ public:
         // 6. The plates travel with the project.
         ProjectState state;
         state.guidesPlan = window.guidePlanJson();
+        state.osteotomyPlan = window.osteotomyPlanJson();
+        require(state.osteotomyPlan.contains(QStringLiteral("executedCuts")), "the executed Le Fort cut is not saved");
         MainWindow reopened;
         reopened.setAttribute(Qt::WA_DontShowOnScreen);
         reopened.show();
@@ -1443,6 +1454,30 @@ public:
         require(reopened.m_guidePlan.plates.size() == 2 && reopened.m_guidePlan.plates[1].holes.size() == 6,
                 "the plates did not survive the project");
         require(reopened.m_guidePlateList->count() == 2, "the reloaded plates are not listed");
+        // The Le Fort cut comes back once, however many slit pieces the guide cut along it.
+        int leFortCuts = 0;
+        for (const auto& cut : reopened.m_guideCuts)
+            leFortCuts += cut.type == GuideType::LeFort ? 1 : 0;
+        require(leFortCuts == 1 && reopened.guideLeFortPath().valid, "the Le Fort cut did not come back with the project");
+
+        // A project saved before the executed cuts were kept: the cut is rebuilt from the segment reference,
+        // which captured the path's points when the osteotomy was executed.
+        const OsteotomyPath original = window.guideLeFortPath();
+        ProjectState older;
+        older.guidesPlan = state.guidesPlan;
+        MainWindow legacy;
+        legacy.setAttribute(Qt::WA_DontShowOnScreen);
+        legacy.show();
+        settle();
+        legacy.m_segmentReferences[kLeFortSegLabel].landmarks = original.points;
+        legacy.restoreGuidePlan(older);
+        const OsteotomyPath recovered = legacy.guideLeFortPath();
+        require(recovered.valid, "the Le Fort cut was not recovered from the segment reference");
+        for (const std::array<double, 3>& probe : {std::array<double, 3>{-10.0, 0.0, 12.0},
+                                                   std::array<double, 3>{12.0, 0.0, 6.0},
+                                                   std::array<double, 3>{0.0, -3.0, 9.5}})
+            require(std::abs(OsteotomyCore::PathField(recovered, probe) - OsteotomyCore::PathField(original, probe)) < 0.05,
+                    "the recovered Le Fort cut is not the executed one");
         std::cout << "Custom plates + predictive guide OK\n";
     }
 

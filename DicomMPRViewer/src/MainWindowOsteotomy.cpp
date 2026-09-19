@@ -716,7 +716,31 @@ QJsonObject MainWindow::osteotomyPlanJson() const
     }
     if (!references.isEmpty())
         plan[QStringLiteral("segmentReferences")] = references;
+    // The cuts actually executed (Le Fort I, genioplasty), whatever the wizard shows now: the guides and the
+    // custom plates need them after the project is reopened, even if another osteotomy was planned after.
+    QJsonArray executed;
+    for (const GuideCutOption& cut : m_guideCuts)
+        if (cut.path.valid)
+            executed.append(QJsonObject{{QStringLiteral("name"), cut.name},
+                                        {QStringLiteral("type"), cut.type == GuideType::Chin ? QStringLiteral("chin")
+                                                                                             : QStringLiteral("leFort")},
+                                        {QStringLiteral("path"), OsteotomyCore::PathToJson(cut.path)}});
+    if (!executed.isEmpty())
+        plan[QStringLiteral("executedCuts")] = executed;
     return plan;
+}
+
+OsteotomyPath MainWindow::recoveredLeFortPath() const
+{
+    // Projects saved before the executed cuts were kept still have the Le Fort landmarks the segment reference
+    // captured at cut time, in the order the path stored them: pilar R, piriform R, piriform L, pilar L.
+    const auto reference = m_segmentReferences.find(kLeFortSegLabel);
+    if (reference == m_segmentReferences.end() || reference->second.landmarks.size() != 4)
+        return {};
+    const auto& p = reference->second.landmarks;
+    const OsteotomyTypeProperties& props = m_ostProperties[0];
+    return OsteotomyCore::LeFortPath({p[1], p[2], p[0], p[3]}, props.widthMm, props.thicknessMm,
+                                     props.extensionRightMm, props.extensionLeftMm);
 }
 
 void MainWindow::restoreOsteotomyPlan(const ProjectState& state)

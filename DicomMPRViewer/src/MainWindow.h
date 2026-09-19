@@ -279,6 +279,7 @@ private:
     bool exportGuidePlateFiles(const QString& folder, QString* report = nullptr);
     bool guideSegmentMotion(std::array<double, 16>& motion, QString* error = nullptr) const;
     OsteotomyPath guideLeFortPath() const;
+    OsteotomyPath recoveredLeFortPath() const; // from the segment reference, for projects saved without the cut
     std::vector<PredictiveHole> guidePredictiveHoles() const;
     std::vector<GuideFigure> guideFiguresWithSleeves() const;
     PlateParams guidePlateParams() const;

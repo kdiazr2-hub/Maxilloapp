@@ -991,7 +991,8 @@ void MainWindow::rememberOsteotomyCut(const QString& name, const OsteotomyPath& 
     if (!path.valid)
         return;
     for (auto& cut : m_guideCuts) {
-        if (cut.name == name) {
+        // The same cut under another name (a slot piece of it, a reloaded plan) is not a second osteotomy.
+        if (cut.name == name || cut.path.points == path.points) {
             cut.path = path;
             cut.type = type;
             return;
@@ -1871,11 +1872,17 @@ void MainWindow::updateGuideUi()
     if (m_guidePlateExportButton) m_guidePlateExportButton->setEnabled(hasPlates);
     if (m_guideGenerateButton) m_guideGenerateButton->setEnabled(hasPlates);
     showSection(m_guideLayersSection, hasWrap && !m_guidePlannedView);
-    showSection(m_guideRegionSection, hasWrap);
-    showSection(m_guideSlotSection, hasRegion);
-    showSection(m_guideHoleSection, hasRegion);
-    showSection(m_guideFiguresSection, hasRegion);
-    showSection(m_guideBuildSection, hasRegion);
+    // With plates, the Le Fort guide is generated from them and the cut («Generar guía de corte»): the manual
+    // steps only appear once it exists, to retouch it. Without plates (or for the chin) it is drawn by hand.
+    const bool generated = leFort && hasPlates;
+    const bool manual = !generated || hasGuide;
+    showSection(m_guideRegionSection, hasWrap && manual);
+    showSection(m_guideSlotSection, hasRegion && manual);
+    showSection(m_guideHoleSection, hasRegion && manual);
+    showSection(m_guideFiguresSection, hasRegion && manual);
+    showSection(m_guideBuildSection, hasRegion && manual);
+    if (m_guideBuildButton)
+        m_guideBuildButton->setText(generated ? tr("Reconstruir guía") : tr("Crear guía"));
     showSection(m_guideEditSection, hasGuide);
     showSection(m_guideExportSection, hasGuide);
     updateGuideSculptBar();
@@ -1935,6 +1942,20 @@ QJsonObject MainWindow::guidePlanJson() const
 void MainWindow::restoreGuidePlan(const ProjectState& state)
 {
     m_guideCuts.clear();
+    for (const QJsonValue& value : state.osteotomyPlan.value(QStringLiteral("executedCuts")).toArray()) {
+        const QJsonObject cut = value.toObject();
+        rememberOsteotomyCut(cut.value(QStringLiteral("name")).toString(),
+                             OsteotomyCore::PathFromJson(cut.value(QStringLiteral("path")).toObject()),
+                             cut.value(QStringLiteral("type")).toString() == QStringLiteral("chin") ? GuideType::Chin
+                                                                                                   : GuideType::LeFort);
+    }
+    const bool hasLeFortCut = std::any_of(m_guideCuts.begin(), m_guideCuts.end(),
+                                          [](const GuideCutOption& cut) { return cut.type == GuideType::LeFort; });
+    if (!hasLeFortCut) {
+        const OsteotomyPath recovered = recoveredLeFortPath();
+        if (recovered.valid)
+            rememberOsteotomyCut(tr("Le Fort I"), recovered, GuideType::LeFort);
+    }
     if (state.guidesPlan.isEmpty()) {
         m_guidePlan = GuidePlan{};
         m_guideWrapMesh = nullptr;
@@ -2423,7 +2444,7 @@ OsteotomyPath MainWindow::guideLeFortPath() const
     for (const GuideCutOption& cut : m_guideCuts)
         if (cut.type == GuideType::LeFort && cut.path.valid)
             return cut.path;
-    return {};
+    return recoveredLeFortPath();
 }
 
 std::vector<PredictiveHole> MainWindow::guidePredictiveHoles() const

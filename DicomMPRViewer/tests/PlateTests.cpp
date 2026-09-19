@@ -326,10 +326,92 @@ void testPlateBridgesAWideGap()
     const auto gap = inside(built.mesh, {{-10.0, -1.5, 6.0}, {-10.0, -1.0, 9.3}, {-10.0, 1.0, 2.6}, {-10.0, -3.0, 4.0}});
     for (size_t i = 0; i < gap.size(); ++i)
         require(!gap[i], "the plate dips into the gap at probe " + std::to_string(i));
-    // Uniform thickness right across: 1 mm through the middle of the bar, measured along the bar's normal.
-    const auto thickness = inside(built.mesh, {{-10.0, 1.5 - 0.35, 6.0 - 0.09}, {-10.0, 1.5 + 0.35, 6.0 + 0.09},
-                                               {-10.0, 1.5 - 0.75, 6.0 - 0.19}, {-10.0, 1.5 + 0.75, 6.0 + 0.19}});
-    require(thickness[0] && thickness[1] && !thickness[2] && !thickness[3], "the bar is not 1 mm thick");
+    // Uniform thickness right across: crossing the bar front to back at three heights in the gap, the metal
+    // is 1 mm thick (a little more measured horizontally, the bar leans about 14°), and in one piece.
+    for (const double z : {4.0, 6.0, 8.0}) {
+        std::vector<Vec3> line;
+        for (double y = -2.0; y <= 4.0; y += 0.02)
+            line.push_back({-10.0, y, z});
+        const auto hits = inside(built.mesh, line);
+        int metal = 0, runs = 0;
+        for (size_t i = 0; i < hits.size(); ++i) {
+            metal += hits[i] ? 1 : 0;
+            runs += hits[i] && (i == 0 || !hits[i - 1]) ? 1 : 0;
+        }
+        const double thickness = 0.02 * metal;
+        require(runs == 1 && thickness > 0.9 && thickness < 1.25,
+                "the bar is not 1 mm thick at z = " + std::to_string(z) + ": " + std::to_string(thickness) + " mm");
+    }
+}
+
+// Real bone is curved and rough. A long arm around a curved wall (80° of a 25 mm radius, with ±0.25 mm of
+// voxel-scale roughness) must follow the surface in one piece, not cut the chord through the bone nor stop and
+// bridge at every bump.
+void testPlateFollowsACurvedRoughBone()
+{
+    const double radius = 25.0;
+    ImplicitCore::BuildResult cylinder = ImplicitCore::Build(
+        ImplicitCore::Cylinder({0.0, 0.0, 0.0}, {0.0, 0.0, 1.0}, radius, 15.0), nullptr, 0.3);
+    require(cylinder.ok, "the curved bone could not be built");
+    vtkPolyData* bone = cylinder.mesh;
+    for (vtkIdType id = 0; id < bone->GetNumberOfPoints(); ++id) {
+        double p[3] = {};
+        bone->GetPoint(id, p);
+        const double r = std::hypot(p[0], p[1]);
+        if (r < 1e-6 || std::abs(p[2]) > 14.0)
+            continue;
+        const double bump = 0.25 * std::sin(3.1 * p[0]) * std::cos(2.7 * p[2]); // voxel-scale roughness
+        p[0] += bump * p[0] / r;
+        p[1] += bump * p[1] / r;
+        bone->GetPoints()->SetPoint(id, p);
+    }
+    WrapParams wrapParams;
+    wrapParams.gapClosingMm = 1.0;
+    wrapParams.smallestDetailMm = 0.3;
+    const WrapResult wrap = WrapCore::Wrap({bone}, wrapParams);
+    require(wrap.ok, "the curved bone could not be wrapped");
+    GuideDesignParams prepareParams;
+    prepareParams.base.smallestDetailMm = 0.3;
+    const GuidePreparation planned = GuideDesignCore::Prepare(wrap.mesh, prepareParams);
+    require(planned.ok, "the curved wrap could not be measured");
+
+    PlateDesign plate;
+    plate.name = QStringLiteral("Placa curva");
+    for (const double degrees : {-40.0, 0.0, 40.0}) {
+        const double a = degrees * 3.14159265358979323846 / 180.0;
+        plate.holes.push_back({{radius * std::sin(a), radius * std::cos(a), 0.0}, {std::sin(a), std::cos(a), 0.0},
+                               PlateBone::Segment});
+    }
+    plate.struts = PlateCore::TemplateStruts(PlateTemplate::Paranasal, 3, 0);
+    auto locator = vtkSmartPointer<vtkStaticCellLocator>::New();
+    locator->SetDataSet(bone);
+    locator->BuildLocator();
+    const PlateBoneQuery boneAt = [locator](const Vec3& p, double* distanceMm) {
+        double closest[3] = {};
+        vtkIdType cell = -1;
+        int subId = 0;
+        double d2 = 0.0;
+        locator->FindClosestPoint(p.data(), closest, cell, subId, d2);
+        if (distanceMm)
+            *distanceMm = std::sqrt(d2);
+        return PlateBone::Segment;
+    };
+    PlateParams params;
+    params.smallestDetailMm = 0.15;
+    const PlateBuildResult built = PlateCore::Build(planned, plate, params, boneAt);
+    require(built.ok, "the curved plate was not built: " + built.error.toStdString());
+    require(built.pieces == 1, "the curved plate came apart: " + std::to_string(built.pieces) + " pieces");
+    require(built.bridgedMm < 2.0, "the arm bridged over bone it should follow: " + std::to_string(built.bridgedMm) + " mm");
+    for (const double degrees : {-20.0, 20.0}) {
+        const double a = degrees * 3.14159265358979323846 / 180.0;
+        const Vec3 onPlate{(radius + 0.7) * std::sin(a), (radius + 0.7) * std::cos(a), 0.0};
+        // The chord between two holes 40° apart passes 25·cos 20° = 23.5 mm from the axis: inside the bone.
+        const double chord = radius * std::cos(20.0 * 3.14159265358979323846 / 180.0) + 0.7;
+        const Vec3 onChord{chord * std::sin(a), chord * std::cos(a), 0.0};
+        const auto probe = inside(built.mesh, {onPlate, onChord});
+        require(probe[0], "the plate does not lie on the curved bone at " + std::to_string(degrees) + "°");
+        require(!probe[1], "the plate cuts the chord through the bone at " + std::to_string(degrees) + "°");
+    }
 }
 
 void testPlatesTravelWithTheProject()
@@ -368,6 +450,7 @@ int main()
         {"sleeves sit on the pre-operative holes", testSleevesSitOnThePreoperativeHoles},
         {"the plate bridges the cut on the planned bone", testPlateBridgesTheCutOnThePlannedBone},
         {"the plate bridges a wide gap in one straight bar", testPlateBridgesAWideGap},
+        {"the plate follows a curved, rough bone", testPlateFollowsACurvedRoughBone},
         {"plates travel with the project", testPlatesTravelWithTheProject},
     };
     int failures = 0;

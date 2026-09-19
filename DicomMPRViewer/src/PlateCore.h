@@ -117,7 +117,7 @@ struct PredictiveHole
     std::array<double, 3> plannedAxis{0.0, 0.0, 1.0};
     std::array<double, 3> preopCenter{0.0, 0.0, 0.0}; // where the guide's sleeve goes
     std::array<double, 3> preopAxis{0.0, 0.0, 1.0};
-    double cutDistanceMm = 0.0; // to the planned osteotomy, measured before the cut
+    double cutDistanceMm = 0.0; // to the planned osteotomy, measured before the cut; -1 without a path
     bool wrongSide = false;     // on the segment by distance, but on the cranial side of the cut (or the reverse)
 };
 

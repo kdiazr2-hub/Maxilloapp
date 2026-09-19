@@ -66,91 +66,102 @@ struct PathSample
     Vec3 normal; // outward: the plate lies from `point` outwards along it
 };
 
-// The path of one plate arm from hole `a` to hole `b`. Sampled every millimetre along the chord and dropped
-// onto the bone, it follows each hole's bone for as long as that bone is under it and the surface turns
-// gently; where it stops being so — the gap the movement opened at the osteotomy, the cut face, a notch —
-// the arm crosses in a straight bar from the last sample on one bone to the first on the other, lifted out
-// of the bone if it would cut through a corner. Without this the plate dives into the gap and falls apart.
+// The surface normal averaged over about a millimetre. The envelope of segmented bone is rough at the voxel
+// scale: its raw gradient swings by tens of degrees between neighbouring points, which reads as an edge
+// everywhere and stops a plate arm from following the bone.
+Vec3 smoothNormal(const ImplicitCore::BakedField& field, const Vec3& p, const Vec3& fallback)
+{
+    const double h = std::max(1.0, 2.0 * field.spacingMm);
+    const Vec3 gradient{field.At({p[0] + h, p[1], p[2]}) - field.At({p[0] - h, p[1], p[2]}),
+                        field.At({p[0], p[1] + h, p[2]}) - field.At({p[0], p[1] - h, p[2]}),
+                        field.At({p[0], p[1], p[2] + h}) - field.At({p[0], p[1], p[2] - h})};
+    return unit(gradient, fallback);
+}
+
+// Walks on the bone from `start` towards `target`, a millimetre at a time in the tangent plane, each step
+// dropped back onto the surface. It stops where the plate could not lie any more: the bone under it changes
+// (the gap at the cut), the surface turns sharply (the cut face, the rim of the gap, a notch), the step falls
+// into a hollow or stops making progress (a corner). Walking the surface — rather than dropping points of the
+// straight chord onto it — keeps a long arm on a curved maxilla instead of cutting through it.
+std::vector<PathSample> walkOnBone(const ImplicitCore::BakedField& field, const PathSample& start, const Vec3& target,
+                                   PlateBone expected, double clearance, const PlateBoneQuery& boneAt, double step)
+{
+    std::vector<PathSample> walked{start};
+    const double cosEdge = std::cos(40.0 * 3.14159265358979323846 / 180.0); // from one step to the next
+    const double cosBend = std::cos(60.0 * 3.14159265358979323846 / 180.0); // from the hole the walk left
+    const int maxSteps = static_cast<int>(3.0 * norm(sub(target, start.point)) / step) + 4;
+    for (int i = 0; i < maxSteps; ++i) {
+        const PathSample current = walked.back();
+        const Vec3 toTarget = sub(target, current.point);
+        const double remaining = norm(toTarget);
+        if (remaining < 1.5 * step)
+            break;
+        const Vec3 tangent = sub(toTarget, scale(current.normal, dot(toTarget, current.normal)));
+        if (norm(tangent) < 1e-6)
+            break;
+        const Vec3 guess = add(current.point, scale(unit(tangent), step));
+        const Vec3 p = projectToLevel(field, guess, clearance);
+        const Vec3 n = smoothNormal(field, p, current.normal);
+        if (dot(n, current.normal) < cosEdge || dot(n, start.normal) < cosBend)
+            break;
+        if (norm(sub(p, guess)) > step) // the surface fell away under the step: a hollow or the gap
+            break;
+        if (dot(sub(p, current.point), unit(toTarget)) < 0.3 * step) // no progress: stuck on a corner
+            break;
+        if (boneAt) {
+            double distance = 0.0;
+            const PlateBone bone = boneAt(p, &distance);
+            if (distance > 1.0 || (expected != PlateBone::Unknown && bone != expected))
+                break;
+        }
+        walked.push_back({p, n});
+    }
+    return walked;
+}
+
+// The path of one plate arm from hole `a` to hole `b`: on each hole's bone as far as it goes, and a straight
+// bar across whatever is left between the two walks — the gap the movement opened at the osteotomy, the cut
+// face — lifted over any corner of bone. Without this the plate dives into the gap and falls apart.
 std::vector<PathSample> strutPath(const ImplicitCore::BakedField& field, const PathSample& a, const PathSample& b,
                                   PlateBone boneA, PlateBone boneB, double clearance, const PlateBoneQuery& boneAt,
                                   double* bridgedMm)
 {
-    const double length = norm(sub(b.point, a.point));
-    const int pieces = std::max(1, static_cast<int>(std::ceil(length / 1.0)));
-    std::vector<PathSample> path(static_cast<size_t>(pieces + 1));
-    std::vector<double> deviation(path.size(), 0.0);
-    path.front() = a;
-    path.back() = b;
-    for (int k = 1; k < pieces; ++k) {
-        const Vec3 chord = add(a.point, scale(sub(b.point, a.point), static_cast<double>(k) / pieces));
-        const Vec3 surface = projectToLevel(field, chord, clearance);
-        path[static_cast<size_t>(k)] = {surface, unit(GuideBaseCore::NormalAt(field, surface), a.normal)};
-        deviation[static_cast<size_t>(k)] = norm(sub(surface, chord));
-    }
-
-    const double step = length / pieces;
-    const Vec3 direction = unit(sub(b.point, a.point));
-    // Bone under a plate bends gently (15° per millimetre is a 4 mm radius); an edge — the cut face, the
-    // rounded rim of the gap — turns much faster, and a sample on it would tilt the plate off the bone.
-    const double maxTurn = std::cos(15.0 * 3.14159265358979323846 / 180.0);  // between neighbouring samples
-    const double maxBend = std::cos(50.0 * 3.14159265358979323846 / 180.0);  // from the hole the walk started at
-    // A sample is on the bone if the bone there is the hole's own, the surface turns gently, and the walk
-    // keeps moving along the arm. Near a rounded edge several samples drop onto the same corner with ever
-    // more tilted normals; without the progress test they would fan the plate out round the edge.
-    const auto onBone = [&](int k, PlateBone expected, const PathSample& previous, const Vec3& startNormal,
-                            double sense) {
-        const PathSample& s = path[static_cast<size_t>(k)];
-        if (dot(s.normal, previous.normal) < maxTurn || dot(s.normal, startNormal) < maxBend)
-            return false;
-        if (deviation[static_cast<size_t>(k)] > 3.0) // pulled far off the line: a hollow, not a surface
-            return false;
-        if (sense * dot(sub(s.point, previous.point), direction) < 0.5 * step)
-            return false;
-        if (boneAt) {
-            double distance = 0.0;
-            const PlateBone bone = boneAt(s.point, &distance);
-            if (distance > 1.0 || (expected != PlateBone::Unknown && bone != expected))
-                return false;
-        }
-        return true;
-    };
-    // Walk from each hole along its own bone.
-    int first = 1;
-    for (PathSample previous = a; first < pieces && onBone(first, boneA, previous, a.normal, 1.0); ++first)
-        previous = path[static_cast<size_t>(first)];
-    int last = pieces - 1;
-    for (PathSample previous = b; last >= first && onBone(last, boneB, previous, b.normal, -1.0); --last)
-        previous = path[static_cast<size_t>(last)];
+    const double step = 1.0;
     if (bridgedMm)
         *bridgedMm = 0.0;
-    if (first > last)
-        return path; // one surface all the way
-
-    // The bridge: a flat bar, straight from the last sample on one side to the first on the other. One normal
-    // for all of it — the holes' mean, square to the bar — so it is exactly as thick as the plate; the normals
-    // at its two ends come off rounded edges and would tilt it.
-    PathSample& from = path[static_cast<size_t>(first - 1)];
-    PathSample& to = path[static_cast<size_t>(last + 1)];
-    const Vec3 along = unit(sub(to.point, from.point), direction);
-    Vec3 barNormal = unit(add(a.normal, b.normal), a.normal);
-    barNormal = unit(sub(barNormal, scale(along, dot(barNormal, along))), a.normal);
-    from.normal = barNormal;
-    to.normal = barNormal;
-    for (int k = first; k <= last; ++k) {
-        const double t = static_cast<double>(k - (first - 1)) / static_cast<double>((last + 1) - (first - 1));
-        PathSample s{add(from.point, scale(sub(to.point, from.point), t)), barNormal};
-        // Where the straight bar would cut through a corner of bone, it is lifted over it — along its own
-        // normal, so the samples keep their order and the bar bends over the corner instead of piling onto it.
-        for (int iteration = 0; iteration < 4; ++iteration) {
-            const double below = clearance - field.At(s.point);
-            if (below <= 1e-3)
-                break;
-            s.point = add(s.point, scale(barNormal, below));
-        }
-        path[static_cast<size_t>(k)] = s;
+    std::vector<PathSample> fromA = walkOnBone(field, a, b.point, boneA, clearance, boneAt, step);
+    if (norm(sub(b.point, fromA.back().point)) < 1.5 * step) {
+        fromA.push_back(b); // one surface all the way
+        return fromA;
     }
-    if (bridgedMm)
-        *bridgedMm = norm(sub(to.point, from.point));
+    std::vector<PathSample> fromB = walkOnBone(field, b, fromA.back().point, boneB, clearance, boneAt, step);
+    const PathSample endA = fromA.back();
+    const PathSample endB = fromB.back();
+    const double gap = norm(sub(endB.point, endA.point));
+    std::vector<PathSample> path = fromA;
+    if (gap >= 1.5 * step) {
+        // The bridge: a flat bar with one normal — the holes' mean, square to the bar — so it is exactly as
+        // thick as the plate; lifted along that normal where it would cut through a corner of bone.
+        const Vec3 along = unit(sub(endB.point, endA.point), unit(sub(b.point, a.point)));
+        Vec3 barNormal = unit(add(a.normal, b.normal), a.normal);
+        barNormal = unit(sub(barNormal, scale(along, dot(barNormal, along))), a.normal);
+        const int pieces = std::max(1, static_cast<int>(std::ceil(gap / step)));
+        for (int k = 1; k < pieces; ++k) {
+            PathSample s{add(endA.point, scale(sub(endB.point, endA.point), static_cast<double>(k) / pieces)), barNormal};
+            for (int iteration = 0; iteration < 4; ++iteration) {
+                const double below = clearance - field.At(s.point);
+                if (below <= 1e-3)
+                    break;
+                s.point = add(s.point, scale(barNormal, below));
+            }
+            path.push_back(s);
+        }
+        if (bridgedMm)
+            *bridgedMm = gap;
+    }
+    for (auto it = fromB.rbegin(); it != fromB.rend(); ++it)
+        if (norm(sub(it->point, path.back().point)) > 0.05)
+            path.push_back(*it);
     return path;
 }
 
@@ -330,6 +341,7 @@ std::vector<PredictiveHole> PredictHoles(const std::vector<PlateDesign>& plates,
                 predicted.preopCenter = hole.center;
                 predicted.preopAxis = predicted.plannedAxis;
             }
+            predicted.cutDistanceMm = -1.0; // unknown until there is a path
             if (hasPath) {
                 const double field = OsteotomyCore::PathField(path, predicted.preopCenter);
                 predicted.cutDistanceMm = std::abs(field);
@@ -370,11 +382,14 @@ PlateCheck Check(const std::vector<PlateDesign>& plates, const std::vector<Predi
                     check.warnings << QStringLiteral("%1: los agujeros %2 y %3 están a menos de %4 mm.")
                                           .arg(name).arg(a + 1).arg(b + 1).arg(params.ringDiameterMm, 0, 'f', 1);
     }
+    if (std::any_of(holes.begin(), holes.end(), [](const PredictiveHole& hole) { return hole.cutDistanceMm < 0.0; }))
+        check.warnings << QStringLiteral("Falta la trayectoria de la osteotomía Le Fort: no se puede medir la "
+                                         "distancia de los agujeros al corte ni generar la guía.");
     for (const PredictiveHole& hole : holes) {
         const QString where = QStringLiteral("Placa %1, agujero %2").arg(hole.plate + 1).arg(hole.hole + 1);
         if (hole.bone == PlateBone::Unknown)
             check.warnings << QStringLiteral("%1: no está sobre el cráneo ni sobre el segmento.").arg(where);
-        if (hole.bone != PlateBone::Unknown && hole.cutDistanceMm < params.minCutDistanceMm)
+        if (hole.bone != PlateBone::Unknown && hole.cutDistanceMm >= 0.0 && hole.cutDistanceMm < params.minCutDistanceMm)
             check.warnings << QStringLiteral("%1: a %2 mm de la osteotomía (mínimo %3 mm).")
                                   .arg(where)
                                   .arg(hole.cutDistanceMm, 0, 'f', 1)
@@ -441,7 +456,7 @@ PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate
     std::vector<PathSample> holes;
     for (const PlateHole& hole : plate.holes) {
         const Vec3 surface = projectToLevel(wrap, hole.center, clearance);
-        holes.push_back({surface, unit(GuideBaseCore::NormalAt(wrap, surface), unit(hole.axis))});
+        holes.push_back({surface, smoothNormal(wrap, surface, unit(hole.axis))});
     }
 
     // Each strut's path: on each bone while the bone is there, straight across whatever lies between.

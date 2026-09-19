@@ -146,11 +146,13 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   segment; fails if the mesh was re-cut), so REPOSICIÓN keeps no extra state. Templates: paranasal (one strut) or L
   (piriform arm, buttress arm, bar joining their lowest holes; `TemplateStruts`), holes clicked top to bottom, «Siguiente
   brazo» between arms. A plate is a continuous ribbon swept along its arms (user's report, 2026-09-19: a plate built
-  as a layer on the wrap dived into the gap a large movement opens and broke up). `strutPath` samples each arm every
-  millimetre, drops the samples onto the planned wrap (1 mm closing) and walks from each hole while the bone under it
-  is the hole's own bone (`PlateBoneQuery`), the surface turns < 15°/mm and < 50° in total, and the walk progresses
-  (samples near a rounded edge collapse onto the corner otherwise); what is left is crossed by a straight bar with
-  one normal, lifted along that normal over any corner. Normals are smoothed along the arm; the ribbon is baked
+  as a layer on the wrap dived into the gap a large movement opens and broke up; then, on real bone, went through it).
+  `walkOnBone` walks the surface from each hole towards the next, 1 mm steps in the tangent plane dropped back onto
+  the planned wrap (1 mm closing) — never points of the chord, which on a long curved arm lie mm inside the bone —
+  with normals averaged over ~1 mm (`smoothNormal`: real bone's raw gradient swings tens of degrees between voxels).
+  It stops where the bone under it changes (`PlateBoneQuery`), the surface turns > 40° in a step or > 60° from the
+  hole, the step falls into a hollow or makes no progress (a corner); `strutPath` joins the two walks, crossing what
+  is left with a straight bar of one normal, lifted along it over any corner. Normals are smoothed along the arm; the ribbon is baked
   with `BakeFunction` as the distance to the nearest mitred piece (rounded rectangle width × thickness, pieces cut at
   the bisector planes so bends meet flush, only free ends rounded), ∩ outside the bone, minus bores and countersinks.
   `PlateBuildResult::bridgedMm` reports the bar. PlateTests has an 8 mm gap case.
@@ -172,8 +174,14 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   broken by 3 mm bridges at the midline and every 15 mm (and at real holes in the wall), so the halves stay rigid;
   four 1.5 mm fixation screws 6 mm above and below the cut at the lateral ends, clear of the sleeves. It only fills
   the plan (paint, slotPlan, holes); `GuideDesignCore::Build` still carves it, and the brush and EDITAR still work.
-  UI: «Generar guía de corte» in «PLACAS A MEDIDA» (`MainWindow::generateLeFortGuide`). `LeFortGuideTests` uses a
-  synthetic aperture.
+  UI: «Generar guía de corte» in «PLACAS A MEDIDA» (`MainWindow::generateLeFortGuide`). With plates, the hand-drawn
+  steps (zona, ranuras, agujeros, crear) stay hidden until the guide exists and then serve to retouch it («Reconstruir
+  guía»); without plates a plain Le Fort guide is still drawn by hand. `LeFortGuideTests` uses a synthetic aperture.
+  The Le Fort path: the osteotomy plan only kept the wizard's current type, so after Le Fort → BSSO → genioplasty and
+  a reload the cut was gone (user's report: «La trayectoria de corte necesita al menos 2 puntos»). Executed cuts are
+  now saved as `executedCuts` in the osteotomy plan and restored by `restoreGuidePlan`; older projects rebuild the Le
+  Fort path from `m_segmentReferences[kLeFortSegLabel].landmarks` (`recoveredLeFortPath`, points stored pilar R,
+  piriform R, piriform L, pilar L). `rememberOsteotomyCut` merges cuts with the same points (slot pieces of one cut).
 - `GuideSculptCore` is the EDITAR step: Freeform's clay, except the clay is the signed distance grid the guide was
   contoured from. `SculptSession::Reset` bakes the finished guide (`BakeMeshField`, detail spacing, ≥ 3 mm padding so
   material can be added outside it) and the brushes edit that grid: Suavizar `φ += w·λ·(G∗φ − φ)` with a 3×3×3
