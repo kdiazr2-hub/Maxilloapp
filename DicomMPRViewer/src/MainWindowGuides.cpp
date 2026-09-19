@@ -2457,10 +2457,10 @@ bool MainWindow::prepareGuidePlannedBone()
         QMessageBox::warning(this, tr("Placas"), tr("Falta la base craneal: realice primero la osteotomía Le Fort."));
         return false;
     }
-    // The plate lies on the bone where the plan puts it. The wrap closes the step the movement leaves at the
-    // cut (3 mm), so the plate bridges it instead of dipping into the gap.
+    // The plate lies on the bone where the plan puts it. The wrap only smooths the bone (1 mm closing): the
+    // arms bridge the gap at the cut themselves, however wide the movement opened it.
     WrapParams wrapParams;
-    wrapParams.gapClosingMm = 3.0;
+    wrapParams.gapClosingMm = 1.0;
     wrapParams.smallestDetailMm = std::min(0.3, m_guideDetailSpin ? m_guideDetailSpin->value() : 0.3);
     GuideDesignParams prepareParams;
     prepareParams.base.smallestDetailMm = wrapParams.smallestDetailMm;
@@ -2487,31 +2487,38 @@ bool MainWindow::prepareGuidePlannedBone()
 
 PlateBuildResult MainWindow::buildGuidePlate(const PlateDesign& plate) const
 {
-    // How far the plate stands off the real bone under each hole: the wrap bridges the cut and fills narrow
-    // hollows, and that is where a plate would rock instead of seating passively.
-    std::vector<vtkSmartPointer<vtkStaticCellLocator>> locators;
-    for (int label : {kLeFortCranialLabel, kLeFortSegLabel}) {
+    // The real bones in their planned position: each arm follows its own and bridges between them, and the
+    // gap under each hole (where a plate would rock instead of seating passively) is measured on them.
+    std::vector<std::pair<PlateBone, vtkSmartPointer<vtkStaticCellLocator>>> locators;
+    for (const auto& [label, bone] : {std::pair{kLeFortCranialLabel, PlateBone::Cranial},
+                                      std::pair{kLeFortSegLabel, PlateBone::Segment}}) {
         const auto mesh = repositionMeshForLabel(label);
         if (!mesh || mesh->GetNumberOfCells() == 0)
             continue;
         auto locator = vtkSmartPointer<vtkStaticCellLocator>::New();
         locator->SetDataSet(mesh);
         locator->BuildLocator();
-        locators.push_back(locator);
+        locators.emplace_back(bone, locator);
     }
-    const auto boneDistance = [locators](const std::array<double, 3>& p) {
+    const PlateBoneQuery boneAt = [locators](const std::array<double, 3>& p, double* distanceMm) {
         double best = 1.0e30;
-        for (const auto& locator : locators) {
+        PlateBone nearest = PlateBone::Unknown;
+        for (const auto& [bone, locator] : locators) {
             double closest[3] = {};
             vtkIdType cell = -1;
             int subId = 0;
             double d2 = 0.0;
             locator->FindClosestPoint(p.data(), closest, cell, subId, d2);
-            best = std::min(best, std::sqrt(d2));
+            if (std::sqrt(d2) < best) {
+                best = std::sqrt(d2);
+                nearest = bone;
+            }
         }
-        return best;
+        if (distanceMm)
+            *distanceMm = best;
+        return nearest;
     };
-    return PlateCore::Build(m_guidePlannedPrepared, plate, guidePlateParams(), boneDistance);
+    return PlateCore::Build(m_guidePlannedPrepared, plate, guidePlateParams(), boneAt);
 }
 
 void MainWindow::ensureGuidePlateMeshes()

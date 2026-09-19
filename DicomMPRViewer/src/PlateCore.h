@@ -18,11 +18,14 @@
 //      before the cut; after the osteotomy the plate only meets its holes when
 //      the maxilla sits exactly where it was planned.
 //
-// The plate is a field like the guide (never a chain of mesh booleans): a strip
-// around the centreline through its holes, intersected with a layer of the
-// planned wrap's signed distance (the wrap closes the step at the cut so the
-// plate bridges it), rims rounded with a smooth intersection, and the screw
-// bores and countersinks subtracted. It is contoured once.
+// The plate is a field like the guide (never a chain of mesh booleans): a
+// ribbon of uniform thickness swept along each arm, lying on the bone. Each arm
+// follows its holes' bone while that bone is under it and turns gently, and
+// crosses the gap the movement opens at the cut (or a notch, or the cut face)
+// in a straight bar — like a commercial plate's connector — instead of diving
+// into it. Edges are rounded by sweeping a shrunken ribbon and growing it back,
+// the bone carves the seat where the flat ribbon meets a curve across its width,
+// and the screw bores and countersinks are subtracted. Contoured once.
 //
 // The segment's motion is recovered from the meshes themselves: repositioning
 // moves every vertex rigidly, so the pre-operative and planned copies of the
@@ -140,7 +143,12 @@ struct PlateBuildResult
     vtkSmartPointer<vtkPolyData> mesh;
     int pieces = 0;
     double maxFitGapMm = 0.0; // largest gap under a hole between the plate and the real bone
+    double bridgedMm = 0.0;   // straight bar over the gap at the cut, summed over the arms
 };
+
+// Which planned bone is nearest a point, and how far it is: lets each plate arm follow its own bone and tells
+// where it has to bridge. Without it the arms still bridge where the surface turns sharply or falls away.
+using PlateBoneQuery = std::function<PlateBone(const std::array<double, 3>&, double* distanceMm)>;
 
 namespace PlateCore
 {
@@ -176,11 +184,10 @@ std::vector<GuideFigure> SleeveFigures(const std::vector<PredictiveHole>& holes,
 
 // ── The plate ────────────────────────────────────────────────────────────────
 // `planned` is the wrap of the bone in its planned position (`GuideDesignCore::Prepare` on the cranial base
-// and the moved segment, with a gap closing wide enough to bridge the step at the cut). `boneDistance`, when
-// given, is the distance to the real bone surface: it measures how far each hole floats above it.
+// and the moved segment, with a small gap closing so it follows the bone). `boneAt`, when given, names the
+// real bone under a point: the arms follow it and bridge between bones, and the gap under each hole is reported.
 PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate, const PlateParams& params = {},
-                       const std::function<double(const std::array<double, 3>&)>& boneDistance = {},
-                       const std::atomic<bool>* cancel = nullptr);
+                       const PlateBoneQuery& boneAt = {}, const std::atomic<bool>* cancel = nullptr);
 
 // ── Persistence ─────────────────────────────────────────────────────────────
 QJsonObject ToJson(const PlateDesign& plate);

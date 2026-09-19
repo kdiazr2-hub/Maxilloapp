@@ -86,7 +86,11 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   (`RasterizeShells` → `DilateMask` → `FillInteriorFromOutside` → `SignedDistanceField` → `ToImage`) so callers can
   insert their own morphology. Phase 0 of the GUIAS (surgical guides) module; the app does not call it yet.
 - `WrapCore::Wrap` is 3-matic's Wrap on those steps: closing in real millimetres (`gapClosingMm`,
-  `smallestDetailMm`), dilate → fill → contour at iso −gap, then smooth and repair. Same four steps as
+  `smallestDetailMm`), dilate → fill → contour at iso −gap, then smooth and repair. The dilation and the distance to
+  its boundary are quantised to voxel centres, which left the wrap up to one voxel INSIDE the surface (0.3 mm at the
+  default detail: guides and plates sank into the bone). When the meshes enclose a volume, the wrap is now the union
+  of the closing and the solid's own field, contoured half a voxel out: it never sinks into what it wraps and stands
+  at most a voxel off it (`WrapCoreTests` "the wrap lies on the surface"). Open surfaces keep the old behaviour. Same four steps as
   `CompositeBlockCore::VoxelUnion`, which stays as it is because `MeshRepairCore`'s remesh calls it and a wrap that
   repairs its own output would loop back into the repair.
 - `GuideBaseCore::CreateBase` is 3-matic's Create Base. `MakeRegion` turns the marked points into a `GuideRegion`:
@@ -141,9 +145,15 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   (rigid least squares on corresponding vertices of `m_repositionOriginalMeshes[kLeFortSegLabel]` and the moved
   segment; fails if the mesh was re-cut), so REPOSICIÓN keeps no extra state. Templates: paranasal (one strut) or L
   (piriform arm, buttress arm, bar joining their lowest holes; `TemplateStruts`), holes clicked top to bottom, «Siguiente
-  brazo» between arms. A plate is one field: capsules along the struts, their centreline projected onto the
-  mid-thickness level of the planned wrap (`WrapCore` with a 3 mm gap closing so it bridges the step at the cut),
-  ∧ layer of that wrap's distance (0..thickness), rounded with `SmoothIntersect`, minus 2.1 mm bores and countersinks.
+  brazo» between arms. A plate is a continuous ribbon swept along its arms (user's report, 2026-09-19: a plate built
+  as a layer on the wrap dived into the gap a large movement opens and broke up). `strutPath` samples each arm every
+  millimetre, drops the samples onto the planned wrap (1 mm closing) and walks from each hole while the bone under it
+  is the hole's own bone (`PlateBoneQuery`), the surface turns < 15°/mm and < 50° in total, and the walk progresses
+  (samples near a rounded edge collapse onto the corner otherwise); what is left is crossed by a straight bar with
+  one normal, lifted along that normal over any corner. Normals are smoothed along the arm; the ribbon is baked
+  with `BakeFunction` as the distance to the nearest mitred piece (rounded rectangle width × thickness, pieces cut at
+  the bisector planes so bends meet flush, only free ends rounded), ∩ outside the bone, minus bores and countersinks.
+  `PlateBuildResult::bridgedMm` reports the bar. PlateTests has an 8 mm gap case.
   Defaults (user's choice): 1.0 mm plate, 2.0 mm screws, guide fixation 1.5 mm, one-piece guide across the midline;
   sleeve bore 1.6 mm / outer 4.2 mm / height 4 mm. `Check` warns (never blocks) on < 2 screws per bone, holes < 4 mm
   from the osteotomy (measured with `OsteotomyCore::PathField` before the cut), overlapping rings and holes on the

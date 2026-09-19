@@ -6,6 +6,7 @@
 #include <vtkMassProperties.h>
 #include <vtkPolyData.h>
 #include <vtkPolyDataConnectivityFilter.h>
+#include <vtkStaticCellLocator.h>
 #include <vtkSphereSource.h>
 #include <vtkTriangleFilter.h>
 
@@ -70,7 +71,8 @@ void testWrapsAClosedSolid()
     require(MeshRepairCore::Analyze(result.mesh).Valid(), "the wrap is not a valid closed solid");
     require(regions(result.mesh) == 1, "the wrap of one cube is not a single shell");
     const double volume = volumeOf(result.mesh);
-    require(std::abs(volume - 8000.0) < 0.06 * 8000.0,
+    // Never smaller than the cube (the wrap does not sink into what it wraps), at most a voxel larger all round.
+    require(volume > 0.99 * 8000.0 && volume < std::pow(20.0 + 2.0 * 0.3, 3.0),
             "the wrap changed the cube volume: " + std::to_string(volume));
     require(!result.report.isEmpty(), "the wrap reports nothing");
 }
@@ -134,6 +136,51 @@ void testDetailAndFailures()
 }
 } // namespace
 
+// The wrap must never lie INSIDE the surface it wraps: guides and plates are built on it, and a wrap inside the
+// bone makes them sink into the bone by as much and not seat. Rasterising rounds to the voxel, so the wrap may
+// stand up to a voxel off the surface — outside, the safe side. Measured on the flat faces of a box, where
+// the closing changes nothing, for several details and gap closings.
+void testWrapLiesOnTheSurface()
+{
+    const auto box = boxMesh({-10.0, 10.0, -8.0, 8.0, -6.0, 6.0}, false, false);
+    for (const double detail : {0.2, 0.3, 0.5})
+        for (const double gap : {0.5, 1.0, 3.0}) {
+            WrapParams params;
+            params.smallestDetailMm = detail;
+            params.gapClosingMm = gap;
+            const WrapResult wrap = WrapCore::Wrap({box}, params);
+            require(wrap.ok, "the box was not wrapped");
+            auto locator = vtkSmartPointer<vtkStaticCellLocator>::New();
+            locator->SetDataSet(wrap.mesh);
+            locator->BuildLocator();
+            // Signed offset of the wrap from each face centre: + outside the box, - inside it.
+            double lowest = 1e30, highest = -1e30, sum = 0.0;
+            int count = 0;
+            for (const std::array<double, 6>& probe : {std::array<double, 6>{10.0, 0.0, 0.0, 1.0, 0.0, 0.0},
+                                                       std::array<double, 6>{-10.0, 0.0, 0.0, -1.0, 0.0, 0.0},
+                                                       std::array<double, 6>{0.0, 8.0, 0.0, 0.0, 1.0, 0.0},
+                                                       std::array<double, 6>{0.0, 0.0, 6.0, 0.0, 0.0, 1.0},
+                                                       std::array<double, 6>{0.0, 0.0, -6.0, 0.0, 0.0, -1.0}}) {
+                double at[3] = {probe[0], probe[1], probe[2]};
+                double closest[3] = {};
+                vtkIdType cell = -1;
+                int subId = 0;
+                double d2 = 0.0;
+                locator->FindClosestPoint(at, closest, cell, subId, d2);
+                const double offset = (closest[0] - at[0]) * probe[3] + (closest[1] - at[1]) * probe[4] +
+                                      (closest[2] - at[2]) * probe[5];
+                lowest = std::min(lowest, offset);
+                highest = std::max(highest, offset);
+                sum += offset;
+                ++count;
+            }
+            std::cout << "  detail " << detail << " gap " << gap << ": offset " << lowest << " to " << highest << " mm" << std::endl;
+            const std::string where = " at detail " + std::to_string(detail) + ", gap " + std::to_string(gap);
+            require(lowest > -0.03, "the wrap sinks " + std::to_string(-lowest) + " mm into the surface" + where);
+            require(highest < detail + 0.03, "the wrap stands " + std::to_string(highest) + " mm off" + where);
+        }
+}
+
 int main()
 {
     const std::vector<std::pair<const char*, std::function<void()>>> tests = {
@@ -141,6 +188,7 @@ int main()
         {"gap closing bridges and seals", testGapClosingBridgesAndSeals},
         {"wraps open surfaces", testWrapsOpenSurfaces},
         {"detail and failures", testDetailAndFailures},
+        {"the wrap lies on the surface", testWrapLiesOnTheSurface},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {

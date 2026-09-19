@@ -1266,13 +1266,14 @@ public:
         settle();
 
         // The anterior maxilla: cranial base above the cut (z >= 10), Le Fort segment below it (z <= 8). The plan
-        // advances the segment 3 mm, impacts it 1 mm and turns it 2° about the vertical axis.
+        // lowers the segment 6 mm, advances it 2 mm and turns it 2° about the vertical axis: an 8 mm gap at the
+        // cut, which the plates have to bridge.
         const auto cranium = boxMesh({-25.0, 25.0, -10.0, 0.0, 10.0, 30.0}, false, false);
         const auto before = boxMesh({-25.0, 25.0, -10.0, 0.0, -10.0, 8.0}, false, false);
         auto motionTransform = vtkSmartPointer<vtkTransform>::New();
         motionTransform->PostMultiply();
         motionTransform->RotateZ(2.0);
-        motionTransform->Translate(0.0, 3.0, 1.0);
+        motionTransform->Translate(0.0, 2.0, -6.0);
         std::array<double, 16> motion{};
         for (int r = 0; r < 4; ++r)
             for (int c = 0; c < 4; ++c)

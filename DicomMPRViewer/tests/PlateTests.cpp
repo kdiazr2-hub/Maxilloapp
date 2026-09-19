@@ -227,15 +227,16 @@ void testSleevesSitOnThePreoperativeHoles()
 }
 
 // ── The plate ─────────────────────────────────────────────────────────────────
-void testPlateBridgesTheCutOnThePlannedBone()
+// A paranasal plate built on the bone as `motion` leaves it, the way the app builds it: a wrap that only
+// smooths the bone (1 mm closing), and the real bones named under each point.
+PlateBuildResult buildOnPlannedBone(const std::array<double, 16>& motion)
 {
-    const std::array<double, 16> motion = plannedMotion();
     const auto segmentPlanned = moved(segmentBeforeCut(), motion);
-    // The wrap of the bone in its planned position closes the step at the cut, so the plate can bridge it.
+    const auto cranial = cranialBase();
     WrapParams wrapParams;
-    wrapParams.gapClosingMm = 3.0;
+    wrapParams.gapClosingMm = 1.0;
     wrapParams.smallestDetailMm = 0.3;
-    const WrapResult wrap = WrapCore::Wrap({cranialBase(), segmentPlanned}, wrapParams);
+    const WrapResult wrap = WrapCore::Wrap({cranial, segmentPlanned}, wrapParams);
     require(wrap.ok, "the planned bone could not be wrapped: " + wrap.error.toStdString());
     GuideDesignParams prepareParams;
     prepareParams.base.smallestDetailMm = 0.3;
@@ -243,37 +244,49 @@ void testPlateBridgesTheCutOnThePlannedBone()
     require(planned.ok, "the planned wrap could not be measured");
 
     std::vector<PlateDesign> plates{paranasalPlate(motion)};
-    PlateCore::AssignBones(plates, cranialBase(), segmentPlanned);
+    PlateCore::AssignBones(plates, cranial, segmentPlanned);
 
-    // The real bone, to measure how the plate sits on it.
-    auto cranialLocator = vtkSmartPointer<vtkStaticCellLocator>::New();
-    const auto cranial = cranialBase();
-    cranialLocator->SetDataSet(cranial);
-    cranialLocator->BuildLocator();
-    auto segmentLocator = vtkSmartPointer<vtkStaticCellLocator>::New();
-    segmentLocator->SetDataSet(segmentPlanned);
-    segmentLocator->BuildLocator();
-    const auto boneDistance = [&](const Vec3& p) {
+    std::vector<std::pair<PlateBone, vtkSmartPointer<vtkStaticCellLocator>>> locators;
+    for (const auto& [bone, mesh] : {std::pair{PlateBone::Cranial, cranial}, std::pair{PlateBone::Segment, segmentPlanned}}) {
+        auto locator = vtkSmartPointer<vtkStaticCellLocator>::New();
+        locator->SetDataSet(mesh);
+        locator->BuildLocator();
+        locators.emplace_back(bone, locator);
+    }
+    const PlateBoneQuery boneAt = [locators](const Vec3& p, double* distanceMm) {
         double best = 1e30;
-        for (vtkStaticCellLocator* locator : {cranialLocator.Get(), segmentLocator.Get()}) {
+        PlateBone nearest = PlateBone::Unknown;
+        for (const auto& [bone, locator] : locators) {
             double closest[3] = {};
             vtkIdType cell = -1;
             int subId = 0;
             double d2 = 0.0;
             locator->FindClosestPoint(p.data(), closest, cell, subId, d2);
-            best = std::min(best, std::sqrt(d2));
+            if (std::sqrt(d2) < best) {
+                best = std::sqrt(d2);
+                nearest = bone;
+            }
         }
-        return best;
+        if (distanceMm)
+            *distanceMm = best;
+        return nearest;
     };
 
     PlateParams params;
     params.smallestDetailMm = 0.15;
-    const PlateBuildResult built = PlateCore::Build(planned, plates[0], params, boneDistance);
+    const PlateBuildResult built = PlateCore::Build(planned, plates[0], params, boneAt);
     require(built.ok, "the plate was not built: " + built.error.toStdString());
     require(built.pieces == 1, "the plate did not bridge the cut: " + std::to_string(built.pieces) + " pieces");
     const MeshCheck mesh = MeshRepairCore::Analyze(built.mesh);
     require(mesh.Valid(), "the plate is not a closed mesh: " + mesh.Summary().toStdString());
     require(built.maxFitGapMm < 0.35, "the plate floats over the bone under a hole: " + std::to_string(built.maxFitGapMm));
+    return built;
+}
+
+void testPlateBridgesTheCutOnThePlannedBone()
+{
+    const std::array<double, 16> motion = plannedMotion();
+    const PlateBuildResult built = buildOnPlannedBone(motion);
 
     // 1 mm of titanium on the cranial face (y = 0), between the two cranial holes.
     const auto wall = inside(built.mesh, {{-10.0, 0.5, 17.0}, {-10.0, 1.5, 17.0}, {-10.0, -0.4, 17.0}});
@@ -289,6 +302,34 @@ void testPlateBridgesTheCutOnThePlannedBone()
     // The countersink widens the hole at the outer face.
     const auto sink = inside(built.mesh, {{-10.0, 0.95, 15.6}, {-10.0, 0.1, 15.6}});
     require(!sink[0] && sink[1], "there is no countersink at the outer face");
+}
+
+// The case the surgeon hit: the maxilla lowered 6 mm and advanced 2 mm opens an 8 mm gap at the cut. The arm
+// must cross it in one straight bar from the cranial edge to the segment's edge — not dive into the gap, not
+// wrap round the cut faces, not break.
+void testPlateBridgesAWideGap()
+{
+    auto transform = vtkSmartPointer<vtkTransform>::New();
+    transform->Translate(0.0, 2.0, -6.0);
+    std::array<double, 16> motion{};
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c)
+            motion[static_cast<size_t>(4 * r + c)] = transform->GetMatrix()->GetElement(r, c);
+    const PlateBuildResult built = buildOnPlannedBone(motion);
+    require(built.bridgedMm > 6.0, "the arm did not bridge the gap: " + std::to_string(built.bridgedMm) + " mm");
+
+    // The cranial base ends at z = 10 (face y = 0); the segment now starts at z = 2 (face y = 2). Halfway,
+    // the bar is on the line between the two edges...
+    const auto bar = inside(built.mesh, {{-10.0, 1.5, 6.0}, {-10.0, 0.9, 8.5}, {-10.0, 2.2, 3.5}});
+    require(bar[0] && bar[1] && bar[2], "there is no straight bar across the gap");
+    // ...and nothing hangs down into the gap or runs along the cut faces behind the front.
+    const auto gap = inside(built.mesh, {{-10.0, -1.5, 6.0}, {-10.0, -1.0, 9.3}, {-10.0, 1.0, 2.6}, {-10.0, -3.0, 4.0}});
+    for (size_t i = 0; i < gap.size(); ++i)
+        require(!gap[i], "the plate dips into the gap at probe " + std::to_string(i));
+    // Uniform thickness right across: 1 mm through the middle of the bar, measured along the bar's normal.
+    const auto thickness = inside(built.mesh, {{-10.0, 1.5 - 0.35, 6.0 - 0.09}, {-10.0, 1.5 + 0.35, 6.0 + 0.09},
+                                               {-10.0, 1.5 - 0.75, 6.0 - 0.19}, {-10.0, 1.5 + 0.75, 6.0 + 0.19}});
+    require(thickness[0] && thickness[1] && !thickness[2] && !thickness[3], "the bar is not 1 mm thick");
 }
 
 void testPlatesTravelWithTheProject()
@@ -326,6 +367,7 @@ int main()
         {"predictive holes go back with the segment", testPredictiveHolesGoBackWithTheSegment},
         {"sleeves sit on the pre-operative holes", testSleevesSitOnThePreoperativeHoles},
         {"the plate bridges the cut on the planned bone", testPlateBridgesTheCutOnThePlannedBone},
+        {"the plate bridges a wide gap in one straight bar", testPlateBridgesAWideGap},
         {"plates travel with the project", testPlatesTravelWithTheProject},
     };
     int failures = 0;

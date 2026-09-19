@@ -60,6 +60,100 @@ Vec3 projectToLevel(const ImplicitCore::BakedField& field, Vec3 p, double level)
     return p;
 }
 
+struct PathSample
+{
+    Vec3 point;  // on the bone surface (or on the straight bridge)
+    Vec3 normal; // outward: the plate lies from `point` outwards along it
+};
+
+// The path of one plate arm from hole `a` to hole `b`. Sampled every millimetre along the chord and dropped
+// onto the bone, it follows each hole's bone for as long as that bone is under it and the surface turns
+// gently; where it stops being so — the gap the movement opened at the osteotomy, the cut face, a notch —
+// the arm crosses in a straight bar from the last sample on one bone to the first on the other, lifted out
+// of the bone if it would cut through a corner. Without this the plate dives into the gap and falls apart.
+std::vector<PathSample> strutPath(const ImplicitCore::BakedField& field, const PathSample& a, const PathSample& b,
+                                  PlateBone boneA, PlateBone boneB, double clearance, const PlateBoneQuery& boneAt,
+                                  double* bridgedMm)
+{
+    const double length = norm(sub(b.point, a.point));
+    const int pieces = std::max(1, static_cast<int>(std::ceil(length / 1.0)));
+    std::vector<PathSample> path(static_cast<size_t>(pieces + 1));
+    std::vector<double> deviation(path.size(), 0.0);
+    path.front() = a;
+    path.back() = b;
+    for (int k = 1; k < pieces; ++k) {
+        const Vec3 chord = add(a.point, scale(sub(b.point, a.point), static_cast<double>(k) / pieces));
+        const Vec3 surface = projectToLevel(field, chord, clearance);
+        path[static_cast<size_t>(k)] = {surface, unit(GuideBaseCore::NormalAt(field, surface), a.normal)};
+        deviation[static_cast<size_t>(k)] = norm(sub(surface, chord));
+    }
+
+    const double step = length / pieces;
+    const Vec3 direction = unit(sub(b.point, a.point));
+    // Bone under a plate bends gently (15° per millimetre is a 4 mm radius); an edge — the cut face, the
+    // rounded rim of the gap — turns much faster, and a sample on it would tilt the plate off the bone.
+    const double maxTurn = std::cos(15.0 * 3.14159265358979323846 / 180.0);  // between neighbouring samples
+    const double maxBend = std::cos(50.0 * 3.14159265358979323846 / 180.0);  // from the hole the walk started at
+    // A sample is on the bone if the bone there is the hole's own, the surface turns gently, and the walk
+    // keeps moving along the arm. Near a rounded edge several samples drop onto the same corner with ever
+    // more tilted normals; without the progress test they would fan the plate out round the edge.
+    const auto onBone = [&](int k, PlateBone expected, const PathSample& previous, const Vec3& startNormal,
+                            double sense) {
+        const PathSample& s = path[static_cast<size_t>(k)];
+        if (dot(s.normal, previous.normal) < maxTurn || dot(s.normal, startNormal) < maxBend)
+            return false;
+        if (deviation[static_cast<size_t>(k)] > 3.0) // pulled far off the line: a hollow, not a surface
+            return false;
+        if (sense * dot(sub(s.point, previous.point), direction) < 0.5 * step)
+            return false;
+        if (boneAt) {
+            double distance = 0.0;
+            const PlateBone bone = boneAt(s.point, &distance);
+            if (distance > 1.0 || (expected != PlateBone::Unknown && bone != expected))
+                return false;
+        }
+        return true;
+    };
+    // Walk from each hole along its own bone.
+    int first = 1;
+    for (PathSample previous = a; first < pieces && onBone(first, boneA, previous, a.normal, 1.0); ++first)
+        previous = path[static_cast<size_t>(first)];
+    int last = pieces - 1;
+    for (PathSample previous = b; last >= first && onBone(last, boneB, previous, b.normal, -1.0); --last)
+        previous = path[static_cast<size_t>(last)];
+    if (bridgedMm)
+        *bridgedMm = 0.0;
+    if (first > last)
+        return path; // one surface all the way
+
+    // The bridge: a flat bar, straight from the last sample on one side to the first on the other. One normal
+    // for all of it — the holes' mean, square to the bar — so it is exactly as thick as the plate; the normals
+    // at its two ends come off rounded edges and would tilt it.
+    PathSample& from = path[static_cast<size_t>(first - 1)];
+    PathSample& to = path[static_cast<size_t>(last + 1)];
+    const Vec3 along = unit(sub(to.point, from.point), direction);
+    Vec3 barNormal = unit(add(a.normal, b.normal), a.normal);
+    barNormal = unit(sub(barNormal, scale(along, dot(barNormal, along))), a.normal);
+    from.normal = barNormal;
+    to.normal = barNormal;
+    for (int k = first; k <= last; ++k) {
+        const double t = static_cast<double>(k - (first - 1)) / static_cast<double>((last + 1) - (first - 1));
+        PathSample s{add(from.point, scale(sub(to.point, from.point), t)), barNormal};
+        // Where the straight bar would cut through a corner of bone, it is lifted over it — along its own
+        // normal, so the samples keep their order and the bar bends over the corner instead of piling onto it.
+        for (int iteration = 0; iteration < 4; ++iteration) {
+            const double below = clearance - field.At(s.point);
+            if (below <= 1e-3)
+                break;
+            s.point = add(s.point, scale(barNormal, below));
+        }
+        path[static_cast<size_t>(k)] = s;
+    }
+    if (bridgedMm)
+        *bridgedMm = norm(sub(to.point, from.point));
+    return path;
+}
+
 QJsonArray vecToJson(const Vec3& v) { return QJsonArray{v[0], v[1], v[2]}; }
 Vec3 vecFromJson(const QJsonValue& value, const Vec3& fallback)
 {
@@ -322,8 +416,7 @@ std::vector<GuideFigure> SleeveFigures(const std::vector<PredictiveHole>& holes,
 
 // ── The plate ─────────────────────────────────────────────────────────────────
 PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate, const PlateParams& params,
-                       const std::function<double(const std::array<double, 3>&)>& boneDistance,
-                       const std::atomic<bool>* cancel)
+                       const PlateBoneQuery& boneAt, const std::atomic<bool>* cancel)
 {
     PlateBuildResult result;
     if (!planned.ok || !planned.wrapField) {
@@ -337,74 +430,92 @@ PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate
     const ImplicitCore::BakedField& wrap = *planned.wrapField;
     const double thickness = std::clamp(params.thicknessMm, 0.3, 5.0);
     const double clearance = std::clamp(params.clearanceMm, 0.0, 2.0);
-    const double middle = clearance + 0.5 * thickness;
     const double width = std::clamp(params.widthMm, 1.0, 15.0);
     const double ring = std::max(params.ringDiameterMm, params.holeDiameterMm + 1.0);
     const double detail = std::clamp(params.smallestDetailMm, 0.05, 0.5);
+    // The edges are rounded by sweeping a shrunken ribbon and growing it back by this radius.
+    const double round = std::clamp(params.edgeRoundMm, 0.0, 0.4 * thickness);
+    const double middle = clearance + 0.5 * thickness;
 
-    // The holes, dropped onto the bone surface and lifted to the middle of the plate.
-    std::vector<Vec3> onBone, lifted, normals;
+    // The holes, dropped onto the bone surface, with the surface normal there as the screw axis.
+    std::vector<PathSample> holes;
     for (const PlateHole& hole : plate.holes) {
         const Vec3 surface = projectToLevel(wrap, hole.center, clearance);
-        onBone.push_back(surface);
-        lifted.push_back(projectToLevel(wrap, surface, middle));
-        normals.push_back(unit(GuideBaseCore::NormalAt(wrap, surface), unit(hole.axis)));
+        holes.push_back({surface, unit(GuideBaseCore::NormalAt(wrap, surface), unit(hole.axis))});
     }
 
-    // The strip: capsules along each strut, its centreline hugging the surface at mid-thickness so it follows
-    // the bone and the bridge over the cut instead of cutting chords through them.
-    std::vector<ImplicitCore::NodePtr> region;
+    // Each strut's path: on each bone while the bone is there, straight across whatever lies between.
+    struct RibbonPiece
+    {
+        Vec3 a, b;   // centreline on the bone surface
+        Vec3 na, nb; // plate normal at each end, interpolated in between
+        double halfWidth = 0.0;
+        // Where the ribbon goes on past an end, the piece stops at the bisector plane (a mitre) so neighbours
+        // meet flush; only the free ends of an arm are rounded.
+        bool mitreA = false, mitreB = false;
+        Vec3 mitreNormalA{0.0, 0.0, 0.0}, mitreNormalB{0.0, 0.0, 0.0};
+    };
+    std::vector<RibbonPiece> pieces;
     std::vector<Vec3> extent;
+    std::vector<Vec3> holeNormals(holes.size());
+    std::vector<bool> holeNormalSet(holes.size(), false);
+    double bridged = 0.0;
     for (const std::vector<int>& strut : plate.struts) {
         for (size_t k = 0; k + 1 < strut.size(); ++k) {
             const int a = strut[k], b = strut[k + 1];
-            if (a < 0 || b < 0 || a >= static_cast<int>(lifted.size()) || b >= static_cast<int>(lifted.size()))
+            if (a < 0 || b < 0 || a >= static_cast<int>(holes.size()) || b >= static_cast<int>(holes.size()))
                 continue;
-            const Vec3 from = lifted[static_cast<size_t>(a)];
-            const Vec3 to = lifted[static_cast<size_t>(b)];
-            const int pieces = std::max(1, static_cast<int>(std::ceil(norm(sub(to, from)) / 1.2)));
-            Vec3 previous = from;
-            for (int i = 1; i <= pieces; ++i) {
-                const double t = static_cast<double>(i) / pieces;
-                Vec3 point = add(from, scale(sub(to, from), t));
-                if (i < pieces)
-                    point = projectToLevel(wrap, point, middle);
-                region.push_back(ImplicitCore::Capsule(previous, point, 0.5 * width));
-                extent.push_back(point);
-                previous = point;
+            double gap = 0.0;
+            std::vector<PathSample> path =
+                strutPath(wrap, holes[static_cast<size_t>(a)], holes[static_cast<size_t>(b)],
+                          plate.holes[static_cast<size_t>(a)].bone, plate.holes[static_cast<size_t>(b)].bone,
+                          clearance, boneAt, &gap);
+            bridged += gap;
+            // The wrap's normal carries a few degrees of voxel noise, and the bar turns where it leaves the
+            // bone: smoothed along the arm, the ribbon twists continuously instead of in steps.
+            for (int pass = 0; pass < 4; ++pass) {
+                const std::vector<PathSample> previous = path;
+                for (size_t i = 0; i < path.size(); ++i) {
+                    const Vec3& before = previous[i == 0 ? 0 : i - 1].normal;
+                    const Vec3& after = previous[std::min(i + 1, path.size() - 1)].normal;
+                    path[i].normal = unit(add(add(before, after), scale(previous[i].normal, 2.0)), previous[i].normal);
+                }
+            }
+            // Coincident samples would make degenerate pieces.
+            std::vector<PathSample> kept{path.front()};
+            for (size_t i = 1; i < path.size(); ++i)
+                if (norm(sub(path[i].point, kept.back().point)) > 0.05 || i + 1 == path.size())
+                    kept.push_back(path[i]);
+            const size_t firstPiece = pieces.size();
+            for (size_t i = 0; i + 1 < kept.size(); ++i)
+                pieces.push_back({kept[i].point, kept[i + 1].point, kept[i].normal, kept[i + 1].normal, 0.5 * width});
+            for (size_t i = firstPiece; i + 1 < pieces.size(); ++i) {
+                const Vec3 bisector = unit(add(unit(sub(pieces[i].b, pieces[i].a)), unit(sub(pieces[i + 1].b, pieces[i + 1].a))),
+                                           unit(sub(pieces[i].b, pieces[i].a)));
+                pieces[i].mitreB = true;
+                pieces[i].mitreNormalB = bisector;
+                pieces[i + 1].mitreA = true;
+                pieces[i + 1].mitreNormalA = bisector;
+            }
+            for (const PathSample& s : path)
+                extent.push_back(s.point);
+            // The screw axis is the ribbon's own normal at the hole, so ring, bore and countersink line up.
+            for (const auto& [index, sample] : {std::pair{a, path.front()}, std::pair{b, path.back()}}) {
+                const size_t h = static_cast<size_t>(index);
+                if (!holeNormalSet[h]) {
+                    holeNormals[h] = sample.normal;
+                    holeNormalSet[h] = true;
+                }
             }
         }
     }
-    for (size_t h = 0; h < lifted.size(); ++h) {
-        region.push_back(ImplicitCore::Cylinder(lifted[h], normals[h], 0.5 * ring, thickness + 2.0));
-        extent.push_back(lifted[h]);
+    for (size_t h = 0; h < holes.size(); ++h) {
+        if (!holeNormalSet[h])
+            holeNormals[h] = holes[h].normal;
+        // The ring of material around every screw: a piece of no length, as wide as the ring.
+        pieces.push_back({holes[h].point, holes[h].point, holeNormals[h], holeNormals[h], 0.5 * ring});
+        extent.push_back(holes[h].point);
     }
-
-    const auto wrapNode = ImplicitCore::Field(planned.wrapField);
-    const auto outer = ImplicitCore::Offset(wrapNode, clearance + thickness);
-    const auto inner = ImplicitCore::Negate(ImplicitCore::Offset(wrapNode, clearance));
-    const auto body =
-        ImplicitCore::SmoothIntersect({ImplicitCore::Union(region), outer, inner}, std::max(0.0, params.edgeRoundMm));
-
-    // The screw bores, and the countersink that seats each head flush with the outer face.
-    std::vector<ImplicitCore::NodePtr> cutters;
-    const double holeRadius = 0.5 * params.holeDiameterMm;
-    const double sinkRadius = std::max(holeRadius, 0.5 * params.countersinkDiameterMm);
-    const double sinkDepth = std::clamp(params.countersinkDepthMm, 0.0, thickness);
-    for (size_t h = 0; h < onBone.size(); ++h) {
-        cutters.push_back(ImplicitCore::Cylinder(onBone[h], normals[h], holeRadius, 10.0));
-        if (sinkDepth > 1e-3 && sinkRadius > holeRadius + 1e-3) {
-            // A cone from the bore at `sinkDepth` below the outer face, widening past the face by 1 mm.
-            const double slope = (sinkRadius - holeRadius) / sinkDepth;
-            const double reach = 1.0;
-            const double bottom = clearance + thickness - sinkDepth;
-            const double top = clearance + thickness + reach;
-            const Vec3 center = add(onBone[h], scale(normals[h], 0.5 * (bottom + top)));
-            cutters.push_back(ImplicitCore::Cone(center, normals[h], holeRadius, sinkRadius + slope * reach,
-                                                 0.5 * (top - bottom)));
-        }
-    }
-    const auto solid = ImplicitCore::Subtract(body, ImplicitCore::Union(cutters));
 
     double bounds[6] = {1e30, -1e30, 1e30, -1e30, 1e30, -1e30};
     for (const Vec3& p : extent)
@@ -412,11 +523,74 @@ PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate
             bounds[2 * axis] = std::min(bounds[2 * axis], p[static_cast<size_t>(axis)]);
             bounds[2 * axis + 1] = std::max(bounds[2 * axis + 1], p[static_cast<size_t>(axis)]);
         }
-    const double margin = 0.5 * std::max(width, ring) + thickness + 1.5;
+    const double margin = 0.5 * std::max(width, ring) + clearance + thickness + 1.5;
     for (int axis = 0; axis < 3; ++axis) {
         bounds[2 * axis] -= margin;
         bounds[2 * axis + 1] += margin;
     }
+
+    // The ribbon as one continuous sweep: at every point, the nearest piece of centreline, the plate normal
+    // interpolated there, and a rounded rectangle (width × thickness) across it. No overlapping discs and
+    // bars, so no seams; the thickness is exact everywhere and the edges are rounded by `round`.
+    const double halfThickness = 0.5 * thickness;
+    const auto sweep = [&pieces, middle, halfThickness, round](const Vec3& x) {
+        double best = 1.0e30;
+        for (const RibbonPiece& piece : pieces) {
+            // Beyond a mitre the neighbouring piece takes over.
+            if (piece.mitreA && dot(sub(x, piece.a), piece.mitreNormalA) < 0.0)
+                continue;
+            if (piece.mitreB && dot(sub(x, piece.b), piece.mitreNormalB) > 0.0)
+                continue;
+            const Vec3 ab = sub(piece.b, piece.a);
+            const double len2 = dot(ab, ab);
+            const double raw = len2 > 1e-12 ? dot(sub(x, piece.a), ab) / len2 : 0.0;
+            const double t = std::clamp(raw, 0.0, 1.0);
+            // Inside a mitred joint the edge runs straight on (no cap); only free ends are rounded.
+            const double onLine = (raw < 0.0 && piece.mitreA) || (raw > 1.0 && piece.mitreB) ? raw : t;
+            const Vec3 c = add(piece.a, scale(ab, onLine));
+            const Vec3 r = sub(x, c);
+            // Far pieces cannot beat the best one already found.
+            if (norm(r) - piece.halfWidth - halfThickness - 1.0 > best)
+                continue;
+            const Vec3 n = unit(add(scale(piece.na, 1.0 - t), scale(piece.nb, t)), piece.na);
+            const double along = dot(r, n);
+            const double lateral = norm(sub(r, scale(n, along)));
+            const double qx = lateral - (piece.halfWidth - round);
+            const double qy = std::abs(along - middle) - (halfThickness - round);
+            const double outside = std::hypot(std::max(qx, 0.0), std::max(qy, 0.0));
+            best = std::min(best, outside + std::min(std::max(qx, qy), 0.0) - round);
+        }
+        return best;
+    };
+    const auto ribbonField = ImplicitCore::BakeFunction(sweep, bounds, detail, 0.0, cancel);
+    if (!ribbonField) {
+        result.error = QStringLiteral("Cálculo cancelado.");
+        return result;
+    }
+    // Never inside the bone: where the flat ribbon meets a curve across its width, the bone carves its seat.
+    const auto outsideBone = ImplicitCore::Negate(ImplicitCore::Offset(ImplicitCore::Field(planned.wrapField), clearance));
+    const auto body = ImplicitCore::Intersect(ImplicitCore::Field(ribbonField), outsideBone);
+
+    // The screw bores, and the countersink that seats each head flush with the outer face.
+    std::vector<ImplicitCore::NodePtr> cutters;
+    const double holeRadius = 0.5 * params.holeDiameterMm;
+    const double sinkRadius = std::max(holeRadius, 0.5 * params.countersinkDiameterMm);
+    const double sinkDepth = std::clamp(params.countersinkDepthMm, 0.0, thickness);
+    for (size_t h = 0; h < holes.size(); ++h) {
+        const PathSample hole{holes[h].point, holeNormals[h]};
+        cutters.push_back(ImplicitCore::Cylinder(hole.point, hole.normal, holeRadius, 10.0));
+        if (sinkDepth > 1e-3 && sinkRadius > holeRadius + 1e-3) {
+            // A cone from the bore at `sinkDepth` below the outer face, widening past the face by 1 mm.
+            const double slope = (sinkRadius - holeRadius) / sinkDepth;
+            const double reach = 1.0;
+            const double bottom = clearance + thickness - sinkDepth;
+            const double top = clearance + thickness + reach;
+            const Vec3 center = add(hole.point, scale(hole.normal, 0.5 * (bottom + top)));
+            cutters.push_back(ImplicitCore::Cone(center, hole.normal, holeRadius, sinkRadius + slope * reach,
+                                                 0.5 * (top - bottom)));
+        }
+    }
+    const auto solid = ImplicitCore::Subtract(body, ImplicitCore::Union(cutters));
 
     ImplicitCore::PolygonizeOptions options;
     options.smoothingIterations = std::max(0, params.smoothingIterations);
@@ -429,12 +603,15 @@ PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate
     }
     result.mesh = built.mesh;
     result.pieces = shellsOf(result.mesh);
+    result.bridgedMm = bridged;
 
-    // Passive fit: how far the underside of the plate, under each hole, stands off the real bone. The wrap
-    // bridges the cut and fills narrow hollows, so this is where the plate would rock if it is not ~0.
-    if (boneDistance)
-        for (const Vec3& p : onBone)
-            result.maxFitGapMm = std::max(result.maxFitGapMm, std::max(0.0, boneDistance(p)));
+    // Passive fit: how far the underside of the plate, under each hole, stands off the real bone.
+    if (boneAt)
+        for (const PathSample& hole : holes) {
+            double distance = 0.0;
+            boneAt(hole.point, &distance);
+            result.maxFitGapMm = std::max(result.maxFitGapMm, std::max(0.0, distance));
+        }
 
     int cranial = 0, segment = 0;
     for (const PlateHole& hole : plate.holes) {
@@ -450,7 +627,9 @@ PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate
                         .arg(thickness, 0, 'f', 2)
                         .arg(result.pieces)
                         .arg(result.mesh->GetNumberOfPolys());
-    if (boneDistance)
+    if (bridged > 0)
+        result.report += QStringLiteral(", puente recto de %1 mm sobre el espacio del corte").arg(bridged, 0, 'f', 1);
+    if (boneAt)
         result.report += QStringLiteral(", holgura máxima bajo un agujero %1 mm").arg(result.maxFitGapMm, 0, 'f', 2);
     result.report += QStringLiteral(".");
     result.ok = true;
