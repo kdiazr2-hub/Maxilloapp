@@ -169,7 +169,9 @@ std::vector<PathSample> strutPath(const ImplicitCore::BakedField& field, const P
         const bool crossesOsteotomy = boneA != boneB && boneA != PlateBone::Unknown && boneB != PlateBone::Unknown;
         const PathSample& cranialEdge = boneA == PlateBone::Cranial ? endA : endB;
         const PathSample& segmentEdge = boneA == PlateBone::Segment ? endA : endB;
-        Vec3 outward = unit(cranialEdge.normal, meanNormal);
+        // Outward in the arm's own plane: the bone normal with its across-the-arm part removed. At the piriform
+        // rim the normal faces forward and outward, and stepping along it sent the plate on a lateral detour.
+        Vec3 outward = unit(sub(meanNormal, scale(widthAxis, dot(meanNormal, widthAxis))), meanNormal);
         if (dot(outward, meanNormal) < 0.0)
             outward = scale(outward, -1.0);
         const double advancement = dot(sub(segmentEdge.point, cranialEdge.point), outward);
@@ -254,6 +256,51 @@ std::vector<PathSample> strutPath(const ImplicitCore::BakedField& field, const P
         if (norm(sub(it->point, path.back().point)) > 0.05)
             path.push_back(*it);
     return path;
+}
+
+// The bone's distance over `bounds`, Gaussian-smoothed over `sigmaMm`. A plate's outer face is laid on it, so
+// it comes out as smooth as a machined plate; its inner face still follows the real bone. Segmented bone is rough
+// at the voxel scale, and a plate built on it alone copied every bump.
+std::shared_ptr<const ImplicitCore::BakedField> smoothedField(const ImplicitCore::BakedField& field, const double bounds[6],
+                                                              double sigmaMm)
+{
+    const double h = std::max(0.2, field.spacingMm);
+    const auto sampled = ImplicitCore::BakeFunction([&field](const Vec3& p) { return field.At(p); }, bounds, h,
+                                                    2.0 * sigmaMm + 1.0);
+    if (!sampled)
+        return nullptr;
+    auto out = std::make_shared<ImplicitCore::BakedField>(*sampled);
+    const int radius = std::max(1, static_cast<int>(std::ceil(2.5 * sigmaMm / h)));
+    std::vector<double> kernel(static_cast<size_t>(2 * radius + 1));
+    double total = 0.0;
+    for (int k = -radius; k <= radius; ++k) {
+        kernel[static_cast<size_t>(k + radius)] = std::exp(-0.5 * (k * h) * (k * h) / (sigmaMm * sigmaMm));
+        total += kernel[static_cast<size_t>(k + radius)];
+    }
+    for (double& w : kernel)
+        w /= total;
+    const auto& dims = out->dims;
+    std::vector<float> temp(out->values.size());
+    const auto index = [&dims](int i, int j, int k) {
+        return (static_cast<size_t>(k) * static_cast<size_t>(dims[1]) + static_cast<size_t>(j)) *
+                   static_cast<size_t>(dims[0]) +
+               static_cast<size_t>(i);
+    };
+    for (int axis = 0; axis < 3; ++axis) {
+        for (int k = 0; k < dims[2]; ++k)
+            for (int j = 0; j < dims[1]; ++j)
+                for (int i = 0; i < dims[0]; ++i) {
+                    double sum = 0.0;
+                    for (int o = -radius; o <= radius; ++o) {
+                        int c[3] = {i, j, k};
+                        c[axis] = std::clamp(c[axis] + o, 0, dims[static_cast<size_t>(axis)] - 1);
+                        sum += kernel[static_cast<size_t>(o + radius)] * out->values[index(c[0], c[1], c[2])];
+                    }
+                    temp[index(i, j, k)] = static_cast<float>(sum);
+                }
+        out->values.swap(temp);
+    }
+    return out;
 }
 
 QJsonArray vecToJson(const Vec3& v) { return QJsonArray{v[0], v[1], v[2]}; }
@@ -565,7 +612,8 @@ PlateBoneQuery MakeBoneQuery(vtkPolyData* cranialPlanned, vtkPolyData* segmentPl
 
 // ── The plate ─────────────────────────────────────────────────────────────────
 PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate, const PlateParams& params,
-                       const PlateBoneQuery& boneAt, const std::atomic<bool>* cancel)
+                       const PlateBoneQuery& boneAt, const std::atomic<bool>* cancel,
+                       const std::shared_ptr<const ImplicitCore::BakedField>& realBone)
 {
     PlateBuildResult result;
     if (!planned.ok || !planned.wrapField) {
@@ -636,6 +684,10 @@ PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate
                     path[i].normal = unit(add(add(previous[i - 1].normal, previous[i + 1].normal),
                                               scale(previous[i].normal, 2.0)),
                                           previous[i].normal);
+                    // The centreline too: its voxel-scale jitter made the plate's edges wavy.
+                    path[i].point = scale(add(add(previous[i - 1].point, previous[i + 1].point),
+                                              scale(previous[i].point, 2.0)),
+                                          0.25);
                 }
             }
             // Coincident samples would make degenerate pieces.
@@ -656,10 +708,9 @@ PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate
                 }
                 pieces.push_back({kept[i].point, kept[i + 1].point, kept[i].normal, kept[i + 1].normal, 0.5 * width});
             }
-            // A sharp surgical bend is made from overlapping continuous metal.
-            // Mitring two implicit ribbons at 90 degrees leaves a notch in the
-            // inside corner, so doglegs intentionally keep their overlap.
-            for (size_t i = firstPiece; !stepped && i + 1 < pieces.size(); ++i) {
+            // Mitred joints, the stepped bend included: its fillet turns a few degrees per piece, and pieces left
+            // overlapping showed each one's rounded end as a ring on the bar.
+            for (size_t i = firstPiece; i + 1 < pieces.size(); ++i) {
                 if (norm(sub(pieces[i].b, pieces[i + 1].a)) > 1e-6)
                     continue; // not consecutive: a seated stretch lies between them
                 const Vec3 bisector = unit(add(unit(sub(pieces[i].b, pieces[i].a)), unit(sub(pieces[i + 1].b, pieces[i + 1].a))),
@@ -735,13 +786,20 @@ PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate
         return best;
     };
     const auto wrapNode = ImplicitCore::Field(planned.wrapField);
-    // Seated: the layer clearance ≤ d ≤ clearance + thickness of the wrap's distance, within the footprints,
-    // its rims rounded by a smooth intersection.
+    // Seated: from the real bone (inner face, never into it) out to `thickness` over a smoothed bone (outer face,
+    // uniform like a machined plate), within the footprints, rims rounded by a smooth intersection. Where the real
+    // bone bulges above the smoothed one the plate thins, but never below 70 % of its thickness.
     ImplicitCore::NodePtr body;
-    if (!seated.empty())
-        body = ImplicitCore::SmoothIntersect({ImplicitCore::Union(seated), ImplicitCore::Offset(wrapNode, clearance + thickness),
+    if (!seated.empty()) {
+        const auto smooth = smoothedField(wrap, bounds, 1.2);
+        ImplicitCore::NodePtr outer = ImplicitCore::Offset(wrapNode, clearance + thickness);
+        if (smooth)
+            outer = ImplicitCore::Union(ImplicitCore::Offset(ImplicitCore::Field(smooth), clearance + thickness),
+                                        ImplicitCore::Offset(wrapNode, clearance + 0.7 * thickness));
+        body = ImplicitCore::SmoothIntersect({ImplicitCore::Union(seated), outer,
                                               ImplicitCore::Negate(ImplicitCore::Offset(wrapNode, clearance))},
                                              round);
+    }
     // The bridge: the flat sweep, never inside the bone.
     if (!pieces.empty()) {
         const auto ribbonField = ImplicitCore::BakeFunction(sweep, bounds, detail, 0.0, cancel);
@@ -759,6 +817,9 @@ PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate
         result.error = QStringLiteral("La placa quedó vacía.");
         return result;
     }
+    // Never into the bone itself.
+    if (realBone)
+        body = ImplicitCore::Intersect(body, ImplicitCore::Negate(ImplicitCore::Offset(ImplicitCore::Field(realBone), clearance)));
 
     // The screw bores, and the countersink that seats each head flush with the outer face.
     std::vector<ImplicitCore::NodePtr> cutters;

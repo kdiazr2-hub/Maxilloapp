@@ -925,7 +925,10 @@ void MainWindow::setGuidesWorkspace(bool enabled, bool plateWorkspace)
     refreshGuideCutList();
     refreshGuideFigureList();
     refreshGuidePlates();
-    setGuidePlateView(plateWorkspace && m_guideMesh && m_guideMesh->GetNumberOfPolys() > 0);
+    // The plate step always shows the Le Fort where the plan puts it — not only when a guide happens to be in
+    // memory (after reopening a project it is not, and the step then showed the segment without its movement).
+    const auto leFortSegment = repositionMeshForLabel(kLeFortSegLabel);
+    setGuidePlateView(plateWorkspace && leFortSegment && leFortSegment->GetNumberOfPolys() > 0);
     syncGuideView();
     if (!plateWorkspace && m_guideWrapMesh)
         activateGuideWorkflowStep();
@@ -2717,12 +2720,26 @@ bool MainWindow::prepareGuidePlannedBone()
     GuidePreparation prepared;
     if (wrap.ok)
         prepared = GuideDesignCore::Prepare(wrap.mesh, prepareParams);
+    // And the bone itself (0.5 mm closing), which no part of a plate may enter. The planning wrap fills the
+    // corner of the step at the cut, so it cannot be the one that clips the bridge.
+    std::shared_ptr<const ImplicitCore::BakedField> realBone;
+    if (prepared.ok) {
+        WrapParams tightParams = wrapParams;
+        tightParams.gapClosingMm = 0.5;
+        const WrapResult tight = WrapCore::Wrap({cranial.Get(), segment.Get()}, tightParams);
+        if (tight.ok) {
+            const GuidePreparation tightPrepared = GuideDesignCore::Prepare(tight.mesh, prepareParams);
+            if (tightPrepared.ok)
+                realBone = tightPrepared.wrapField;
+        }
+    }
     QApplication::restoreOverrideCursor();
     if (!wrap.ok || !prepared.ok) {
         QMessageBox::warning(this, tr("Placas"), wrap.ok ? prepared.error : wrap.error);
         return false;
     }
     m_guidePlannedPrepared = prepared;
+    m_guidePlannedRealBone = realBone;
     m_guidePlannedMotion = motion;
     m_guidePlateMeshes.clear(); // built on the previous plan: rebuilt on demand
     statusBar()->showMessage(tr("Placas: hueso planificado listo."));
@@ -2738,7 +2755,7 @@ PlateBuildResult MainWindow::buildGuidePlate(const PlateDesign& plate) const
     const PlateBoneQuery boneAt =
         PlateCore::MakeBoneQuery(repositionMeshForLabel(kLeFortCranialLabel), repositionMeshForLabel(kLeFortSegLabel),
                                  motion, guideLeFortPath());
-    return PlateCore::Build(m_guidePlannedPrepared, plate, guidePlateParams(), boneAt);
+    return PlateCore::Build(m_guidePlannedPrepared, plate, guidePlateParams(), boneAt, nullptr, m_guidePlannedRealBone);
 }
 
 void MainWindow::ensureGuidePlateMeshes()
@@ -2896,6 +2913,8 @@ void MainWindow::refreshGuidePlates()
         QString style = QStringLiteral("color:#8e8e93;");
         std::array<double, 16> motion{};
         QString error;
+        bool moved = false;
+        const QString motionText = guideMotionSummary(&moved);
         if (m_guidePlan.plates.empty()) {
             text = tr("Las placas se diseñan sobre el hueso en su posición planificada; la guía recibe una camisa "
                       "en cada agujero, en su posición antes del corte.");
@@ -2912,6 +2931,11 @@ void MainWindow::refreshGuidePlates()
                 text = QStringLiteral("⚠ ") + check.warnings.join(QStringLiteral("\n⚠ "));
                 style = QStringLiteral("color:#ff9f0a;");
             }
+        }
+        if (!motionText.isEmpty()) {
+            text = motionText + QStringLiteral("\n") + text;
+            if (!moved)
+                style = QStringLiteral("color:#ff9f0a;");
         }
         m_guidePlateCheckLabel->setText(text);
         m_guidePlateCheckLabel->setStyleSheet(style + QStringLiteral(" font-size:11px;"));
@@ -3078,4 +3102,52 @@ void MainWindow::generateLeFortGuide()
     }
     if (m_guideReportLabel && m_guideMesh)
         m_guideReportLabel->setText(layout.report + QStringLiteral("\n") + m_guideReportLabel->text());
+}
+
+QString MainWindow::guideMotionSummary(bool* moved) const
+{
+    if (moved)
+        *moved = false;
+    std::array<double, 16> motion{};
+    QString error;
+    const auto segment = repositionMeshForLabel(kLeFortSegLabel);
+    if (!segment || segment->GetNumberOfPolys() == 0)
+        return {};
+    if (!guideSegmentMotion(motion, &error))
+        return tr("⚠ Movimiento del Le Fort: %1").arg(error);
+    // Measured at the middle of the segment before the cut, in the patient's frame: forward is from the segment
+    // towards the anterior cut points (the piriform ones), level; up is +Z.
+    const auto before = guideSourceMeshForLabel(kLeFortSegLabel);
+    double b[6] = {};
+    (before ? before : segment)->GetBounds(b);
+    const std::array<double, 3> middle{0.5 * (b[0] + b[1]), 0.5 * (b[2] + b[3]), 0.5 * (b[4] + b[5])};
+    const std::array<double, 3> after = PlateCore::TransformPoint(motion, middle);
+    const std::array<double, 3> shift{after[0] - middle[0], after[1] - middle[1], after[2] - middle[2]};
+    std::array<double, 3> forward{0.0, -1.0, 0.0}; // DICOM LPS: anterior is -Y
+    const OsteotomyPath path = guideLeFortPath();
+    if (path.valid && path.points.size() == 4) {
+        const auto& p = path.points;
+        const double fx = 0.5 * (p[1][0] + p[2][0]) - middle[0], fy = 0.5 * (p[1][1] + p[2][1]) - middle[1];
+        const double length = std::hypot(fx, fy);
+        if (length > 1e-6)
+            forward = {fx / length, fy / length, 0.0};
+    }
+    const double advance = shift[0] * forward[0] + shift[1] * forward[1];
+    const double vertical = shift[2];
+    const double lateral = shift[0] * forward[1] - shift[1] * forward[0];
+    const double trace = motion[0] + motion[5] + motion[10];
+    const double rotation = std::acos(std::clamp(0.5 * (trace - 1.0), -1.0, 1.0)) * 180.0 / 3.14159265358979323846;
+    const bool anyMotion = std::hypot(std::hypot(shift[0], shift[1]), shift[2]) > 0.2 || rotation > 0.3;
+    if (moved)
+        *moved = anyMotion;
+    if (!anyMotion)
+        return tr("⚠ El Le Fort no tiene movimiento planificado: realice el avance en REPOSICIÓN y vuelva a este "
+                  "paso.");
+    return tr("Movimiento del Le Fort: %1 %2 mm, %3 %4 mm, lateral %5 mm, giro %6°.")
+        .arg(advance >= 0.0 ? tr("avance") : tr("retroceso"))
+        .arg(std::abs(advance), 0, 'f', 1)
+        .arg(vertical >= 0.0 ? tr("ascenso") : tr("descenso"))
+        .arg(std::abs(vertical), 0, 'f', 1)
+        .arg(std::abs(lateral), 0, 'f', 1)
+        .arg(rotation, 0, 'f', 1);
 }

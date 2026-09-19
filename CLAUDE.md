@@ -163,7 +163,19 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   wrap uses a 3 mm closing: segmented maxilla has perforations and thin walls that a conformal plate copied as ragged
   patches. Rings, bores and countersinks use the bone normal at the hole (never the smoothed ribbon normal: the
   bridge's slope tilted the rings and the bone carved them into hooks); normals are smoothed only along seated
-  stretches. Slivers under 3 % of the plate are dropped; a real break is still reported. `bridgedMm` reports the
+  stretches. Slivers under 3 % of the plate are dropped; a real break is still reported. The seated outer face lies
+  on a Gaussian-smoothed copy of the bone field (`smoothedField`, σ 1.2 mm, local to the plate) with a 70 % minimum
+  thickness over bumps, and the seated centreline is smoothed too: the plate is uniform like a machined one while
+  its inner face follows the bone (user's report 2026-09-19: "tiene como irregularidades"). Across an advancement the
+  bridge is a stepped bend (parallel session's design: out by the advancement at the cranial edge, filleted, then
+  down the moved face) — its outward direction lies in the arm's plane (the bone normal at the piriform rim faces
+  outward too and sent it on a lateral detour), its pieces are mitred (overlapping pieces showed rings), and the whole
+  plate is clipped against the real bone (`Build`'s `realBone`: a 0.5 mm-closing wrap made alongside the planning
+  wrap in `prepareGuidePlannedBone`); clipping with the 3 mm planning wrap removed the step, not clipping let it
+  0.5 mm into the bone. Step 9 always shows the Le Fort in its planned position (it used to depend on a guide mesh
+  being in memory, so after reopening a project the advancement "disappeared"), and `guideMotionSummary` states the
+  movement (advance/retreat, ascent/descent, lateral, rotation) at the top of the plate report, or warns when the Le
+  Fort has not been moved. `bridgedMm` reports the
   bar. PlateTests: 8 mm gap, 8 mm advancement on a wall facing 30° outward, curved rough wall.
   `tools/PlateProbe.cpp` (target `PlateProbe`, not a CTest) builds paranasal plates and an L plate on a real
   project's pre-reposition bones with a given advancement/descent, reports pieces, bridge, fit gap and penetration,

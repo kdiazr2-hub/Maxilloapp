@@ -196,8 +196,12 @@ PlateBoneQuery MakeBoneQuery(vtkPolyData* cranialPlanned, vtkPolyData* segmentPl
 // `planned` is the wrap of the bone in its planned position (`GuideDesignCore::Prepare` on the cranial base
 // and the moved segment, with a small gap closing so it follows the bone). `boneAt`, when given, names the
 // real bone under a point: the arms follow it and bridge between bones, and the gap under each hole is reported.
+// `realBone`, when given, is the distance to the bone itself (a tight wrap, no gap closing to speak of): the
+// whole plate is kept out of it. The planning wrap cannot do that job — it fills the corner of the step at the
+// cut, so clipping with it removed the middle of a stepped bridge, and not clipping let the bridge into the bone.
 PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate, const PlateParams& params = {},
-                       const PlateBoneQuery& boneAt = {}, const std::atomic<bool>* cancel = nullptr);
+                       const PlateBoneQuery& boneAt = {}, const std::atomic<bool>* cancel = nullptr,
+                       const std::shared_ptr<const ImplicitCore::BakedField>& realBone = nullptr);
 
 // ── Persistence ─────────────────────────────────────────────────────────────
 QJsonObject ToJson(const PlateDesign& plate);

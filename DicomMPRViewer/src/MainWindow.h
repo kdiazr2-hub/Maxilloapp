@@ -284,6 +284,7 @@ private:
     bool guideSegmentMotion(std::array<double, 16>& motion, QString* error = nullptr) const;
     OsteotomyPath guideLeFortPath() const;
     OsteotomyPath recoveredLeFortPath() const; // from the segment reference, for projects saved without the cut
+    QString guideMotionSummary(bool* moved = nullptr) const; // the Le Fort's planned movement, in words
     std::vector<PredictiveHole> guidePredictiveHoles() const;
     std::vector<GuideFigure> guideFiguresWithSleeves() const;
     PlateParams guidePlateParams() const;
@@ -377,6 +378,7 @@ private:
     QDoubleSpinBox* m_guideSleeveHeightSpin = nullptr;
     GuidePreparation m_guidePlannedPrepared;          // wrap of the bone in its planned position, for the plates
     std::array<double, 16> m_guidePlannedMotion{};    // the segment motion that wrap was made for
+    std::shared_ptr<const ImplicitCore::BakedField> m_guidePlannedRealBone; // tight wrap: plates never enter it
     std::vector<vtkSmartPointer<vtkPolyData>> m_guidePlateMeshes; // one per plan plate, in the planned position
     std::vector<PlateHole> m_guidePendingPlateHoles;  // holes of the plate being marked
     int m_guidePlateFirstArm = -1;                    // L plate: holes in the first arm, once "next arm" is pressed

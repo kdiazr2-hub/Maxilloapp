@@ -1376,6 +1376,32 @@ public:
                     window.m_guidePlateSection->isVisibleTo(&window) &&
                     !window.m_guideTypeSection->isVisibleTo(&window) && window.m_guidePlannedView,
                 "the personalized-plate module did not open independently on the final Le Fort");
+        // The plate step states the Le Fort's movement, and the segment it shows is the moved one.
+        require(window.m_guidePlateCheckLabel->text().contains(QStringLiteral("Movimiento del Le Fort")) &&
+                    window.m_guidePlateCheckLabel->text().contains(QStringLiteral("descenso 6.0 mm")),
+                "the plate step does not state the Le Fort's movement: " +
+                    window.m_guidePlateCheckLabel->text().toStdString());
+        {
+            double shown[6] = {};
+            window.m_guideView->meshData(objectActorKey(kLeFortSegLabel))->GetBounds(shown);
+            require(std::abs(shown[5] - 2.0) < 0.2, "the plate step does not show the lowered Le Fort segment");
+        }
+        // After reopening a project the guide is no longer in memory: the plate step must still show the final
+        // position (it used to fall back to the pre-operative bone and hide the advancement).
+        {
+            auto keptGuide = window.m_guideMesh;
+            window.m_guideMesh = nullptr;
+            for (auto* tab : window.findChildren<QToolButton*>(QStringLiteral("MT")))
+                if (tab->text() == QStringLiteral("GUIAS"))
+                    tab->click();
+            settle();
+            for (auto* tab : window.findChildren<QToolButton*>(QStringLiteral("MT")))
+                if (tab->text() == QStringLiteral("PLACAS"))
+                    tab->click();
+            settle();
+            require(window.m_guidePlannedView, "without a guide in memory the plate step lost the final position");
+            window.m_guideMesh = keptGuide;
+        }
 
         // 2. A paranasal plate on the right: marking its holes switches to the planned bone.
         window.m_guidePlateSideCombo->setCurrentIndex(window.m_guidePlateSideCombo->findData(static_cast<int>(PlateSide::Right)));

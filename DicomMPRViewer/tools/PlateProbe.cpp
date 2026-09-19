@@ -212,6 +212,13 @@ int main(int argc, char** argv)
     prepareParams.base.smallestDetailMm = detail;
     prepareParams.base.thicknessMm = 1.0;
     const GuidePreparation planned = GuideDesignCore::Prepare(wrap.mesh, prepareParams);
+    // Penetration is judged on the real bone: a tight wrap (0.5 mm closing), not the planning wrap that fills
+    // the corner of the step at the cut.
+    WrapParams tightParams;
+    tightParams.gapClosingMm = 0.5;
+    tightParams.smallestDetailMm = detail;
+    const WrapResult tightWrap = WrapCore::Wrap({cranial.Get(), segmentPlanned.Get()}, tightParams);
+    const GuidePreparation tight = tightWrap.ok ? GuideDesignCore::Prepare(tightWrap.mesh, prepareParams) : GuidePreparation{};
     std::cout << "planned bone wrapped in "
               << std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count() << " s\n";
 
@@ -281,7 +288,8 @@ int main(int argc, char** argv)
     for (const PlateDesign& plate : plates) {
         PlateParams params;
         const auto t0 = std::chrono::steady_clock::now();
-        const PlateBuildResult result = PlateCore::Build(planned, plate, params, boneAt);
+        const PlateBuildResult result =
+            PlateCore::Build(planned, plate, params, boneAt, nullptr, tight.ok ? tight.wrapField : nullptr);
         const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         if (!result.ok) {
             std::cerr << plate.name.toStdString() << ": " << result.error.toStdString() << "\n";
@@ -293,7 +301,7 @@ int main(int argc, char** argv)
         for (vtkIdType id = 0; id < result.mesh->GetNumberOfPoints(); ++id) {
             double p[3] = {};
             result.mesh->GetPoint(id, p);
-            const double d = planned.wrapField->At({p[0], p[1], p[2]});
+            const double d = (tight.ok ? tight.wrapField : planned.wrapField)->At({p[0], p[1], p[2]});
             deepest = std::min(deepest, d);
             inside += d < -0.25 ? 1 : 0;
         }
