@@ -32,7 +32,7 @@ Tests (CTest):
 - `GeometryCoreTests`, `BoneCavityFillTests`, `MeshGeneratorTests` — plain C++ executables
 - `MaskToObjectTests` checks exact label extraction, committed cavity filling and immutable input.
 - `ModelWorkflowTests` checks guided MODELOS steps, paired point requirements, fine adjustment and mandatory acceptance.
-- `SplintHeightmapTests`, `SplintDesignTests`, `SplintContourEditTests`, `SplintPreviewSchedulerTests`, `ProjectSerializerTests`, `CompositeBlockTests`, `MeshRepairTests`, `OsteotomyCoreTests`, `CollisionTests`, `ImplicitCoreTests`, `WrapCoreTests`, `GuideBaseTests`, `CutSlotTests`, `GuideDesignTests`, `GuideSculptTests`, `GuidePlanTests`, `SegmentationProgressTests` — core tests declared with `add_core_test()`; synthetic arches in `tests/SplintTestGeometry.h`
+- `SplintHeightmapTests`, `SplintDesignTests`, `SplintContourEditTests`, `SplintPreviewSchedulerTests`, `ProjectSerializerTests`, `CompositeBlockTests`, `MeshRepairTests`, `OsteotomyCoreTests`, `CollisionTests`, `ImplicitCoreTests`, `WrapCoreTests`, `GuideBaseTests`, `CutSlotTests`, `GuideDesignTests`, `GuideSculptTests`, `PlateTests`, `GuidePlanTests`, `SegmentationProgressTests` — core tests declared with `add_core_test()`; synthetic arches in `tests/SplintTestGeometry.h`
 - `SplintWorkspaceTests` also covers the composite block flow and the osteotomy wizard (Le Fort I → BSSO → genioplasty)
 - `RepositionWorkspaceTests`, `SplintWorkspaceTests` — instantiate `MainWindow` (declared `friend`), render offscreen, write PNGs to `build/workspace-test-artifacts`
 - `Mesh3DViewInteractionTests` — drives `Mesh3DView` offscreen with synthetic mouse events
@@ -129,6 +129,30 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   (guide = (base ∪ added) − slots − holes − subtracted); `FigurePreview` draws them.
   `GuideDesignCore::KeepOutNode` returns slots + holes + subtracted figures as one node: `Build` and the edit
   session's protected field both come from that one list, so an edit can never fill in what the plan cut away.
+- `PlateCore` is the custom Le Fort osteosynthesis module (user's decision, 2026-09-19: it replaces the plain Le Fort
+  guide; the combo item is «Placas + guía Le Fort I»; the chin guide is unchanged). It follows the predictive-hole
+  technique of the literature the user supplied (Cureus 2025 RCT, CMTR 2026 stability cohort, ACFS 2026, JCM 2025):
+  plates are designed on the bone in its PLANNED position (`repositionMeshForLabel` of the cranial base and the Le Fort
+  segment); every hole is assigned to its bone (`AssignBones`, nearest surface); cranial holes stay, segment holes go
+  back to the pre-operative position through the inverse of the segment motion (`PredictHoles`); the guide, still on
+  the pre-operative bone, gets a drill sleeve at each (`SleeveFigures`: an added cylinder body starting 0.5 mm off
+  the bone plus a subtracted bore, merged into the guide's figures by `MainWindow::guideFiguresWithSleeves`, so the
+  build and the EDITAR keep-out both carry them). The segment motion is recovered with `PlateCore::RigidMotion`
+  (rigid least squares on corresponding vertices of `m_repositionOriginalMeshes[kLeFortSegLabel]` and the moved
+  segment; fails if the mesh was re-cut), so REPOSICIÓN keeps no extra state. Templates: paranasal (one strut) or L
+  (piriform arm, buttress arm, bar joining their lowest holes; `TemplateStruts`), holes clicked top to bottom, «Siguiente
+  brazo» between arms. A plate is one field: capsules along the struts, their centreline projected onto the
+  mid-thickness level of the planned wrap (`WrapCore` with a 3 mm gap closing so it bridges the step at the cut),
+  ∧ layer of that wrap's distance (0..thickness), rounded with `SmoothIntersect`, minus 2.1 mm bores and countersinks.
+  Defaults (user's choice): 1.0 mm plate, 2.0 mm screws, guide fixation 1.5 mm, one-piece guide across the midline;
+  sleeve bore 1.6 mm / outer 4.2 mm / height 4 mm. `Check` warns (never blocks) on < 2 screws per bone, holes < 4 mm
+  from the osteotomy (measured with `OsteotomyCore::PathField` before the cut), overlapping rings and holes on the
+  wrong side of the cut; `Build` reports the gap under each hole to the real bone (passive fit). The plan keeps
+  `plates`, `plate` and `sleeve` as optional keys. UI in `MainWindowGuides.cpp` («PLACAS A MEDIDA» section, mode
+  `kModePlateHoles`, `m_guidePlannedView` swaps the scene to the planned bone with the plates, predictive holes are
+  purple markers on the pre-operative view, `exportGuidePlateFiles` writes `placa_N_lado.stl` plus
+  `informe_placas.txt`). Not done yet: bone thickness under each screw from the CT, root proximity (teeth are not
+  segmented separately), posterior bony interference, postoperative accuracy report.
 - `GuideSculptCore` is the EDITAR step: Freeform's clay, except the clay is the signed distance grid the guide was
   contoured from. `SculptSession::Reset` bakes the finished guide (`BakeMeshField`, detail spacing, ≥ 3 mm padding so
   material can be added outside it) and the brushes edit that grid: Suavizar `φ += w·λ·(G∗φ − φ)` with a 3×3×3

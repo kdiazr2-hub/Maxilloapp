@@ -97,7 +97,7 @@ QJsonObject ToJson(const GuidePlan& plan)
                                  {QStringLiteral("axis"), pointJson(hole.axis)},
                                  {QStringLiteral("diameterMm"), hole.diameterMm}});
 
-    return QJsonObject{
+    QJsonObject out{
         {QStringLiteral("type"), plan.type == GuideType::Chin ? QStringLiteral("chin") : QStringLiteral("leFort")},
         {QStringLiteral("name"), plan.name},
         {QStringLiteral("sourceLabels"), sources},
@@ -122,6 +122,17 @@ QJsonObject ToJson(const GuidePlan& plan)
         {QStringLiteral("slots"), slotArray},
         {QStringLiteral("holes"), holes},
         {QStringLiteral("figures"), figures}};
+    if (!plan.plates.empty()) {
+        QJsonArray plates;
+        for (const PlateDesign& plate : plan.plates)
+            plates.append(PlateCore::ToJson(plate));
+        out[QStringLiteral("plates")] = plates;
+    }
+    out[QStringLiteral("plate")] = PlateCore::ParamsToJson(plan.plate);
+    out[QStringLiteral("sleeve")] = QJsonObject{{QStringLiteral("boreDiameterMm"), plan.sleeve.boreDiameterMm},
+                                                {QStringLiteral("outerDiameterMm"), plan.sleeve.outerDiameterMm},
+                                                {QStringLiteral("heightMm"), plan.sleeve.heightMm}};
+    return out;
 }
 
 GuidePlan FromJson(const QJsonObject& object)
@@ -205,6 +216,13 @@ GuidePlan FromJson(const QJsonObject& object)
             figure.controlPoints.push_back(pointFromJson(point.toArray(), {0.0, 0.0, 0.0}));
         plan.figures.push_back(figure);
     }
+    for (const QJsonValue& value : object.value(QStringLiteral("plates")).toArray())
+        plan.plates.push_back(PlateCore::FromJson(value.toObject()));
+    plan.plate = PlateCore::ParamsFromJson(object.value(QStringLiteral("plate")).toObject());
+    const QJsonObject sleeve = object.value(QStringLiteral("sleeve")).toObject();
+    plan.sleeve.boreDiameterMm = sleeve.value(QStringLiteral("boreDiameterMm")).toDouble(plan.sleeve.boreDiameterMm);
+    plan.sleeve.outerDiameterMm = sleeve.value(QStringLiteral("outerDiameterMm")).toDouble(plan.sleeve.outerDiameterMm);
+    plan.sleeve.heightMm = sleeve.value(QStringLiteral("heightMm")).toDouble(plan.sleeve.heightMm);
     return plan;
 }
 }

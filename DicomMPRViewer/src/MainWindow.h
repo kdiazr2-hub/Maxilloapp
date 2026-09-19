@@ -264,6 +264,24 @@ private:
     void nudgeGuideBrushSize(double deltaMm);
     bool handleGuideSculptKey(QKeyEvent* event); // +/-, Ctrl+Z, Ctrl+Y, Enter, Esc while editing
     std::vector<GuideSlot> guideChosenSlots() const;
+    // GUIAS - PLACAS A MEDIDA (Le Fort): plates on the planned bone, predictive holes into the guide.
+    void setGuidePlateView(bool planned);
+    bool prepareGuidePlannedBone();
+    void ensureGuidePlateMeshes();
+    PlateBuildResult buildGuidePlate(const PlateDesign& plate) const;
+    void startGuidePlateArm();
+    void clearGuidePlateHoles();
+    void createGuidePlate();
+    void removeGuidePlate();
+    void refreshGuidePlates();
+    void exportGuidePlates();
+    bool exportGuidePlateFiles(const QString& folder, QString* report = nullptr);
+    bool guideSegmentMotion(std::array<double, 16>& motion, QString* error = nullptr) const;
+    OsteotomyPath guideLeFortPath() const;
+    std::vector<PredictiveHole> guidePredictiveHoles() const;
+    std::vector<GuideFigure> guideFiguresWithSleeves() const;
+    PlateParams guidePlateParams() const;
+    SleeveParams guideSleeveParams() const;
     vtkSmartPointer<vtkPolyData> guideSourceMeshForLabel(int label) const;
     // Cuts the guide can carry a slot for: remembered when an osteotomy is executed.
     void rememberOsteotomyCut(const QString& name, const OsteotomyPath& path, GuideType type);
@@ -327,6 +345,28 @@ private:
     QWidget* m_guideFiguresSection = nullptr;
     QWidget* m_guideBuildSection = nullptr;
     QWidget* m_guideEditSection = nullptr;
+    QWidget* m_guidePlateSection = nullptr;
+    QComboBox* m_guidePlateSideCombo = nullptr;
+    QComboBox* m_guidePlateTemplateCombo = nullptr;
+    QPushButton* m_guidePlateViewButton = nullptr;
+    QPushButton* m_guidePlateHolesButton = nullptr;
+    QPushButton* m_guidePlateArmButton = nullptr;
+    QPushButton* m_guidePlateCreateButton = nullptr;
+    QPushButton* m_guidePlateExportButton = nullptr;
+    QListWidget* m_guidePlateList = nullptr;
+    QLabel* m_guidePlateCheckLabel = nullptr;
+    QDoubleSpinBox* m_guidePlateThicknessSpin = nullptr;
+    QDoubleSpinBox* m_guidePlateMinCutSpin = nullptr;
+    QDoubleSpinBox* m_guideSleeveBoreSpin = nullptr;
+    QDoubleSpinBox* m_guideSleeveOuterSpin = nullptr;
+    QDoubleSpinBox* m_guideSleeveHeightSpin = nullptr;
+    GuidePreparation m_guidePlannedPrepared;          // wrap of the bone in its planned position, for the plates
+    std::array<double, 16> m_guidePlannedMotion{};    // the segment motion that wrap was made for
+    std::vector<vtkSmartPointer<vtkPolyData>> m_guidePlateMeshes; // one per plan plate, in the planned position
+    std::vector<PlateHole> m_guidePendingPlateHoles;  // holes of the plate being marked
+    int m_guidePlateFirstArm = -1;                    // L plate: holes in the first arm, once "next arm" is pressed
+    bool m_guidePlannedView = false;                  // the view shows the planned bone and the plates
+    std::vector<GuideFigure> m_guideBuiltFigures;     // figures + sleeves the guide was carved with
     QWidget* m_guideExportSection = nullptr;
     // EDITAR: the tool palette, its contextual bar and the session behind them.
     QPushButton* m_guideEditButton = nullptr;

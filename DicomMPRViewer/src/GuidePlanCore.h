@@ -12,6 +12,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 #include "GuideDesignCore.h"
+#include "PlateCore.h"
 #include "WrapCore.h"
 
 #include <QJsonObject>
@@ -22,7 +23,7 @@
 // Which guide is being designed; each takes its own models for the envelope.
 enum class GuideType
 {
-    LeFort, // Le Fort I segment + cranial base, before repositioning
+    LeFort, // custom plates + cutting guide: plates on the planned bone, guide before repositioning
     Chin    // chin segment + mandible after the genioplasty
 };
 
@@ -40,6 +41,11 @@ struct GuidePlan
     // Boolean tools. Imported figures reload from `sourcePath`; project-object copies reload from `sourceLabel`.
     // Curved tubes keep their three control points directly in the plan.
     std::vector<GuideFigure> figures;
+    // Le Fort only: the patient-specific plates (on the planned bone) and the sleeves their predictive holes
+    // put on the guide. Optional keys, so older plans load without them.
+    std::vector<PlateDesign> plates;
+    PlateParams plate;
+    SleeveParams sleeve;
 };
 
 namespace GuidePlanCore

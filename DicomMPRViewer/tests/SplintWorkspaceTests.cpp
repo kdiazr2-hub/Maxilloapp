@@ -20,6 +20,7 @@
 #include <QDialog>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QFileInfo>
 #include <QFont>
 #include <QImage>
 #include <QLabel>
@@ -47,6 +48,7 @@
 #include <vtkFeatureEdges.h>
 #include <vtkPolyDataConnectivityFilter.h>
 #include <vtkImageData.h>
+#include <vtkImplicitPolyDataDistance.h>
 #include <vtkMatrix4x4.h>
 #include <vtkPlane.h>
 #include <vtkPointData.h>
@@ -1254,6 +1256,195 @@ public:
         std::cout << "Bite registration stages and local ICP OK\n";
     }
 
+    // PLACAS + GUÍA Le Fort: plates on the planned bone, predictive holes carried into the guide's sleeves.
+    static void runPlateWorkflow(const QString& artifactsDir)
+    {
+        MainWindow window;
+        window.setAttribute(Qt::WA_DontShowOnScreen);
+        window.resize(1700, 950);
+        window.show();
+        settle();
+
+        // The anterior maxilla: cranial base above the cut (z >= 10), Le Fort segment below it (z <= 8). The plan
+        // advances the segment 3 mm, impacts it 1 mm and turns it 2° about the vertical axis.
+        const auto cranium = boxMesh({-25.0, 25.0, -10.0, 0.0, 10.0, 30.0}, false, false);
+        const auto before = boxMesh({-25.0, 25.0, -10.0, 0.0, -10.0, 8.0}, false, false);
+        auto motionTransform = vtkSmartPointer<vtkTransform>::New();
+        motionTransform->PostMultiply();
+        motionTransform->RotateZ(2.0);
+        motionTransform->Translate(0.0, 3.0, 1.0);
+        std::array<double, 16> motion{};
+        for (int r = 0; r < 4; ++r)
+            for (int c = 0; c < 4; ++c)
+                motion[static_cast<size_t>(4 * r + c)] = motionTransform->GetMatrix()->GetElement(r, c);
+        auto moveFilter = vtkSmartPointer<vtkTransformPolyDataFilter>::New();
+        moveFilter->SetInputData(before);
+        moveFilter->SetTransform(motionTransform);
+        moveFilter->Update();
+        auto planned = vtkSmartPointer<vtkPolyData>::New();
+        planned->DeepCopy(moveFilter->GetOutput());
+
+        window.addObjectEntry(QStringLiteral("Segmento Le Fort I"), QColor(230, 220, 200), kLeFortSegLabel);
+        window.setRepositionMeshForLabel(kLeFortSegLabel, planned);
+        window.m_repositionOriginalMeshes[kLeFortSegLabel] = before; // as REPOSICIÓN keeps it
+        window.addObjectEntry(QStringLiteral("Base craneal"), QColor(220, 210, 190), kLeFortCranialLabel);
+        window.setRepositionMeshForLabel(kLeFortCranialLabel, cranium);
+        window.rememberOsteotomyCut(QStringLiteral("Le Fort I"),
+                                    OsteotomyCore::LeFortPath({{{-10.0, 5.0, 9.0}, {10.0, 5.0, 9.0},
+                                                                {-20.0, -5.0, 9.0}, {20.0, -5.0, 9.0}}}),
+                                    GuideType::LeFort);
+
+        for (auto* tab : window.findChildren<QToolButton*>(QStringLiteral("MT")))
+            if (tab->text() == QStringLiteral("GUIAS"))
+                tab->click();
+        settle();
+        require(window.m_guideTypeCombo->currentText().contains(QStringLiteral("Placas")),
+                "the Le Fort guide type is not «Placas + guía»");
+        require(window.m_guidePlateSection->isVisibleTo(&window), "the custom plates section is missing");
+        window.m_guideDetailSpin->setValue(0.5); // coarse: a wiring test
+
+        // 1. A paranasal plate on the right: marking its holes switches to the planned bone.
+        window.m_guidePlateSideCombo->setCurrentIndex(window.m_guidePlateSideCombo->findData(static_cast<int>(PlateSide::Right)));
+        window.m_guidePlateTemplateCombo->setCurrentIndex(
+            window.m_guidePlateTemplateCombo->findData(static_cast<int>(PlateTemplate::Paranasal)));
+        window.m_guidePlateHolesButton->setChecked(true);
+        settle();
+        require(window.m_guidePlannedView && window.m_guidePlannedPrepared.ok && window.m_guidePointMode == 8,
+                "marking plate holes did not open the planned bone");
+        const auto onSegment = [&motion](double x, double z) {
+            return std::array<double, 3>{motion[0] * x + motion[2] * z + motion[3], motion[4] * x + motion[6] * z + motion[7],
+                                         motion[8] * x + motion[10] * z + motion[11]};
+        };
+        const std::vector<std::array<double, 3>> rightHoles{{-10.0, 0.0, 20.0}, {-10.0, 0.0, 14.0},
+                                                            onSegment(-10.0, 4.0), onSegment(-10.0, -2.0)};
+        for (const auto& p : rightHoles)
+            window.onGuidePointPicked(0, p[0], p[1], p[2]);
+        require(window.m_guidePendingPlateHoles.size() == 4, "the plate holes were not collected");
+        window.createGuidePlate();
+        settle();
+        require(window.m_guidePlan.plates.size() == 1 && window.m_guidePlateMeshes.size() == 1 &&
+                    window.m_guidePlateMeshes[0] && window.m_guidePlateMeshes[0]->GetNumberOfPolys() > 0,
+                "the right plate was not built");
+        require(window.m_guideView->meshData(kGuidePlateActorBase) != nullptr, "the plate is not shown");
+
+        // 2. An L plate on the left: the piriform arm, "next arm", the buttress arm.
+        window.m_guidePlateSideCombo->setCurrentIndex(window.m_guidePlateSideCombo->findData(static_cast<int>(PlateSide::Left)));
+        window.m_guidePlateTemplateCombo->setCurrentIndex(
+            window.m_guidePlateTemplateCombo->findData(static_cast<int>(PlateTemplate::LShape)));
+        window.m_guidePlateHolesButton->setChecked(true);
+        for (const auto& p : {std::array<double, 3>{8.0, 0.0, 20.0}, std::array<double, 3>{8.0, 0.0, 14.0},
+                              onSegment(8.0, 3.0)})
+            window.onGuidePointPicked(0, p[0], p[1], p[2]);
+        require(window.m_guidePlateArmButton->isEnabled(), "the L plate does not offer its second arm");
+        window.startGuidePlateArm();
+        for (const auto& p : {std::array<double, 3>{18.0, 0.0, 20.0}, std::array<double, 3>{18.0, 0.0, 14.0},
+                              onSegment(18.0, 3.0)})
+            window.onGuidePointPicked(0, p[0], p[1], p[2]);
+        window.createGuidePlate();
+        settle();
+        require(window.m_guidePlan.plates.size() == 2 && window.m_guidePlan.plates[1].kind == PlateTemplate::LShape &&
+                    window.m_guidePlan.plates[1].struts.size() == 3,
+                "the L plate was not built with two arms and a bar");
+        for (const PlateDesign& plate : window.m_guidePlan.plates)
+            for (const PlateHole& hole : plate.holes)
+                require(hole.bone != PlateBone::Unknown, "a plate hole was not assigned to its bone");
+        require(window.m_guidePlateCheckLabel->text().contains(QStringLiteral("Sin avisos")),
+                "correct plates raised warnings: " + window.m_guidePlateCheckLabel->text().toStdString());
+        QDir().mkpath(artifactsDir);
+        // This synthetic face looks towards +y (a CT's anterior is -y), so the camera looks back along -y.
+        window.m_guideView->setViewAlongDirection({4.0, 0.0, 10.0}, {0.0, -1.0, 0.0}, {0.0, 0.0, 1.0}, 32.0);
+        window.m_guideView->render();
+        settle();
+        require(window.m_guideView->findChild<QVTKOpenGLNativeWidget*>()->grabFramebuffer().save(
+                    QDir(artifactsDir).filePath(QStringLiteral("plates-planned.png"))),
+                "the plates screenshot was not written");
+
+        // 3. The predictive holes: the cranial ones stay, the segment's go back to where that bone is before the cut.
+        const auto predicted = window.guidePredictiveHoles();
+        require(predicted.size() == 10, "not every plate hole was predicted");
+        for (const PredictiveHole& hole : predicted) {
+            if (hole.bone == PlateBone::Cranial)
+                require(std::hypot(std::hypot(hole.preopCenter[0] - hole.plannedCenter[0],
+                                              hole.preopCenter[1] - hole.plannedCenter[1]),
+                                   hole.preopCenter[2] - hole.plannedCenter[2]) < 1e-6,
+                        "a cranial hole moved");
+            else
+                require(std::abs(hole.preopCenter[1]) < 0.05, "a segment hole did not go back to the pre-operative face");
+        }
+
+        // 4. The guide, on the bone before the cut, with a sleeve at every predictive hole.
+        window.setGuidePlateView(false);
+        window.computeGuideWrap();
+        settle();
+        require(window.m_guideWrapMesh && window.m_guidePrepared.ok, "the guide envelope was not built");
+        window.m_guideRegionButton->setChecked(true);
+        window.m_guideBrushSpin->setValue(4.0);
+        for (double z = -6.0; z <= 23.0; z += 2.0)
+            for (double x = -16.0; x <= 23.0; x += 2.0)
+                window.onGuideSurfaceBrushed(x, 0.0, z, Qt::NoModifier);
+        window.onGuideBrushFinished();
+        window.m_guideRegionButton->setChecked(false);
+        window.buildGuideMesh();
+        settle();
+        require(window.m_guideMesh && window.m_guideMesh->GetNumberOfPolys() > 0, "the guide was not built");
+        const QString guideReport = window.m_guideReportLabel->text();
+        require(guideReport.contains(QStringLiteral("10 figura(s) sumada(s)")) &&
+                    guideReport.contains(QStringLiteral("10 restada(s)")),
+                "the guide does not carry one sleeve per predictive hole: " + guideReport.toStdString());
+        require(guideReport.contains(QStringLiteral("1 pieza(s)")), "the guide came apart: " + guideReport.toStdString());
+        // The sleeve's bore is open where the drill goes, and its body is solid around it.
+        auto guideDistance = vtkSmartPointer<vtkImplicitPolyDataDistance>::New();
+        guideDistance->SetInput(window.m_guideMesh);
+        for (const PredictiveHole& hole : predicted) {
+            const auto along = [&hole](double mm, double sideways) {
+                return std::array<double, 3>{hole.preopCenter[0] + hole.preopAxis[0] * mm + sideways,
+                                             hole.preopCenter[1] + hole.preopAxis[1] * mm,
+                                             hole.preopCenter[2] + hole.preopAxis[2] * mm};
+            };
+            const auto bore = along(2.5, 0.0);
+            const auto wall = along(2.5, 1.5);
+            require(guideDistance->EvaluateFunction(bore[0], bore[1], bore[2]) > 0.0,
+                    "a sleeve's bore is closed at a predictive hole");
+            require(guideDistance->EvaluateFunction(wall[0], wall[1], wall[2]) < 0.0,
+                    "a sleeve's wall is missing at a predictive hole");
+        }
+        window.m_guideShowWrapCheck->setChecked(false); // the guide alone, with its sleeves
+        window.m_guideView->setViewAlongDirection({4.0, 0.0, 10.0}, {-0.35, -1.0, -0.25}, {0.0, 0.0, 1.0}, 32.0);
+        window.m_guideView->render();
+        settle();
+        require(window.m_guideView->findChild<QVTKOpenGLNativeWidget*>()->grabFramebuffer().save(
+                    QDir(artifactsDir).filePath(QStringLiteral("plates-guide.png"))),
+                "the guide screenshot was not written");
+
+        // 5. The plates and their fabrication report are exported together.
+        QTemporaryDir exportDir;
+        require(exportDir.isValid(), "no temporary folder");
+        QString exportReport;
+        require(window.exportGuidePlateFiles(exportDir.path(), &exportReport), exportReport.toStdString());
+        for (const QString& name : {QStringLiteral("placa_1_derecha.stl"), QStringLiteral("placa_2_izquierda.stl"),
+                                    QStringLiteral("informe_placas.txt")})
+            require(QFileInfo::exists(QDir(exportDir.path()).filePath(name)), "not exported: " + name.toStdString());
+        QFile informe(QDir(exportDir.path()).filePath(QStringLiteral("informe_placas.txt")));
+        require(informe.open(QIODevice::ReadOnly), "the report cannot be read");
+        const QString informeText = QString::fromUtf8(informe.readAll());
+        require(informeText.contains(QStringLiteral("Agujeros predictivos")) &&
+                    informeText.contains(QStringLiteral("Sin avisos")),
+                "the fabrication report is incomplete");
+
+        // 6. The plates travel with the project.
+        ProjectState state;
+        state.guidesPlan = window.guidePlanJson();
+        MainWindow reopened;
+        reopened.setAttribute(Qt::WA_DontShowOnScreen);
+        reopened.show();
+        settle();
+        reopened.restoreGuidePlan(state);
+        require(reopened.m_guidePlan.plates.size() == 2 && reopened.m_guidePlan.plates[1].holes.size() == 6,
+                "the plates did not survive the project");
+        require(reopened.m_guidePlateList->count() == 2, "the reloaded plates are not listed");
+        std::cout << "Custom plates + predictive guide OK\n";
+    }
+
     // OSTEOTOMIA wizard: Le Fort I → BSSO (6 points, both sides) → genioplasty on the distal segment.
     static void runOsteotomyWorkflow(const QString& artifactsDir)
     {
@@ -1521,6 +1712,7 @@ int main(int argc, char** argv)
         SplintWorkspaceTests::runOsteotomyWorkflow(artifacts);
         SplintWorkspaceTests::runInspectorTabs();
         SplintWorkspaceTests::runGuidesWorkflow(artifacts);
+        SplintWorkspaceTests::runPlateWorkflow(artifacts);
         if (!unexpectedDialogs.isEmpty()) {
             std::cerr << "FAIL unexpected dialogs: " << unexpectedDialogs.join(QStringLiteral(" | ")).toStdString() << '\n';
             return 1;

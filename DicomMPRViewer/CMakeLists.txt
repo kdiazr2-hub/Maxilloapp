@@ -304,7 +304,7 @@ add_core_test(SplintPreviewSchedulerTests tests/SplintPreviewSchedulerTests.cpp
 add_core_test(ProjectSerializerTests tests/ProjectSerializerTests.cpp
     src/ProjectSerializer.cpp src/NrrdVolumeExporter.cpp src/SegmentationImporter.cpp
     src/SplintDesignCore.cpp src/SplintHeightmapGenerator.cpp src/CompositeBlockCore.cpp
-    src/GuidePlanCore.cpp src/GuideDesignCore.cpp src/GuideBaseCore.cpp src/CutSlotCore.cpp
+    src/GuidePlanCore.cpp src/PlateCore.cpp src/GuideDesignCore.cpp src/GuideBaseCore.cpp src/CutSlotCore.cpp
     src/WrapCore.cpp src/OsteotomyCore.cpp src/ImplicitCore.cpp src/MeshRepairCore.cpp)
 add_core_test(CompositeBlockTests tests/CompositeBlockTests.cpp src/CompositeBlockCore.cpp)
 add_core_test(ImplicitCoreTests tests/ImplicitCoreTests.cpp src/ImplicitCore.cpp
@@ -322,7 +322,7 @@ add_core_test(GuideSculptTests tests/GuideSculptTests.cpp src/GuideSculptCore.cp
 add_core_test(PlateTests tests/PlateTests.cpp src/PlateCore.cpp src/GuideDesignCore.cpp src/GuideBaseCore.cpp
     src/CutSlotCore.cpp src/WrapCore.cpp src/OsteotomyCore.cpp src/ImplicitCore.cpp src/MeshRepairCore.cpp
     src/CompositeBlockCore.cpp)
-add_core_test(GuidePlanTests tests/GuidePlanTests.cpp src/GuidePlanCore.cpp src/GuideDesignCore.cpp
+add_core_test(GuidePlanTests tests/GuidePlanTests.cpp src/GuidePlanCore.cpp src/PlateCore.cpp src/GuideDesignCore.cpp
     src/GuideBaseCore.cpp src/CutSlotCore.cpp src/WrapCore.cpp src/OsteotomyCore.cpp src/ImplicitCore.cpp
     src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)
 add_core_test(MeshRepairTests tests/MeshRepairTests.cpp src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)

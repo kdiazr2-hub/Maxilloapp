@@ -53,6 +53,7 @@ inline constexpr int kOrientationBoneReferenceKey = -160;
 inline constexpr int kCompositeContourActorKey = -522;
 inline constexpr int kGuideRegionOverlayKey = 3;     // marked region outline in GUIAS
 inline constexpr int kGuideWrapActorKey = -540;      // translucent envelope while designing
+inline constexpr int kGuidePlateActorBase = -640;    // custom Le Fort plates in GUIAS, one per plate, counting down
 
 // REPOSICIÓN analysis actors (key = base - label).
 inline constexpr int kRepositionHighlightBaseKey = -3000;
