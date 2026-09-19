@@ -14,6 +14,7 @@
 
 #include "Mesh3DView.h"
 #include "GuideSculptCore.h"
+#include "LeFortGuideCore.h"
 #include "MeshRepairCore.h"
 #include "ObjectLabels.h"
 #include "PlateCore.h"
@@ -541,6 +542,14 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
     m_guidePlateCheckLabel = new QLabel(panel);
     m_guidePlateCheckLabel->setWordWrap(true);
     plateBox->addWidget(m_guidePlateCheckLabel);
+    // The Le Fort cutting and drilling guide, laid out from the plates and the cut; it can still be retouched
+    // with the brush and EDITAR afterwards.
+    m_guideGenerateButton = new QPushButton(tr("Generar guía de corte"), panel);
+    m_guideGenerateButton->setToolTip(tr("Guía de una pieza sobre la pared anterior: ranura sobre la osteotomía "
+                                         "con puentes, camisa en cada agujero de las placas y 4 tornillos de "
+                                         "fijación de 1,5 mm."));
+    connect(m_guideGenerateButton, &QPushButton::clicked, this, &MainWindow::generateLeFortGuide);
+    plateBox->addWidget(m_guideGenerateButton);
 
     // ── 2. Support region ─────────────────────────────────────────────────
     auto* regionBox = step(tr("2. ZONA DE APOYO"));
@@ -1860,6 +1869,7 @@ void MainWindow::updateGuideUi()
                                           m_guidePlateFirstArm < 0 && pendingPlateHoles >= 2);
     if (m_guidePlateCreateButton) m_guidePlateCreateButton->setEnabled(pendingPlateHoles >= 2);
     if (m_guidePlateExportButton) m_guidePlateExportButton->setEnabled(hasPlates);
+    if (m_guideGenerateButton) m_guideGenerateButton->setEnabled(hasPlates);
     showSection(m_guideLayersSection, hasWrap && !m_guidePlannedView);
     showSection(m_guideRegionSection, hasWrap);
     showSection(m_guideSlotSection, hasRegion);
@@ -2780,4 +2790,50 @@ bool MainWindow::exportGuidePlateFiles(const QString& folder, QString* report)
     if (report)
         *report = tr("Placas exportadas en %1: %2").arg(folder, written.join(QStringLiteral(", ")));
     return true;
+}
+
+void MainWindow::generateLeFortGuide()
+{
+    if (m_guidePlan.type != GuideType::LeFort || m_guidePlan.plates.empty()) {
+        QMessageBox::warning(this, tr("Guía de corte"), tr("Cree primero las placas."));
+        return;
+    }
+    if (m_guidePlannedView)
+        setGuidePlateView(false); // the guide sits on the bone before the cut
+    if (!m_guideWrapMesh || m_guideWrapMesh->GetNumberOfPolys() == 0 || !m_guidePrepared.ok) {
+        computeGuideWrap();
+        if (!m_guideWrapMesh || !m_guidePrepared.ok)
+            return;
+    }
+    const OsteotomyPath path = guideLeFortPath();
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    statusBar()->showMessage(tr("Guía de corte: trazando la guía sobre la osteotomía y las placas…"));
+    LeFortGuideParams params;
+    params.sleeveOuterDiameterMm = guideSleeveParams().outerDiameterMm;
+    const LeFortGuideLayout layout =
+        LeFortGuideCore::Layout(m_guidePrepared, m_guideWrapMesh, path, guidePredictiveHoles(), params);
+    QApplication::restoreOverrideCursor();
+    if (!layout.ok) {
+        QMessageBox::warning(this, tr("Guía de corte"), layout.error);
+        return;
+    }
+    // The plan is replaced by the laid-out guide; everything stays editable afterwards.
+    m_guidePlan.contour.clear();
+    m_guidePlan.paint = layout.paint;
+    m_guidePlan.slotPlan = layout.slotPlan;
+    m_guidePlan.holes = layout.fixation;
+    m_guidePendingEnds.clear();
+    // The Le Fort cut is ticked so the slit pieces are carved.
+    if (m_guideCutList)
+        for (int row = 0; row < m_guideCutList->count(); ++row) {
+            auto* item = m_guideCutList->item(row);
+            const size_t index = static_cast<size_t>(item->data(Qt::UserRole).toInt());
+            if (index < m_guideCuts.size() && m_guideCuts[index].path.points == path.points)
+                item->setCheckState(Qt::Checked);
+        }
+    repaintGuideWrap();
+    rebuildGuideMarkers();
+    buildGuideMesh();
+    if (m_guideReportLabel && m_guideMesh)
+        m_guideReportLabel->setText(layout.report + QStringLiteral("\n") + m_guideReportLabel->text());
 }

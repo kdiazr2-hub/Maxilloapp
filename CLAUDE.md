@@ -32,7 +32,7 @@ Tests (CTest):
 - `GeometryCoreTests`, `BoneCavityFillTests`, `MeshGeneratorTests` — plain C++ executables
 - `MaskToObjectTests` checks exact label extraction, committed cavity filling and immutable input.
 - `ModelWorkflowTests` checks guided MODELOS steps, paired point requirements, fine adjustment and mandatory acceptance.
-- `SplintHeightmapTests`, `SplintDesignTests`, `SplintContourEditTests`, `SplintPreviewSchedulerTests`, `ProjectSerializerTests`, `CompositeBlockTests`, `MeshRepairTests`, `OsteotomyCoreTests`, `CollisionTests`, `ImplicitCoreTests`, `WrapCoreTests`, `GuideBaseTests`, `CutSlotTests`, `GuideDesignTests`, `GuideSculptTests`, `PlateTests`, `GuidePlanTests`, `SegmentationProgressTests` — core tests declared with `add_core_test()`; synthetic arches in `tests/SplintTestGeometry.h`
+- `SplintHeightmapTests`, `SplintDesignTests`, `SplintContourEditTests`, `SplintPreviewSchedulerTests`, `ProjectSerializerTests`, `CompositeBlockTests`, `MeshRepairTests`, `OsteotomyCoreTests`, `CollisionTests`, `ImplicitCoreTests`, `WrapCoreTests`, `GuideBaseTests`, `CutSlotTests`, `GuideDesignTests`, `GuideSculptTests`, `PlateTests`, `LeFortGuideTests`, `GuidePlanTests`, `SegmentationProgressTests` — core tests declared with `add_core_test()`; synthetic arches in `tests/SplintTestGeometry.h`
 - `SplintWorkspaceTests` also covers the composite block flow and the osteotomy wizard (Le Fort I → BSSO → genioplasty)
 - `RepositionWorkspaceTests`, `SplintWorkspaceTests` — instantiate `MainWindow` (declared `friend`), render offscreen, write PNGs to `build/workspace-test-artifacts`
 - `Mesh3DViewInteractionTests` — drives `Mesh3DView` offscreen with synthetic mouse events
@@ -163,6 +163,17 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   purple markers on the pre-operative view, `exportGuidePlateFiles` writes `placa_N_lado.stl` plus
   `informe_placas.txt`). Not done yet: bone thickness under each screw from the CT, root proximity (teeth are not
   segmented separately), posterior bony interference, postoperative accuracy report.
+- `LeFortGuideCore::Layout` lays out the Le Fort cutting and drilling guide of that workflow from the plan (user's
+  report, 2026-09-19: the plates were new but the guide was still the hand-painted one). One piece across the midline
+  on the anterior wall of the bone before the cut: a band of brush dabs (5 mm) along the osteotomy — per 2.5 mm bin
+  across the plates' lateral extent (+5 mm), the most anterior forward-facing envelope vertex with |PathField| < 0.75;
+  where the cut crosses the piriform aperture and there is none, the band dips to the alveolar wall just below it;
+  a pad round every predictive hole, with a stem to the band if needed; the slit as `GuideSlot` pieces with ends,
+  broken by 3 mm bridges at the midline and every 15 mm (and at real holes in the wall), so the halves stay rigid;
+  four 1.5 mm fixation screws 6 mm above and below the cut at the lateral ends, clear of the sleeves. It only fills
+  the plan (paint, slotPlan, holes); `GuideDesignCore::Build` still carves it, and the brush and EDITAR still work.
+  UI: «Generar guía de corte» in «PLACAS A MEDIDA» (`MainWindow::generateLeFortGuide`). `LeFortGuideTests` uses a
+  synthetic aperture.
 - `GuideSculptCore` is the EDITAR step: Freeform's clay, except the clay is the signed distance grid the guide was
   contoured from. `SculptSession::Reset` bakes the finished guide (`BakeMeshField`, detail spacing, ≥ 3 mm padding so
   material can be added outside it) and the brushes edit that grid: Suavizar `φ += w·λ·(G∗φ − φ)` with a 3×3×3

@@ -275,6 +275,7 @@ private:
     void removeGuidePlate();
     void refreshGuidePlates();
     void exportGuidePlates();
+    void generateLeFortGuide(); // the cutting/drilling guide laid out from the plates and the osteotomy
     bool exportGuidePlateFiles(const QString& folder, QString* report = nullptr);
     bool guideSegmentMotion(std::array<double, 16>& motion, QString* error = nullptr) const;
     OsteotomyPath guideLeFortPath() const;
@@ -353,6 +354,7 @@ private:
     QPushButton* m_guidePlateArmButton = nullptr;
     QPushButton* m_guidePlateCreateButton = nullptr;
     QPushButton* m_guidePlateExportButton = nullptr;
+    QPushButton* m_guideGenerateButton = nullptr;
     QListWidget* m_guidePlateList = nullptr;
     QLabel* m_guidePlateCheckLabel = nullptr;
     QDoubleSpinBox* m_guidePlateThicknessSpin = nullptr;

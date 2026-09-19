@@ -1373,26 +1373,26 @@ public:
                 require(std::abs(hole.preopCenter[1]) < 0.05, "a segment hole did not go back to the pre-operative face");
         }
 
-        // 4. The guide, on the bone before the cut, with a sleeve at every predictive hole.
-        window.setGuidePlateView(false);
-        window.computeGuideWrap();
+        // 4. The cutting guide, laid out from the plates and the cut on the bone before it: one piece, the slit on
+        //    the osteotomy in pieces between bridges, a sleeve at every predictive hole, four 1.5 mm screws.
+        require(window.m_guideGenerateButton->isEnabled(), "the cutting guide cannot be generated from the plates");
+        window.m_guideGenerateButton->click();
         settle();
         require(window.m_guideWrapMesh && window.m_guidePrepared.ok, "the guide envelope was not built");
-        window.m_guideRegionButton->setChecked(true);
-        window.m_guideBrushSpin->setValue(4.0);
-        for (double z = -6.0; z <= 23.0; z += 2.0)
-            for (double x = -16.0; x <= 23.0; x += 2.0)
-                window.onGuideSurfaceBrushed(x, 0.0, z, Qt::NoModifier);
-        window.onGuideBrushFinished();
-        window.m_guideRegionButton->setChecked(false);
-        window.buildGuideMesh();
-        settle();
+        require(!window.m_guidePlannedView, "the guide was not shown on the bone before the cut");
+        require(!window.m_guidePlan.paint.empty() && window.m_guidePlan.slotPlan.size() >= 2 &&
+                    window.m_guidePlan.holes.size() == 4,
+                "the guide layout lacks its band, slit pieces or fixation screws");
+        for (const GuideFixationHole& screw : window.m_guidePlan.holes)
+            require(std::abs(screw.diameterMm - 1.5) < 1e-9, "a guide fixation screw is not 1.5 mm");
         require(window.m_guideMesh && window.m_guideMesh->GetNumberOfPolys() > 0, "the guide was not built");
         const QString guideReport = window.m_guideReportLabel->text();
         require(guideReport.contains(QStringLiteral("10 figura(s) sumada(s)")) &&
                     guideReport.contains(QStringLiteral("10 restada(s)")),
                 "the guide does not carry one sleeve per predictive hole: " + guideReport.toStdString());
         require(guideReport.contains(QStringLiteral("1 pieza(s)")), "the guide came apart: " + guideReport.toStdString());
+        require(guideReport.contains(QStringLiteral("4 agujero(s)")) && guideReport.contains(QStringLiteral("ranura")),
+                "the guide report lacks its screws or slit: " + guideReport.toStdString());
         // The sleeve's bore is open where the drill goes, and its body is solid around it.
         auto guideDistance = vtkSmartPointer<vtkImplicitPolyDataDistance>::New();
         guideDistance->SetInput(window.m_guideMesh);

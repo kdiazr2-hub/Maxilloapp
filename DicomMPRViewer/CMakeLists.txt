@@ -129,6 +129,7 @@ set(SOURCES
     src/GuideDesignCore.cpp
     src/GuideSculptCore.cpp
     src/PlateCore.cpp
+    src/LeFortGuideCore.cpp
     src/GuidePlanCore.cpp
     src/CollisionCore.cpp
     src/SurfaceContourOverlay.cpp
@@ -195,6 +196,7 @@ set(HEADERS
     src/GuideDesignCore.h
     src/GuideSculptCore.h
     src/PlateCore.h
+    src/LeFortGuideCore.h
     src/GuidePlanCore.h
     src/MeshRepairCore.h
     src/OsteotomyCore.h
@@ -322,6 +324,9 @@ add_core_test(GuideSculptTests tests/GuideSculptTests.cpp src/GuideSculptCore.cp
 add_core_test(PlateTests tests/PlateTests.cpp src/PlateCore.cpp src/GuideDesignCore.cpp src/GuideBaseCore.cpp
     src/CutSlotCore.cpp src/WrapCore.cpp src/OsteotomyCore.cpp src/ImplicitCore.cpp src/MeshRepairCore.cpp
     src/CompositeBlockCore.cpp)
+add_core_test(LeFortGuideTests tests/LeFortGuideTests.cpp src/LeFortGuideCore.cpp src/PlateCore.cpp
+    src/GuideDesignCore.cpp src/GuideBaseCore.cpp src/CutSlotCore.cpp src/WrapCore.cpp src/OsteotomyCore.cpp
+    src/ImplicitCore.cpp src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)
 add_core_test(GuidePlanTests tests/GuidePlanTests.cpp src/GuidePlanCore.cpp src/PlateCore.cpp src/GuideDesignCore.cpp
     src/GuideBaseCore.cpp src/CutSlotCore.cpp src/WrapCore.cpp src/OsteotomyCore.cpp src/ImplicitCore.cpp
     src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)
