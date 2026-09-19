@@ -27,6 +27,18 @@ enum class GuideType
     Chin    // chin segment + mandible after the genioplasty
 };
 
+enum class GuideWorkflowStep
+{
+    Envelope = 0,
+    PaintRight,
+    PaintLeft,
+    PaintBridge,
+    Holes,
+    Slots,
+    Build,
+    Complete
+};
+
 struct GuidePlan
 {
     GuideType type = GuideType::LeFort;
@@ -36,6 +48,9 @@ struct GuidePlan
     GuideDesignParams design;
     GuideContour contour;   // region marked with points (older plans)
     GuideBrushPaint paint;  // region painted with the brush; used when not empty
+    GuideWorkflowStep workflowStep = GuideWorkflowStep::Envelope;
+    int rightPaintEnd = 0; // exclusive paint index after the right support zone
+    int leftPaintEnd = 0;  // exclusive paint index after the left support zone
     std::vector<GuideSlot> slotPlan; // not "slots": Qt defines that as a keyword macro
     std::vector<GuideFixationHole> holes;
     // Boolean tools. Imported figures reload from `sourcePath`; project-object copies reload from `sourceLabel`.

@@ -3,8 +3,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // LeFortGuideCore
 //
-// The Le Fort I cutting and drilling guide of the custom-plate workflow, laid
-// out from the plan instead of painted by hand (Mohamed et al., Arch Craniofac
+// The Le Fort I cutting guide, laid out on pre-operative anatomy before the
+// definitive-position custom plate is designed (Mohamed et al., Arch Craniofac
 // Surg 2026; Abdelhamid et al., Cureus 2025; Benito Anguita et al., JCM 2025):
 //
 //   · one piece across the midline, bone-borne on the anterior maxillary wall;
@@ -12,8 +12,7 @@
 //     cut. Where the cut crosses the piriform aperture there is no anterior wall
 //     at that level, so the band dips onto the alveolar wall below it and the
 //     guide does not fall in two at the midline;
-//   · a pad round every predictive hole (the plates' screws, drilled through the
-//     guide's sleeves before the cut), joined to the band;
+//   · optional legacy pads around predictive holes when supplied by an older plan;
 //   · the slit interrupted by bridges (always one at the midline) so the two
 //     halves of the guide stay rigidly together;
 //   · four 1.5 mm fixation screws, above and below the cut at the lateral ends.
@@ -64,8 +63,8 @@ struct LeFortGuideLayout
 
 namespace LeFortGuideCore
 {
-// `preop` is the wrap of the bone before the cut (its field), `wrapMesh` its surface; `holes` are the
-// plates' predictive holes and `path` the planned Le Fort cut, both in pre-operative coordinates.
+// `preop` is the wrap of the bone before the cut (its field), `wrapMesh` its surface and `path` the planned
+// Le Fort cut. `holes` is optional compatibility data from older plate-first plans.
 LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, const OsteotomyPath& path,
                          const std::vector<PredictiveHole>& holes, const LeFortGuideParams& params = {});
 }

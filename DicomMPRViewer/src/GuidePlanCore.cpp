@@ -5,6 +5,8 @@
 
 #include <QJsonArray>
 
+#include <algorithm>
+
 namespace
 {
 QJsonArray pointJson(const std::array<double, 3>& p) { return QJsonArray{p[0], p[1], p[2]}; }
@@ -119,6 +121,9 @@ QJsonObject ToJson(const GuidePlan& plan)
                      {QStringLiteral("edgeMarginMm"), plan.design.edgeMarginMm}}},
         {QStringLiteral("contour"), GuideBaseCore::ContourToJson(plan.contour)},
         {QStringLiteral("paint"), GuideBaseCore::PaintToJson(plan.paint)},
+        {QStringLiteral("workflowStep"), static_cast<int>(plan.workflowStep)},
+        {QStringLiteral("rightPaintEnd"), plan.rightPaintEnd},
+        {QStringLiteral("leftPaintEnd"), plan.leftPaintEnd},
         {QStringLiteral("slots"), slotArray},
         {QStringLiteral("holes"), holes},
         {QStringLiteral("figures"), figures}};
@@ -172,6 +177,15 @@ GuidePlan FromJson(const QJsonObject& object)
 
     plan.contour = GuideBaseCore::ContourFromJson(object.value(QStringLiteral("contour")).toArray());
     plan.paint = GuideBaseCore::PaintFromJson(object.value(QStringLiteral("paint")).toArray());
+    const int workflowStep = object.value(QStringLiteral("workflowStep")).toInt(
+        static_cast<int>(GuideWorkflowStep::Envelope));
+    plan.workflowStep = static_cast<GuideWorkflowStep>(
+        std::clamp(workflowStep, static_cast<int>(GuideWorkflowStep::Envelope),
+                   static_cast<int>(GuideWorkflowStep::Complete)));
+    plan.rightPaintEnd = std::clamp(object.value(QStringLiteral("rightPaintEnd")).toInt(), 0,
+                                   static_cast<int>(plan.paint.size()));
+    plan.leftPaintEnd = std::clamp(object.value(QStringLiteral("leftPaintEnd")).toInt(),
+                                  plan.rightPaintEnd, static_cast<int>(plan.paint.size()));
 
     for (const QJsonValue& value : object.value(QStringLiteral("slots")).toArray()) {
         const QJsonObject o = value.toObject();

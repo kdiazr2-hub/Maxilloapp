@@ -20,10 +20,10 @@
 //
 // The plate is a field like the guide (never a chain of mesh booleans): a
 // ribbon of uniform thickness swept along each arm, lying on the bone. Each arm
-// follows its holes' bone while that bone is under it and turns gently, and
-// crosses the gap the movement opens at the cut (or a notch, or the cut face)
-// in a straight bar — like a commercial plate's connector — instead of diving
-// into it. Edges are rounded by sweeping a shrunken ribbon and growing it back,
+// follows its holes' bone while that bone is under it and turns gently. Where
+// advancement separates the cut edges, it reaches the cranial edge, bends
+// outward by the advancement and then turns onto the repositioned Le Fort —
+// the stepped contour of a surgically bent plate. Edges are rounded by sweeping a shrunken ribbon and growing it back,
 // the bone carves the seat where the flat ribbon meets a curve across its width,
 // and the screw bores and countersinks are subtracted. Contoured once.
 //
@@ -143,7 +143,8 @@ struct PlateBuildResult
     vtkSmartPointer<vtkPolyData> mesh;
     int pieces = 0;
     double maxFitGapMm = 0.0; // largest gap under a hole between the plate and the real bone
-    double bridgedMm = 0.0;   // straight bar over the gap at the cut, summed over the arms
+    double bridgedMm = 0.0;   // gap bridged at the cut, summed over the arms
+    int steppedBridges = 0;   // arms bent outward at the cranial edge before entering the moved segment
 };
 
 // Which planned bone is nearest a point, and how far it is: lets each plate arm follow its own bone and tells

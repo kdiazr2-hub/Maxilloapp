@@ -142,12 +142,17 @@ public:
                     window.m_orthoNextButton->isEnabled(),
                 "the step rail did not jump to FERULA");
         require(window.m_splintView->standardViewIndex() == 0, "FERULA does not open in the frontal view");
-        // GUIAS is the last step of the bar.
+        // GUIAS and PLACAS are separate consecutive products.
         window.m_orthoStepButtons[7]->click();
         settle();
         require(window.m_orthoStep == 7 && window.m_viewModeStack->currentIndex() == 7 &&
-                    !window.m_orthoNextButton->isEnabled(),
-                "GUIAS is not the last step of the bar");
+                    window.m_orthoNextButton->isEnabled() && !window.m_guidePlateWorkspace,
+                "GUIAS is not the pre-operative guide step");
+        window.m_orthoStepButtons[8]->click();
+        settle();
+        require(window.m_orthoStep == 8 && window.m_viewModeStack->currentIndex() == 7 &&
+                    !window.m_orthoNextButton->isEnabled() && window.m_guidePlateWorkspace,
+                "PLACAS is not the final separate step of the bar");
         window.m_orthoStepButtons[6]->click();
         settle();
         for (auto* tab : window.findChildren<QToolButton*>(QStringLiteral("MT")))
@@ -942,17 +947,45 @@ public:
         require(window.m_guideRegionSection->isVisibleTo(&window) && !window.m_guideSlotSection->isVisibleTo(&window),
                 "the support region step did not appear alone with the envelope");
 
-        // 2. The support region, painted with the brush on the envelope, in any order.
+        // 2-4. The assistant collects right support, left support and the narrow subnasal bridge separately.
+        require(window.m_guidePlan.workflowStep == GuideWorkflowStep::PaintRight,
+                "the assistant did not advance to the right support");
         window.m_guideRegionButton->setChecked(true);
         require(window.m_guidePointMode == 1, "painting the region did not switch the mode");
         window.m_guideBrushSpin->setValue(4.0);
         for (double z = 3.0; z <= 17.0; z += 2.0)
-            for (double x = -14.0; x <= 14.0; x += 2.0)
+            for (double x = 2.0; x <= 14.0; x += 2.0)
                 window.onGuideSurfaceBrushed(x, 0.0, z, Qt::NoModifier);
         window.onGuideBrushFinished();
-        require(window.m_guidePlan.paint.size() > 20, "the brushed region was not collected");
-        require(window.m_guideSlotSection->isVisibleTo(&window) && window.m_guideBuildSection->isVisibleTo(&window),
-                "the slot and build steps did not appear with the painted region");
+        window.advanceGuideWorkflow();
+        require(window.m_guidePlan.workflowStep == GuideWorkflowStep::PaintLeft,
+                "the assistant did not advance to the left support");
+        for (double z = 3.0; z <= 17.0; z += 2.0)
+            for (double x = -14.0; x <= -2.0; x += 2.0)
+                window.onGuideSurfaceBrushed(x, 0.0, z, Qt::NoModifier);
+        window.onGuideBrushFinished();
+        window.advanceGuideWorkflow();
+        require(window.m_guidePlan.workflowStep == GuideWorkflowStep::PaintBridge &&
+                    std::abs(window.m_guideBrushSpin->value() - 2.0) < 1e-9,
+                "the subnasal bridge did not receive its smaller brush");
+        for (double x = -3.0; x <= 3.0; x += 1.0)
+            window.onGuideSurfaceBrushed(x, 0.0, 5.0, Qt::NoModifier);
+        window.onGuideBrushFinished();
+        window.advanceGuideWorkflow();
+        require(window.m_guidePlan.paint.size() > 20 &&
+                    window.m_guidePlan.workflowStep == GuideWorkflowStep::Holes,
+                "the three painted regions were not collected");
+        require(window.m_guideHoleSection->isVisibleTo(&window) &&
+                    !window.m_guideSlotSection->isVisibleTo(&window) &&
+                    !window.m_guideBuildSection->isVisibleTo(&window),
+                "the assistant did not isolate the perforation step");
+
+        window.onGuidePointPicked(0, -8.0, 0.0, 14.0);
+        window.onGuidePointPicked(0, 8.0, 0.0, 14.0);
+        window.advanceGuideWorkflow();
+        require(window.m_guidePlan.workflowStep == GuideWorkflowStep::Slots &&
+                    window.m_guideSlotSection->isVisibleTo(&window),
+                "the assistant did not advance from perforations to hendiduras");
 
         // A splint is copied into the guide plan, never reused by pointer, and a connector is placed with 3 points.
         // The splint was made against the repositioned Le Fort (+30 mm in z).
@@ -1004,8 +1037,9 @@ public:
         require(window.m_guidePlan.paint.size() == dabs + 1 && window.m_guidePlan.paint.back().erase,
                 "Ctrl did not erase with the brush");
         window.onGuideSurfaceBrushed(0.0, 0.0, 10.0, Qt::NoModifier); // paint the spot back
+        const double brushBeforeDrag = window.m_guideBrushSpin->value();
         window.onGuideBrushRadiusDragged(-40.0);
-        require(window.m_guideBrushSpin->value() > 4.0, "dragging up did not grow the brush");
+        require(window.m_guideBrushSpin->value() > brushBeforeDrag, "dragging up did not grow the brush");
         window.m_guideBrushSpin->setValue(4.0);
         window.m_guideRegionButton->setChecked(false);
         // Layers can be hidden one by one.
@@ -1023,6 +1057,10 @@ public:
                 "the slot ends were not recorded");
         require(window.m_guideCutList->item(0)->checkState() == Qt::Checked,
                 "placing the ends did not tick the osteotomy");
+        window.advanceGuideWorkflow();
+        require(window.m_guidePlan.workflowStep == GuideWorkflowStep::Build &&
+                    window.m_guideBuildSection->isVisibleTo(&window),
+                "the assistant did not unlock guide creation after the slot");
 
         // 4. A Boolean figure: a thin box subtracted through the wall, placed on the surface with exact measurements.
         window.m_guideFigureShapeCombo->setCurrentIndex(
@@ -1054,7 +1092,7 @@ public:
         window.m_guideHoleButton->setChecked(true);
         window.onGuidePointPicked(0, 0.0, 0.0, 15.0);
         window.m_guideHoleButton->setChecked(false);
-        require(window.m_guidePlan.holes.size() == 1, "the fixation hole was not recorded");
+        require(window.m_guidePlan.holes.size() == 3, "the fixation hole was not recorded");
 
         // 6. Build: one piece, shown in the view and listed as an object.
         window.m_guideThicknessSpin->setValue(2.5);
@@ -1187,7 +1225,10 @@ public:
         settle();
         reopened.restoreGuidePlan(state);
         require(reopened.m_guidePlan.paint.size() == window.m_guidePlan.paint.size() && reopened.m_guidePlan.slotPlan.size() == 1 &&
-                    reopened.m_guidePlan.holes.size() == 1 && reopened.m_guidePlan.figures.size() == 1,
+                    reopened.m_guidePlan.holes.size() == 3 && reopened.m_guidePlan.figures.size() == 1 &&
+                    reopened.m_guidePlan.workflowStep == GuideWorkflowStep::Complete &&
+                    reopened.m_guidePlan.rightPaintEnd == window.m_guidePlan.rightPaintEnd &&
+                    reopened.m_guidePlan.leftPaintEnd == window.m_guidePlan.leftPaintEnd,
                 "the guide plan did not survive the project");
         require(reopened.m_guideCutList->count() == 1, "the reloaded plan does not offer its cut again");
         require(reopened.m_guideFigureList->count() == 1, "the reloaded plan does not list its figure");
@@ -1299,12 +1340,44 @@ public:
             if (tab->text() == QStringLiteral("GUIAS"))
                 tab->click();
         settle();
-        require(window.m_guideTypeCombo->currentText().contains(QStringLiteral("Placas")),
-                "the Le Fort guide type is not «Placas + guía»");
-        require(window.m_guidePlateSection->isVisibleTo(&window), "the custom plates section is missing");
+        require(window.m_guideTypeCombo->currentText().contains(QStringLiteral("Guía de corte")),
+                "the Le Fort workflow does not start with the cutting guide");
+        require(!window.m_guidePlateSection->isVisibleTo(&window),
+                "the final-position plate is offered before the cutting guide exists");
         window.m_guideDetailSpin->setValue(0.5); // coarse: a wiring test
 
-        // 1. A paranasal plate on the right: marking its holes switches to the planned bone.
+        // 1. The cutting guide is made first, on the preserved pre-operative
+        // anatomy and without plate sleeves or final-position geometry.
+        require(window.m_guideGenerateButton->isEnabled(),
+                "the pre-operative cutting guide cannot be generated before plates");
+        GuideFigure legacyFigure;
+        legacyFigure.shape = GuideFigureShape::Sphere;
+        legacyFigure.operation = GuideFigureOperation::Add;
+        legacyFigure.diameterMm = 8.0;
+        legacyFigure.matrix[3] = 80.0; // stale saved-project figure behind the intended guide
+        window.m_guidePlan.figures.push_back(legacyFigure);
+        window.m_guideGenerateButton->click();
+        settle();
+        require(window.m_guideWrapMesh && window.m_guidePrepared.ok && window.m_guideMesh,
+                "the pre-operative cutting guide was not built");
+        require(!window.m_guidePlannedView,
+                "the cutting guide was shown on the final repositioned bone");
+        require(window.m_guidePlan.plates.empty() && window.m_guidePlan.figures.empty() &&
+                    window.m_guideBuiltFigures.empty(),
+                "the cutting guide retained legacy or plate-derived geometry");
+        require(!window.m_guidePlateSection->isVisibleTo(&window),
+                "plate controls leaked into the cutting-guide module");
+
+        for (auto* tab : window.findChildren<QToolButton*>(QStringLiteral("MT")))
+            if (tab->text() == QStringLiteral("PLACAS"))
+                tab->click();
+        settle();
+        require(window.m_guidePlateWorkspace && window.m_orthoStep == 8 &&
+                    window.m_guidePlateSection->isVisibleTo(&window) &&
+                    !window.m_guideTypeSection->isVisibleTo(&window) && window.m_guidePlannedView,
+                "the personalized-plate module did not open independently on the final Le Fort");
+
+        // 2. A paranasal plate on the right: marking its holes switches to the planned bone.
         window.m_guidePlateSideCombo->setCurrentIndex(window.m_guidePlateSideCombo->findData(static_cast<int>(PlateSide::Right)));
         window.m_guidePlateTemplateCombo->setCurrentIndex(
             window.m_guidePlateTemplateCombo->findData(static_cast<int>(PlateTemplate::Paranasal)));
@@ -1328,7 +1401,7 @@ public:
                 "the right plate was not built");
         require(window.m_guideView->meshData(kGuidePlateActorBase) != nullptr, "the plate is not shown");
 
-        // 2. An L plate on the left: the piriform arm, "next arm", the buttress arm.
+        // 3. An L plate on the left: the piriform arm, "next arm", the buttress arm.
         window.m_guidePlateSideCombo->setCurrentIndex(window.m_guidePlateSideCombo->findData(static_cast<int>(PlateSide::Left)));
         window.m_guidePlateTemplateCombo->setCurrentIndex(
             window.m_guidePlateTemplateCombo->findData(static_cast<int>(PlateTemplate::LShape)));
@@ -1360,7 +1433,8 @@ public:
                     QDir(artifactsDir).filePath(QStringLiteral("plates-planned.png"))),
                 "the plates screenshot was not written");
 
-        // 3. The predictive holes: the cranial ones stay, the segment's go back to where that bone is before the cut.
+        // 4. Predictive coordinates remain available for the plate report, but
+        // they do not get added retrospectively to the cutting guide.
         const auto predicted = window.guidePredictiveHoles();
         require(predicted.size() == 10, "not every plate hole was predicted");
         for (const PredictiveHole& hole : predicted) {
@@ -1373,51 +1447,26 @@ public:
                 require(std::abs(hole.preopCenter[1]) < 0.05, "a segment hole did not go back to the pre-operative face");
         }
 
-        // 4. The cutting guide, laid out from the plates and the cut on the bone before it: one piece, the slit on
-        //    the osteotomy in pieces between bridges, a sleeve at every predictive hole, four 1.5 mm screws.
-        require(window.m_guideGenerateButton->isEnabled(), "the cutting guide cannot be generated from the plates");
-        // With plates there is one way to make the Le Fort guide: the hand-drawn steps wait until it exists.
-        window.setGuidePlateView(false);
-        window.computeGuideWrap();
-        settle();
-        require(!window.m_guideRegionSection->isVisibleTo(&window) && !window.m_guideBuildSection->isVisibleTo(&window),
-                "the hand-drawn guide steps compete with «Generar guía de corte»");
-        window.m_guideGenerateButton->click();
+        // Return to the pre-operative view: the already-created guide remains
+        // one piece and is not rebuilt from plate holes.
+        for (auto* tab : window.findChildren<QToolButton*>(QStringLiteral("MT")))
+            if (tab->text() == QStringLiteral("GUIAS"))
+                tab->click();
         settle();
         require(window.m_guideWrapMesh && window.m_guidePrepared.ok, "the guide envelope was not built");
-        require(!window.m_guidePlannedView, "the guide was not shown on the bone before the cut");
+        require(!window.m_guidePlateWorkspace && !window.m_guidePlannedView,
+                "the guide module did not return to the bone before the cut");
         require(!window.m_guidePlan.paint.empty() && window.m_guidePlan.slotPlan.size() >= 2 &&
                     window.m_guidePlan.holes.size() == 4,
                 "the guide layout lacks its band, slit pieces or fixation screws");
         for (const GuideFixationHole& screw : window.m_guidePlan.holes)
             require(std::abs(screw.diameterMm - 1.5) < 1e-9, "a guide fixation screw is not 1.5 mm");
         require(window.m_guideMesh && window.m_guideMesh->GetNumberOfPolys() > 0, "the guide was not built");
-        const QString guideReport = window.m_guideReportLabel->text();
-        require(guideReport.contains(QStringLiteral("10 figura(s) sumada(s)")) &&
-                    guideReport.contains(QStringLiteral("10 restada(s)")),
-                "the guide does not carry one sleeve per predictive hole: " + guideReport.toStdString());
-        require(guideReport.contains(QStringLiteral("1 pieza(s)")), "the guide came apart: " + guideReport.toStdString());
-        require(guideReport.contains(QStringLiteral("4 agujero(s)")) && guideReport.contains(QStringLiteral("ranura")),
-                "the guide report lacks its screws or slit: " + guideReport.toStdString());
+        require(window.m_guideBuiltFigures.empty(),
+                "plate sleeves were added to an already-created cutting guide");
         require(window.m_guideBuildSection->isVisibleTo(&window) &&
                     window.m_guideBuildButton->text() == QStringLiteral("Reconstruir guía"),
                 "the generated guide cannot be retouched and rebuilt");
-        // The sleeve's bore is open where the drill goes, and its body is solid around it.
-        auto guideDistance = vtkSmartPointer<vtkImplicitPolyDataDistance>::New();
-        guideDistance->SetInput(window.m_guideMesh);
-        for (const PredictiveHole& hole : predicted) {
-            const auto along = [&hole](double mm, double sideways) {
-                return std::array<double, 3>{hole.preopCenter[0] + hole.preopAxis[0] * mm + sideways,
-                                             hole.preopCenter[1] + hole.preopAxis[1] * mm,
-                                             hole.preopCenter[2] + hole.preopAxis[2] * mm};
-            };
-            const auto bore = along(2.5, 0.0);
-            const auto wall = along(2.5, 1.5);
-            require(guideDistance->EvaluateFunction(bore[0], bore[1], bore[2]) > 0.0,
-                    "a sleeve's bore is closed at a predictive hole");
-            require(guideDistance->EvaluateFunction(wall[0], wall[1], wall[2]) < 0.0,
-                    "a sleeve's wall is missing at a predictive hole");
-        }
         window.m_guideShowWrapCheck->setChecked(false); // the guide alone, with its sleeves
         window.m_guideView->setViewAlongDirection({4.0, 0.0, 10.0}, {-0.35, -1.0, -0.25}, {0.0, 0.0, 1.0}, 32.0);
         window.m_guideView->render();

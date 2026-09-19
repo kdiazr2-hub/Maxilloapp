@@ -397,9 +397,9 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
     layout->setContentsMargins(12, 12, 12, 12);
     layout->setSpacing(6);
 
-    auto* title = new QLabel(tr("Guías quirúrgicas"), panel);
-    title->setObjectName(QStringLiteral("GuidedPanelTitle"));
-    layout->addWidget(title);
+    m_guidePanelTitle = new QLabel(tr("Guía de corte"), panel);
+    m_guidePanelTitle->setObjectName(QStringLiteral("GuidedPanelTitle"));
+    layout->addWidget(m_guidePanelTitle);
     m_guideHintLabel = new QLabel(panel);
     m_guideHintLabel->setWordWrap(true);
     m_guideHintLabel->setStyleSheet(QStringLiteral("color:#f5f5f7; font-size:11px; padding:2px 0 6px 0;"));
@@ -452,8 +452,9 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
 
     // ── 1. Guide type and envelope ────────────────────────────────────────
     auto* typeBox = step(tr("1. TIPO DE GUÍA"));
+    m_guideTypeSection = typeBox->parentWidget();
     m_guideTypeCombo = new QComboBox(panel);
-    m_guideTypeCombo->addItem(tr("Placas + guía Le Fort I"), static_cast<int>(GuideType::LeFort));
+    m_guideTypeCombo->addItem(tr("Guía de corte + placa Le Fort I"), static_cast<int>(GuideType::LeFort));
     m_guideTypeCombo->addItem(tr("Guía de mentón"), static_cast<int>(GuideType::Chin));
     connect(m_guideTypeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
             [this](int) { setGuideType(static_cast<GuideType>(m_guideTypeCombo->currentData().toInt())); });
@@ -484,17 +485,41 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
     layerRow->addStretch(1);
     layout->addWidget(m_guideLayersSection);
 
-    // ── Custom plates (Le Fort): designed on the planned bone, tied to the guide by predictive holes ──
-    auto* plateBox = step(tr("PLACAS A MEDIDA"));
+    // The cutting guide is built as a guided sequence on the pre-operative anatomy.
+    auto* automaticGuideBox = step(tr("PASO ACTUAL"));
+    m_guideAutomaticSection = automaticGuideBox->parentWidget();
+    m_guideWorkflowLabel = new QLabel(panel);
+    m_guideWorkflowLabel->setWordWrap(true);
+    m_guideWorkflowLabel->setStyleSheet(QStringLiteral("color:#f5f5f7; font-weight:700; padding:3px 0;"));
+    automaticGuideBox->addWidget(m_guideWorkflowLabel);
+    auto* workflowRow = new QHBoxLayout();
+    workflowRow->setSpacing(4);
+    m_guideWorkflowBackButton = new QPushButton(tr("Anterior"), panel);
+    connect(m_guideWorkflowBackButton, &QPushButton::clicked, this, &MainWindow::retreatGuideWorkflow);
+    workflowRow->addWidget(m_guideWorkflowBackButton);
+    m_guideWorkflowNextButton = new QPushButton(tr("Continuar"), panel);
+    connect(m_guideWorkflowNextButton, &QPushButton::clicked, this, &MainWindow::advanceGuideWorkflow);
+    workflowRow->addWidget(m_guideWorkflowNextButton);
+    automaticGuideBox->addLayout(workflowRow);
+    // Kept as an internal compatibility hook for old automated tests/projects;
+    // the user-facing workflow no longer generates an automatic support shape.
+    m_guideGenerateButton = new QPushButton(tr("Generar guía de corte"), panel);
+    m_guideGenerateButton->setToolTip(tr("Crea la guía sobre el Le Fort sin movimientos, con la ranura situada "
+                                         "sobre la osteotomía."));
+    connect(m_guideGenerateButton, &QPushButton::clicked, this, &MainWindow::generateLeFortGuide);
+    m_guideGenerateButton->hide();
+
+    // ── Custom plates: designed only after the guide, on the final planned bone ──
+    auto* plateBox = step(tr("1. DISEÑO · POSICIÓN DEFINITIVA"));
     m_guidePlateSection = plateBox->parentWidget();
     auto* plateForm = new QFormLayout();
     m_guidePlateSideCombo = new QComboBox(panel);
     m_guidePlateSideCombo->addItem(tr("Derecha"), static_cast<int>(PlateSide::Right));
     m_guidePlateSideCombo->addItem(tr("Izquierda"), static_cast<int>(PlateSide::Left));
     m_guidePlateTemplateCombo = new QComboBox(panel);
-    m_guidePlateTemplateCombo->addItem(tr("En L (paranasal + cigomática)"), static_cast<int>(PlateTemplate::LShape));
     m_guidePlateTemplateCombo->addItem(tr("Paranasal (mínimamente invasiva)"),
                                        static_cast<int>(PlateTemplate::Paranasal));
+    m_guidePlateTemplateCombo->addItem(tr("En L (paranasal + cigomática)"), static_cast<int>(PlateTemplate::LShape));
     connect(m_guidePlateTemplateCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
             [this](int) { updateGuideUi(); });
     plateForm->addRow(tr("Lado:"), m_guidePlateSideCombo);
@@ -542,17 +567,8 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
     m_guidePlateCheckLabel = new QLabel(panel);
     m_guidePlateCheckLabel->setWordWrap(true);
     plateBox->addWidget(m_guidePlateCheckLabel);
-    // The Le Fort cutting and drilling guide, laid out from the plates and the cut; it can still be retouched
-    // with the brush and EDITAR afterwards.
-    m_guideGenerateButton = new QPushButton(tr("Generar guía de corte"), panel);
-    m_guideGenerateButton->setToolTip(tr("Guía de una pieza sobre la pared anterior: ranura sobre la osteotomía "
-                                         "con puentes, camisa en cada agujero de las placas y 4 tornillos de "
-                                         "fijación de 1,5 mm."));
-    connect(m_guideGenerateButton, &QPushButton::clicked, this, &MainWindow::generateLeFortGuide);
-    plateBox->addWidget(m_guideGenerateButton);
-
-    // ── 2. Support region ─────────────────────────────────────────────────
-    auto* regionBox = step(tr("2. ZONA DE APOYO"));
+    // ── 2-4. Support zones and subnasal bridge ────────────────────────────
+    auto* regionBox = step(tr("ZONA DE APOYO"));
     m_guideRegionSection = regionBox->parentWidget();
     m_guideRegionButton = new QPushButton(tr("Pintar zona"), panel);
     m_guideRegionButton->setCheckable(true);
@@ -567,8 +583,8 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
     connect(clearRegion, &QPushButton::clicked, this, &MainWindow::clearGuideRegion);
     regionBox->addWidget(clearRegion);
 
-    // ── 3. Saw slots ──────────────────────────────────────────────────────
-    auto* slotBox = step(tr("3. RANURAS"));
+    // ── 6. Saw slots ──────────────────────────────────────────────────────
+    auto* slotBox = step(tr("6. HENDIDURAS DE CORTE"));
     m_guideSlotSection = slotBox->parentWidget();
     m_guideCutList = new QListWidget(panel);
     m_guideCutList->setMaximumHeight(72);
@@ -583,8 +599,8 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
     connect(clearEnds, &QPushButton::clicked, this, &MainWindow::clearGuideSlotEnds);
     slotBox->addWidget(clearEnds);
 
-    // ── 4. Fixation holes ─────────────────────────────────────────────────
-    auto* holeBox = step(tr("4. AGUJEROS"));
+    // ── 5. Fixation holes ─────────────────────────────────────────────────
+    auto* holeBox = step(tr("5. PERFORACIONES"));
     m_guideHoleSection = holeBox->parentWidget();
     m_guideHoleButton = new QPushButton(tr("Marcar agujeros"), panel);
     m_guideHoleButton->setCheckable(true);
@@ -662,8 +678,8 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
     connect(removeFigure, &QPushButton::clicked, this, &MainWindow::removeGuideFigure);
     figureBox->addWidget(removeFigure);
 
-    // ── 5. Build ──────────────────────────────────────────────────────────
-    auto* buildBox = step(tr("5. CREAR"));
+    // ── 7. Build ──────────────────────────────────────────────────────────
+    auto* buildBox = step(tr("7. CREAR GUÍA"));
     m_guideBuildSection = buildBox->parentWidget();
     auto* guideForm = new QFormLayout();
     m_guideThicknessSpin = spin(2.5, 0.5, 10.0, 0.1);
@@ -674,7 +690,7 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
     buildBox->addWidget(m_guideBuildButton);
 
     // ── 6. Edit: the finished guide as clay ───────────────────────────────
-    auto* editBox = step(tr("6. EDITAR"));
+    auto* editBox = step(tr("7. EDITAR"));
     m_guideEditSection = editBox->parentWidget();
     m_guideEditButton = new QPushButton(tr("Editar la guía"), panel);
     m_guideEditButton->setCheckable(true);
@@ -795,7 +811,7 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
     editBox->addWidget(m_guideSculptBar);
 
     // ── 7. Export ─────────────────────────────────────────────────────────
-    auto* exportBox = step(tr("6. EXPORTAR"));
+    auto* exportBox = step(tr("8. EXPORTAR"));
     m_guideExportSection = exportBox->parentWidget();
     m_guideThicknessCheck = new QCheckBox(tr("Mapa de espesor"), panel);
     connect(m_guideThicknessCheck, &QCheckBox::toggled, this, [this](bool) { applyGuideThicknessColors(); });
@@ -805,8 +821,8 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
     exportBox->addWidget(m_guideExportButton);
 
     // ── Advanced: the numbers that have a sensible default ────────────────
-    const auto [advancedHolder, advancedBox] = fold(tr("Avanzado"));
-    Q_UNUSED(advancedHolder);
+    const auto [advancedHolder, advancedBox] = fold(tr("Avanzado · guía"));
+    m_guideAdvancedSection = advancedHolder;
     auto* advancedForm = new QFormLayout();
     m_guideGapSpin = spin(1.5, 0.0, 10.0, 0.1);
     m_guideDetailSpin = spin(0.3, 0.1, 1.0, 0.05);
@@ -839,7 +855,12 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
     advancedForm->addRow(tr("Espesor en el borde:"), m_guideEdgeFractionSpin);
     advancedForm->addRow(tr("Redondeo del borde:"), m_guideEdgeRoundSpin);
     advancedForm->addRow(tr("Opacidad envolvente:"), m_guideWrapOpacitySpin);
-    // Plates and the sleeves their predictive holes put on the guide (defaults: 1.0 mm titanium, 2.0 mm screws).
+    advancedBox->addLayout(advancedForm);
+
+    // Plate dimensions belong to the separate final-position plate module.
+    const auto [plateAdvancedHolder, plateAdvancedBox] = fold(tr("Avanzado · placa"));
+    m_guidePlateAdvancedSection = plateAdvancedHolder;
+    auto* plateAdvancedForm = new QFormLayout();
     const PlateParams plateDefaults;
     const SleeveParams sleeveDefaults;
     m_guidePlateThicknessSpin = spin(plateDefaults.thicknessMm, 0.6, 2.5, 0.1);
@@ -847,17 +868,17 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
     m_guideSleeveBoreSpin = spin(sleeveDefaults.boreDiameterMm, 0.8, 4.0, 0.1);
     m_guideSleeveOuterSpin = spin(sleeveDefaults.outerDiameterMm, 2.0, 8.0, 0.1);
     m_guideSleeveHeightSpin = spin(sleeveDefaults.heightMm, 1.0, 10.0, 0.5);
-    advancedForm->addRow(tr("Espesor de placa:"), m_guidePlateThicknessSpin);
-    advancedForm->addRow(tr("Agujero-osteotomía mín.:"), m_guidePlateMinCutSpin);
-    advancedForm->addRow(tr("Camisa, orificio:"), m_guideSleeveBoreSpin);
-    advancedForm->addRow(tr("Camisa, exterior:"), m_guideSleeveOuterSpin);
-    advancedForm->addRow(tr("Camisa, altura:"), m_guideSleeveHeightSpin);
+    plateAdvancedForm->addRow(tr("Espesor de placa:"), m_guidePlateThicknessSpin);
+    plateAdvancedForm->addRow(tr("Agujero-osteotomía mín.:"), m_guidePlateMinCutSpin);
+    plateAdvancedForm->addRow(tr("Camisa, orificio:"), m_guideSleeveBoreSpin);
+    plateAdvancedForm->addRow(tr("Camisa, exterior:"), m_guideSleeveOuterSpin);
+    plateAdvancedForm->addRow(tr("Camisa, altura:"), m_guideSleeveHeightSpin);
     for (QDoubleSpinBox* box : {m_guidePlateThicknessSpin, m_guidePlateMinCutSpin})
         connect(box, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) {
             m_guidePlateMeshes.clear(); // rebuilt with the new numbers when next shown
             refreshGuidePlates();
         });
-    advancedBox->addLayout(advancedForm);
+    plateAdvancedBox->addLayout(plateAdvancedForm);
 
     m_guideReportLabel = new QLabel(panel);
     m_guideReportLabel->setWordWrap(true);
@@ -869,7 +890,7 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
     return scroll;
 }
 
-void MainWindow::setGuidesWorkspace(bool enabled)
+void MainWindow::setGuidesWorkspace(bool enabled, bool plateWorkspace)
 {
     if (m_viewModeStack && enabled)
         m_viewModeStack->setCurrentIndex(7);
@@ -881,6 +902,12 @@ void MainWindow::setGuidesWorkspace(bool enabled)
             m_guideMoveFigureButton->setChecked(false);
         return;
     }
+    m_guidePlateWorkspace = plateWorkspace;
+    if (m_guidePanelTitle)
+        m_guidePanelTitle->setText(plateWorkspace ? tr("Placa personalizada") : tr("Guía de corte"));
+    if (m_guideView)
+        m_guideView->setTitle(plateWorkspace ? tr("PLACA PERSONALIZADA · LE FORT DEFINITIVO")
+                                             : tr("GUÍA DE CORTE · ANATOMÍA PREOPERATORIA"));
     // Older plans stored copied splints with an identity matrix even though
     // their Le Fort had already moved. Migrate those copies once on entry.
     if (m_guidePlan.type == GuideType::LeFort) {
@@ -898,7 +925,10 @@ void MainWindow::setGuidesWorkspace(bool enabled)
     refreshGuideCutList();
     refreshGuideFigureList();
     refreshGuidePlates();
+    setGuidePlateView(plateWorkspace && m_guideMesh && m_guideMesh->GetNumberOfPolys() > 0);
     syncGuideView();
+    if (!plateWorkspace && m_guideWrapMesh)
+        activateGuideWorkflowStep();
     updateGuideUi();
 }
 
@@ -919,7 +949,11 @@ void MainWindow::setGuideType(GuideType type)
     m_guideMesh = nullptr;
     m_guidePlan.contour.clear();
     m_guidePlan.paint.clear();
+    m_guidePlan.holes.clear();
     m_guidePlan.slotPlan.clear();
+    m_guidePlan.workflowStep = GuideWorkflowStep::Envelope;
+    m_guidePlan.rightPaintEnd = 0;
+    m_guidePlan.leftPaintEnd = 0;
     m_guidePendingEnds.clear();
     refreshGuideSources();
     refreshGuideCutList();
@@ -1038,6 +1072,18 @@ void MainWindow::computeGuideWrap()
     }
     m_guideWrapMesh = wrap.mesh;
     m_guidePrepared = prepared;
+    if (m_guidePlan.workflowStep == GuideWorkflowStep::Envelope) {
+        // Starting the assistant is an explicit restart: legacy automatic geometry
+        // must not leak into the manually painted guide.
+        m_guidePlan.contour.clear();
+        m_guidePlan.paint.clear();
+        m_guidePlan.holes.clear();
+        m_guidePlan.slotPlan.clear();
+        m_guidePlan.rightPaintEnd = 0;
+        m_guidePlan.leftPaintEnd = 0;
+        m_guideMesh = nullptr;
+        m_guidePlan.workflowStep = GuideWorkflowStep::PaintRight;
+    }
     if (m_guidePrepared.ok) {
         for (GuideFigure& figure : m_guidePlan.figures) {
             if (figure.shape != GuideFigureShape::CurvedTube || figure.controlPoints.size() < 3)
@@ -1065,10 +1111,103 @@ void MainWindow::computeGuideWrap()
         m_guideWrapOpacitySpin->setValue(1.0);
     }
     syncGuideView();
+    activateGuideWorkflowStep();
     updateGuideUi();
     if (m_guideReportLabel)
         m_guideReportLabel->setText(wrap.report);
     statusBar()->showMessage(wrap.report);
+}
+
+bool MainWindow::guideWorkflowStepComplete() const
+{
+    const auto hasPaintSince = [this](int begin) {
+        begin = std::clamp(begin, 0, static_cast<int>(m_guidePlan.paint.size()));
+        return std::any_of(m_guidePlan.paint.begin() + begin, m_guidePlan.paint.end(),
+                           [](const GuideBrushStroke& stroke) { return !stroke.erase; });
+    };
+    switch (m_guidePlan.workflowStep) {
+    case GuideWorkflowStep::Envelope:
+        return m_guideWrapMesh && m_guideWrapMesh->GetNumberOfPolys() > 0;
+    case GuideWorkflowStep::PaintRight:
+        return hasPaintSince(0);
+    case GuideWorkflowStep::PaintLeft:
+        return hasPaintSince(m_guidePlan.rightPaintEnd);
+    case GuideWorkflowStep::PaintBridge:
+        return hasPaintSince(m_guidePlan.leftPaintEnd);
+    case GuideWorkflowStep::Holes:
+        return m_guidePlan.holes.size() >= 2;
+    case GuideWorkflowStep::Slots:
+        return std::any_of(m_guidePlan.slotPlan.begin(), m_guidePlan.slotPlan.end(),
+                           [](const GuideSlot& slot) { return slot.hasExtent; });
+    case GuideWorkflowStep::Build:
+    case GuideWorkflowStep::Complete:
+        return m_guideMesh && m_guideMesh->GetNumberOfPolys() > 0;
+    }
+    return false;
+}
+
+void MainWindow::activateGuideWorkflowStep()
+{
+    switch (m_guidePlan.workflowStep) {
+    case GuideWorkflowStep::PaintRight:
+    case GuideWorkflowStep::PaintLeft:
+        if (m_guideBrushSpin) m_guideBrushSpin->setValue(4.0);
+        setGuidePointMode(kModeRegion);
+        break;
+    case GuideWorkflowStep::PaintBridge:
+        if (m_guideBrushSpin) m_guideBrushSpin->setValue(2.0);
+        setGuidePointMode(kModeRegion);
+        break;
+    case GuideWorkflowStep::Holes:
+        setGuidePointMode(kModeHoles);
+        break;
+    case GuideWorkflowStep::Slots:
+        if (m_guideCutList && m_guideCutList->currentRow() < 0 && m_guideCutList->count() > 0)
+            m_guideCutList->setCurrentRow(0);
+        setGuidePointMode(kModeSlotEnds);
+        break;
+    default:
+        setGuidePointMode(kModeNone);
+        break;
+    }
+    if (m_guideView && m_guidePlan.type == GuideType::LeFort)
+        m_guideView->setStandardView(0);
+}
+
+void MainWindow::advanceGuideWorkflow()
+{
+    if (!guideWorkflowStepComplete()) {
+        QString message;
+        switch (m_guidePlan.workflowStep) {
+        case GuideWorkflowStep::PaintRight: message = tr("Pinte primero la zona de apoyo derecha."); break;
+        case GuideWorkflowStep::PaintLeft: message = tr("Pinte primero la zona de apoyo izquierda."); break;
+        case GuideWorkflowStep::PaintBridge: message = tr("Una las dos zonas por debajo de la espina nasal."); break;
+        case GuideWorkflowStep::Holes: message = tr("Coloque al menos dos perforaciones de fijación."); break;
+        case GuideWorkflowStep::Slots: message = tr("Marque los dos extremos de una hendidura de corte."); break;
+        default: message = tr("Complete el paso actual antes de continuar."); break;
+        }
+        statusBar()->showMessage(message);
+        return;
+    }
+    if (m_guidePlan.workflowStep == GuideWorkflowStep::PaintRight)
+        m_guidePlan.rightPaintEnd = static_cast<int>(m_guidePlan.paint.size());
+    else if (m_guidePlan.workflowStep == GuideWorkflowStep::PaintLeft)
+        m_guidePlan.leftPaintEnd = static_cast<int>(m_guidePlan.paint.size());
+
+    const int next = std::min(static_cast<int>(GuideWorkflowStep::Build),
+                              static_cast<int>(m_guidePlan.workflowStep) + 1);
+    m_guidePlan.workflowStep = static_cast<GuideWorkflowStep>(next);
+    activateGuideWorkflowStep();
+    updateGuideUi();
+}
+
+void MainWindow::retreatGuideWorkflow()
+{
+    const int previous = std::max(static_cast<int>(GuideWorkflowStep::Envelope),
+                                  static_cast<int>(m_guidePlan.workflowStep) - 1);
+    m_guidePlan.workflowStep = static_cast<GuideWorkflowStep>(previous);
+    activateGuideWorkflowStep();
+    updateGuideUi();
 }
 
 void MainWindow::setGuidePointMode(int mode)
@@ -1561,24 +1700,29 @@ void MainWindow::rebuildGuideMarkers()
         m_guideView->render();
         return;
     }
-    // Before the cut: where the guide will drill each plate hole.
-    for (const PredictiveHole& hole : guidePredictiveHoles())
-        m_guideView->addPointMarker(hole.preopCenter[0], hole.preopCenter[1], hole.preopCenter[2], kPredictiveColor);
-    for (const auto& p : m_guidePlan.contour)
-        m_guideView->addPointMarker(p[0], p[1], p[2], kRegionColor);
-    for (const auto& p : m_guideTrimPoints)
-        m_guideView->addPointMarker(p[0], p[1], p[2], kSubtractColor);
-    for (const auto& slot : m_guidePlan.slotPlan)
-        if (slot.hasExtent) {
-            m_guideView->addPointMarker(slot.start[0], slot.start[1], slot.start[2], kSlotEndColor);
-            m_guideView->addPointMarker(slot.end[0], slot.end[1], slot.end[2], kSlotEndColor);
-        }
-    for (const auto& p : m_guidePendingEnds)
-        m_guideView->addPointMarker(p[0], p[1], p[2], kSlotEndColor);
-    for (const auto& p : m_guidePendingTubePoints)
-        m_guideView->addPointMarker(p[0], p[1], p[2], kAddColor);
-    for (const auto& hole : m_guidePlan.holes)
-        m_guideView->addPointMarker(hole.center[0], hole.center[1], hole.center[2], kHoleColor);
+    // Editing handles are contextual. Keeping every historical point visible
+    // made a finished cutting guide look covered in unrelated colored spheres.
+    if (m_guidePointMode == kModeRegion)
+        for (const auto& p : m_guidePlan.contour)
+            m_guideView->addPointMarker(p[0], p[1], p[2], kRegionColor);
+    if (m_guidePointMode == kModeTrim)
+        for (const auto& p : m_guideTrimPoints)
+            m_guideView->addPointMarker(p[0], p[1], p[2], kSubtractColor);
+    if (m_guidePointMode == kModeSlotEnds) {
+        for (const auto& slot : m_guidePlan.slotPlan)
+            if (slot.hasExtent) {
+                m_guideView->addPointMarker(slot.start[0], slot.start[1], slot.start[2], kSlotEndColor);
+                m_guideView->addPointMarker(slot.end[0], slot.end[1], slot.end[2], kSlotEndColor);
+            }
+        for (const auto& p : m_guidePendingEnds)
+            m_guideView->addPointMarker(p[0], p[1], p[2], kSlotEndColor);
+    }
+    if (m_guidePointMode == kModeTube)
+        for (const auto& p : m_guidePendingTubePoints)
+            m_guideView->addPointMarker(p[0], p[1], p[2], kAddColor);
+    if (m_guidePointMode == kModeHoles)
+        for (const auto& hole : m_guidePlan.holes)
+            m_guideView->addPointMarker(hole.center[0], hole.center[1], hole.center[2], kHoleColor);
 
     // While marking, the outline is drawn the way the guide will be cut: rounded and laid on the surface.
     vtkSmartPointer<vtkPolyData> outline;
@@ -1603,10 +1747,15 @@ void MainWindow::clearGuideRegion()
 {
     m_guidePlan.contour.clear();
     m_guidePlan.paint.clear();
+    m_guidePlan.rightPaintEnd = 0;
+    m_guidePlan.leftPaintEnd = 0;
+    if (m_guideWrapMesh)
+        m_guidePlan.workflowStep = GuideWorkflowStep::PaintRight;
     repaintGuideWrap();
     if (m_guideView)
         m_guideView->render();
     rebuildGuideMarkers();
+    activateGuideWorkflowStep();
     updateGuideUi();
 }
 
@@ -1614,6 +1763,8 @@ void MainWindow::clearGuideSlotEnds()
 {
     m_guidePlan.slotPlan.clear();
     m_guidePendingEnds.clear();
+    if (m_guideWrapMesh)
+        m_guidePlan.workflowStep = GuideWorkflowStep::Slots;
     rebuildGuideMarkers();
     updateGuideUi();
 }
@@ -1621,6 +1772,8 @@ void MainWindow::clearGuideSlotEnds()
 void MainWindow::clearGuideHoles()
 {
     m_guidePlan.holes.clear();
+    if (m_guideWrapMesh)
+        m_guidePlan.workflowStep = GuideWorkflowStep::Holes;
     rebuildGuideMarkers();
     updateGuideUi();
 }
@@ -1712,6 +1865,7 @@ void MainWindow::buildGuideMesh()
         return;
     }
     m_guideMesh = result.mesh;
+    m_guidePlan.workflowStep = GuideWorkflowStep::Complete;
     m_guideSculptEdited = false;
     if (m_guideSculptActive)
         setGuideEditActive(false); // the clay is stale: the guide was carved again
@@ -1854,7 +2008,6 @@ void MainWindow::updateGuideUi()
     const bool hasRegion = GuideBaseCore::PaintValid(m_guidePlan.paint) || GuideBaseCore::ContourValid(m_guidePlan.contour);
     const bool hasGuide = m_guideMesh && m_guideMesh->GetNumberOfPolys() > 0;
     const bool figureSelected = m_guideFigureList && m_guideFigureList->currentRow() >= 0;
-    // Each step appears once the one before it has produced something.
     const auto showSection = [](QWidget* section, bool visible) {
         if (section)
             section->setVisible(visible);
@@ -1862,38 +2015,82 @@ void MainWindow::updateGuideUi()
     const bool leFort = m_guidePlan.type == GuideType::LeFort;
     const bool hasPlates = !m_guidePlan.plates.empty();
     const int pendingPlateHoles = static_cast<int>(m_guidePendingPlateHoles.size());
-    showSection(m_guidePlateSection, leFort);
+    const GuideWorkflowStep workflow = hasWrap ? m_guidePlan.workflowStep : GuideWorkflowStep::Envelope;
+    // GUIAS and PLACAS share the renderer and project data, but each module
+    // presents only the controls for its own clinical product.
+    showSection(m_guideTypeSection, !m_guidePlateWorkspace && workflow == GuideWorkflowStep::Envelope);
+    showSection(m_guideAutomaticSection, !m_guidePlateWorkspace);
+    showSection(m_guidePlateSection, m_guidePlateWorkspace && leFort);
+    showSection(m_guideAdvancedSection, !m_guidePlateWorkspace && workflow == GuideWorkflowStep::Complete);
+    showSection(m_guidePlateAdvancedSection, m_guidePlateWorkspace);
     if (m_guidePlateArmButton)
         m_guidePlateArmButton->setEnabled(m_guidePlateTemplateCombo &&
                                           m_guidePlateTemplateCombo->currentData().toInt() ==
                                               static_cast<int>(PlateTemplate::LShape) &&
-                                          m_guidePlateFirstArm < 0 && pendingPlateHoles >= 2);
-    if (m_guidePlateCreateButton) m_guidePlateCreateButton->setEnabled(pendingPlateHoles >= 2);
+                                           m_guidePlateFirstArm < 0 && pendingPlateHoles >= 2 && hasGuide);
+    if (m_guidePlateViewButton) m_guidePlateViewButton->setEnabled(hasGuide);
+    if (m_guidePlateHolesButton) m_guidePlateHolesButton->setEnabled(hasGuide);
+    if (m_guidePlateCreateButton) m_guidePlateCreateButton->setEnabled(hasGuide && pendingPlateHoles >= 2);
     if (m_guidePlateExportButton) m_guidePlateExportButton->setEnabled(hasPlates);
-    if (m_guideGenerateButton) m_guideGenerateButton->setEnabled(hasPlates);
-    showSection(m_guideLayersSection, hasWrap && !m_guidePlannedView);
-    // With plates, the Le Fort guide is generated from them and the cut («Generar guía de corte»): the manual
-    // steps only appear once it exists, to retouch it. Without plates (or for the chin) it is drawn by hand.
-    const bool generated = leFort && hasPlates;
-    const bool manual = !generated || hasGuide;
-    showSection(m_guideRegionSection, hasWrap && manual);
-    showSection(m_guideSlotSection, hasRegion && manual);
-    showSection(m_guideHoleSection, hasRegion && manual);
-    showSection(m_guideFiguresSection, hasRegion && manual);
-    showSection(m_guideBuildSection, hasRegion && manual);
+    if (m_guideGenerateButton) m_guideGenerateButton->hide();
+    showSection(m_guideLayersSection, !m_guidePlateWorkspace && hasWrap && !m_guidePlannedView);
+    const bool paintStep = workflow == GuideWorkflowStep::PaintRight ||
+                           workflow == GuideWorkflowStep::PaintLeft ||
+                           workflow == GuideWorkflowStep::PaintBridge;
+    showSection(m_guideRegionSection, !m_guidePlateWorkspace && hasWrap && paintStep);
+    showSection(m_guideHoleSection, !m_guidePlateWorkspace && workflow == GuideWorkflowStep::Holes);
+    showSection(m_guideSlotSection, !m_guidePlateWorkspace && workflow == GuideWorkflowStep::Slots);
+    showSection(m_guideFiguresSection, !m_guidePlateWorkspace && workflow == GuideWorkflowStep::Complete);
+    showSection(m_guideBuildSection, !m_guidePlateWorkspace &&
+        (workflow == GuideWorkflowStep::Build || workflow == GuideWorkflowStep::Complete));
     if (m_guideBuildButton)
-        m_guideBuildButton->setText(generated ? tr("Reconstruir guía") : tr("Crear guía"));
-    showSection(m_guideEditSection, hasGuide);
-    showSection(m_guideExportSection, hasGuide);
+        m_guideBuildButton->setText(hasGuide ? tr("Reconstruir guía") : tr("Crear guía"));
+    showSection(m_guideEditSection, !m_guidePlateWorkspace && hasGuide && workflow == GuideWorkflowStep::Complete);
+    showSection(m_guideExportSection, !m_guidePlateWorkspace && hasGuide && workflow == GuideWorkflowStep::Complete);
     updateGuideSculptBar();
     if (m_guideRegionButton) m_guideRegionButton->setEnabled(hasWrap);
     if (m_guideSlotEndsButton) m_guideSlotEndsButton->setEnabled(hasWrap && m_guideCutList && m_guideCutList->count() > 0);
     if (m_guideHoleButton) m_guideHoleButton->setEnabled(hasWrap);
     if (m_guidePlaceFigureButton) m_guidePlaceFigureButton->setEnabled(hasWrap);
     if (m_guideMoveFigureButton) m_guideMoveFigureButton->setEnabled(figureSelected);
-    if (m_guideBuildButton) m_guideBuildButton->setEnabled(hasWrap && hasRegion);
+    if (m_guideBuildButton)
+        m_guideBuildButton->setEnabled(hasWrap && hasRegion && m_guidePlan.holes.size() >= 2 &&
+            std::any_of(m_guidePlan.slotPlan.begin(), m_guidePlan.slotPlan.end(),
+                        [](const GuideSlot& slot) { return slot.hasExtent; }));
     if (m_guideExportButton) m_guideExportButton->setEnabled(hasGuide);
     if (m_guideThicknessCheck) m_guideThicknessCheck->setEnabled(hasGuide);
+
+    if (m_guideWorkflowLabel) {
+        QString text;
+        switch (workflow) {
+        case GuideWorkflowStep::Envelope: text = tr("1 de 7 · Calcular modelo envolvente"); break;
+        case GuideWorkflowStep::PaintRight: text = tr("2 de 7 · Pintar apoyo derecho"); break;
+        case GuideWorkflowStep::PaintLeft: text = tr("3 de 7 · Pintar apoyo izquierdo"); break;
+        case GuideWorkflowStep::PaintBridge: text = tr("4 de 7 · Unión bajo la espina nasal"); break;
+        case GuideWorkflowStep::Holes: text = tr("5 de 7 · Colocar perforaciones"); break;
+        case GuideWorkflowStep::Slots: text = tr("6 de 7 · Marcar hendiduras de corte"); break;
+        case GuideWorkflowStep::Build: text = tr("7 de 7 · Crear la guía"); break;
+        case GuideWorkflowStep::Complete: text = tr("Guía creada · lista para revisar"); break;
+        }
+        m_guideWorkflowLabel->setText(text);
+    }
+    if (m_guideWorkflowBackButton) {
+        m_guideWorkflowBackButton->setVisible(workflow != GuideWorkflowStep::Envelope);
+        m_guideWorkflowBackButton->setEnabled(hasWrap);
+    }
+    if (m_guideWorkflowNextButton) {
+        const bool canAdvance = workflow >= GuideWorkflowStep::PaintRight && workflow <= GuideWorkflowStep::Slots;
+        m_guideWorkflowNextButton->setVisible(canAdvance);
+        m_guideWorkflowNextButton->setEnabled(canAdvance && guideWorkflowStepComplete());
+    }
+    if (m_guideRegionButton) {
+        if (workflow == GuideWorkflowStep::PaintRight)
+            m_guideRegionButton->setText(tr("Pintar apoyo derecho"));
+        else if (workflow == GuideWorkflowStep::PaintLeft)
+            m_guideRegionButton->setText(tr("Pintar apoyo izquierdo"));
+        else if (workflow == GuideWorkflowStep::PaintBridge)
+            m_guideRegionButton->setText(tr("Pintar unión subnasal"));
+    }
 
     if (!m_guideHintLabel)
         return;
@@ -1901,13 +2098,28 @@ void MainWindow::updateGuideUi()
     if (m_guidePointMode == kModePlateHoles)
         hint = m_guidePlateFirstArm >= 0 ? tr("Brazo cigomático: marque sus agujeros de arriba abajo.")
                                          : tr("Marque los agujeros de la placa de arriba abajo, cruzando el corte.");
-    else if (m_guidePlannedView)
-        hint = tr("Posición planificada: así quedan el maxilar y las placas.");
+    else if (m_guidePlateWorkspace && !hasGuide)
+        hint = tr("Cree primero la guía de corte preoperatoria. Después podrá diseñar aquí la placa definitiva.");
+    else if (m_guidePlateWorkspace && m_guidePlannedView)
+        hint = tr("Le Fort definitivo: marque los agujeros de arriba abajo, cruzando el borde de la osteotomía.");
     else if (!hasWrap)
         hint = m_guidePlan.type == GuideType::Chin ? tr("Calcule la envolvente del mentón y la mandíbula.")
                                                    : tr("Calcule la envolvente del Le Fort y el cráneo.");
-    else if (m_guidePointMode == kModeRegion || !hasRegion)
-        hint = tr("Pinte la zona de apoyo · Ctrl borra · Alt + arrastre cambia el tamaño.");
+    else if (workflow == GuideWorkflowStep::PaintRight)
+        hint = tr("Pinte únicamente el apoyo sobre el lado derecho del Le Fort. Ctrl borra.");
+    else if (workflow == GuideWorkflowStep::PaintLeft)
+        hint = tr("Pinte únicamente el apoyo sobre el lado izquierdo del Le Fort. Ctrl borra.");
+    else if (workflow == GuideWorkflowStep::PaintBridge)
+        hint = tr("Con el pincel pequeño una ambos apoyos por debajo de la espina nasal.");
+    else if (workflow == GuideWorkflowStep::Holes)
+        hint = tr("Marque al menos dos perforaciones de fijación sobre las zonas pintadas.");
+    else if (workflow == GuideWorkflowStep::Slots)
+        hint = m_guidePendingEnds.empty() ? tr("Seleccione Le Fort I y marque el inicio de la hendidura.")
+                                          : tr("Marque el final de la hendidura sobre la osteotomía.");
+    else if (workflow == GuideWorkflowStep::Build)
+        hint = tr("Revise que las tres zonas formen una sola región y pulse «Crear guía».");
+    else if (workflow == GuideWorkflowStep::Complete && !m_guideSculptActive)
+        hint = tr("Revise la guía, suavícela si hace falta y exporte el STL.");
     else if (m_guidePointMode == kModeSlotEnds)
         hint = m_guidePendingEnds.empty() ? tr("Elija la osteotomía y marque el inicio de la ranura.")
                                           : tr("Marque el final de la ranura.");
@@ -2466,10 +2678,9 @@ std::vector<PredictiveHole> MainWindow::guidePredictiveHoles() const
 
 std::vector<GuideFigure> MainWindow::guideFiguresWithSleeves() const
 {
-    std::vector<GuideFigure> figures = m_guidePlan.figures;
-    const auto sleeves = PlateCore::SleeveFigures(guidePredictiveHoles(), guideSleeveParams());
-    figures.insert(figures.end(), sleeves.begin(), sleeves.end());
-    return figures;
+    // The cutting guide is frozen before plate design. Plate holes belong to
+    // the definitive-position plate and must not perforate or deform the guide.
+    return m_guidePlan.figures;
 }
 
 bool MainWindow::prepareGuidePlannedBone()
@@ -2612,6 +2823,19 @@ void MainWindow::createGuidePlate()
     std::vector<PlateDesign> assigned{plate};
     PlateCore::AssignBones(assigned, repositionMeshForLabel(kLeFortCranialLabel),
                            repositionMeshForLabel(kLeFortSegLabel));
+    if (plate.kind == PlateTemplate::LShape) {
+        const auto& a = assigned.front().holes[static_cast<size_t>(first - 1)].center;
+        const auto& b = assigned.front().holes.back().center;
+        const double junctionSpan = std::hypot(std::hypot(a[0] - b[0], a[1] - b[1]), a[2] - b[2]);
+        if (junctionSpan > 30.0) {
+            QMessageBox::warning(
+                this, tr("Placas"),
+                tr("Los dos brazos están separados %1 mm y formarían una barra transversal demasiado larga. "
+                   "Cree dos placas paranasales independientes, o vuelva a marcar una placa en L sobre el mismo lado.")
+                    .arg(junctionSpan, 0, 'f', 1));
+            return;
+        }
+    }
 
     QApplication::setOverrideCursor(Qt::WaitCursor);
     statusBar()->showMessage(tr("Placas: construyendo %1…").arg(plate.name));
@@ -2793,8 +3017,8 @@ bool MainWindow::exportGuidePlateFiles(const QString& folder, QString* report)
 
 void MainWindow::generateLeFortGuide()
 {
-    if (m_guidePlan.type != GuideType::LeFort || m_guidePlan.plates.empty()) {
-        QMessageBox::warning(this, tr("Guía de corte"), tr("Cree primero las placas."));
+    if (m_guidePlan.type != GuideType::LeFort) {
+        QMessageBox::warning(this, tr("Guía de corte"), tr("Seleccione la guía Le Fort I."));
         return;
     }
     if (m_guidePlannedView)
@@ -2806,11 +3030,11 @@ void MainWindow::generateLeFortGuide()
     }
     const OsteotomyPath path = guideLeFortPath();
     QApplication::setOverrideCursor(Qt::WaitCursor);
-    statusBar()->showMessage(tr("Guía de corte: trazando la guía sobre la osteotomía y las placas…"));
+    statusBar()->showMessage(tr("Guía de corte: trazando sobre la osteotomía preoperatoria…"));
     LeFortGuideParams params;
     params.sleeveOuterDiameterMm = guideSleeveParams().outerDiameterMm;
     const LeFortGuideLayout layout =
-        LeFortGuideCore::Layout(m_guidePrepared, m_guideWrapMesh, path, guidePredictiveHoles(), params);
+        LeFortGuideCore::Layout(m_guidePrepared, m_guideWrapMesh, path, {}, params);
     QApplication::restoreOverrideCursor();
     if (!layout.ok) {
         QMessageBox::warning(this, tr("Guía de corte"), layout.error);
@@ -2821,6 +3045,13 @@ void MainWindow::generateLeFortGuide()
     m_guidePlan.paint = layout.paint;
     m_guidePlan.slotPlan = layout.slotPlan;
     m_guidePlan.holes = layout.fixation;
+    // Regeneration is a fresh automatic cutting-guide layout. Saved projects
+    // may still contain legacy sleeves, imported figures or connector tubes in
+    // the old coordinate frame; keeping them is what made isolated pieces
+    // reappear behind the skull after the support band had been corrected.
+    m_guidePlan.figures.clear();
+    m_guideBuiltFigures.clear();
+    refreshGuideFigureList();
     m_guidePendingEnds.clear();
     // The Le Fort cut is ticked so the slit pieces are carved.
     if (m_guideCutList)
@@ -2833,6 +3064,18 @@ void MainWindow::generateLeFortGuide()
     repaintGuideWrap();
     rebuildGuideMarkers();
     buildGuideMesh();
+    // Once generated, show the actual product against the bone. Leaving the
+    // opaque envelope on top makes a correct thin guide look like scattered
+    // fragments and hides its fit on the maxilla.
+    if (m_guideMesh && m_guideMesh->GetNumberOfPolys() > 0) {
+        if (m_guideShowModelsCheck)
+            m_guideShowModelsCheck->setChecked(true);
+        if (m_guideShowWrapCheck)
+            m_guideShowWrapCheck->setChecked(false);
+        if (m_guideShowGuideCheck)
+            m_guideShowGuideCheck->setChecked(true);
+        applyGuideLayers();
+    }
     if (m_guideReportLabel && m_guideMesh)
         m_guideReportLabel->setText(layout.report + QStringLiteral("\n") + m_guideReportLabel->text());
 }

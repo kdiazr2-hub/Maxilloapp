@@ -810,8 +810,9 @@ void MainWindow::buildToolBar()
             const bool reposition = title == tr("REPOSICIÓN");
             const bool splint     = title == tr("FERULA");
             const bool guides     = title == tr("GUIAS");
+            const bool plates     = title == tr("PLACAS");
             const bool hasTaskPanel = models || orientation || osteotomy || biteRegistration ||
-                                      reposition || splint || guides;
+                                       reposition || splint || guides || plates;
             stack->setVisible(!hasTaskPanel);
             setModelsWorkspace(models);
             setOrientationWorkspace(orientation);
@@ -819,7 +820,7 @@ void MainWindow::buildToolBar()
             setBiteRegistrationWorkspace(biteRegistration);
             setRepositionWorkspace(reposition);
             setSplintWorkspace(splint);
-            setGuidesWorkspace(guides);
+            setGuidesWorkspace(guides || plates, plates);
             onModuleTabActivated(title);
         });
         if (idx == 0) { tab->setChecked(true); stack->setCurrentIndex(0); }
@@ -2081,7 +2082,7 @@ void MainWindow::buildToolBar()
         row->addStretch(1);
     }
 
-    // GUIAS - surgical guides built on the repositioned models
+    // GUIAS - cutting guides built on the pre-operative anatomy
     {
         auto  mod  = addModule(tr("GUIAS"));
         auto* page = mod.first;
@@ -2089,6 +2090,16 @@ void MainWindow::buildToolBar()
         auto* guideHint = new QLabel(tr("Siga los pasos en el panel izquierdo de Guías."), page);
         guideHint->setStyleSheet("color:#98989d; font-size:11px; padding-left:8px;");
         mod.second->addWidget(guideHint);
+        mod.second->addStretch(1);
+    }
+
+    // PLACAS - patient-specific fixation plates on the final Le Fort position
+    {
+        auto  mod  = addModule(tr("PLACAS"));
+        auto* page = mod.first;
+        auto* plateHint = new QLabel(tr("Diseñe la placa personalizada sobre el Le Fort en posición definitiva."), page);
+        plateHint->setStyleSheet("color:#98989d; font-size:11px; padding-left:8px;");
+        mod.second->addWidget(plateHint);
         mod.second->addStretch(1);
     }
 

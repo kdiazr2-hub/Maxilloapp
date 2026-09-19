@@ -64,10 +64,6 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
         layout.error = QStringLiteral("Calcule primero la envolvente del hueso antes del corte.");
         return layout;
     }
-    if (holes.empty()) {
-        layout.error = QStringLiteral("Cree primero las placas: la guía se construye alrededor de sus agujeros.");
-        return layout;
-    }
     QString pathError;
     const auto cut = OsteotomyCore::PreparePathField(path, &pathError);
     if (!path.valid || !cut) {
@@ -76,22 +72,70 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
     }
     const ImplicitCore::BakedField& field = *preop.wrapField;
 
-    // The guide's frame: forward is where the drills come from (the sleeves' mean axis), up is the cranial
-    // side of the cut, and lateral runs from one side of the maxilla to the other.
-    Vec3 front{0.0, 0.0, 0.0}, center{0.0, 0.0, 0.0};
-    for (const PredictiveHole& hole : holes) {
-        front = add(front, unit(hole.preopAxis));
-        center = add(center, scale(hole.preopCenter, 1.0 / holes.size()));
+    // The guide's frame comes from the pre-operative osteotomy itself. If
+    // predictive holes are supplied by an older plan, their drill axes can
+    // refine the anterior direction, but they are not required.
+    Vec3 front = unit(path.depthAxis, {0.0, 1.0, 0.0});
+    // The sweep axis of an osteotomy plane has no intrinsic sign. LeFortPath
+    // stores its points as pilar R, piriform R, piriform L, pilar L, so the
+    // piriform midpoint gives us a stable anatomical anterior hint. Without
+    // this check, an oriented CT whose depth axis points posteriorly produces
+    // small guide islands on the zygoma and skull instead of a maxillary band.
+    Vec3 surfaceFront{0.0, 0.0, 0.0};
+    int surfaceNormals = 0;
+    for (const Vec3& point : path.points) {
+        const Vec3 onBone = ontoSurface(field, point);
+        const Vec3 normal = GuideBaseCore::NormalAt(field, onBone);
+        // Lateral components cancel between both sides; retain points whose
+        // normal actually informs the antero-posterior sweep direction.
+        if (std::abs(dot(normal, front)) > 0.25) {
+            surfaceFront = add(surfaceFront, normal);
+            ++surfaceNormals;
+        }
     }
-    front = unit(front, {0.0, -1.0, 0.0});
+    if (surfaceNormals > 0 && norm(surfaceFront) > 0.25) {
+        if (dot(front, surfaceFront) < 0.0)
+            front = scale(front, -1.0);
+    } else if (path.points.size() >= 4) {
+        const Vec3 piriform = scale(add(path.points[1], path.points[2]), 0.5);
+        const Vec3 pillars = scale(add(path.points.front(), path.points.back()), 0.5);
+        const Vec3 anteriorHint = sub(piriform, pillars);
+        if (dot(front, anteriorHint) < 0.0)
+            front = scale(front, -1.0);
+    }
+    Vec3 center{0.0, 0.0, 0.0};
+    for (const Vec3& point : path.points)
+        center = add(center, scale(point, 1.0 / path.points.size()));
+    if (!holes.empty()) {
+        front = {0.0, 0.0, 0.0};
+        center = {0.0, 0.0, 0.0};
+        for (const PredictiveHole& hole : holes) {
+            front = add(front, unit(hole.preopAxis));
+            center = add(center, scale(hole.preopCenter, 1.0 / holes.size()));
+        }
+        front = unit(front, path.depthAxis);
+    }
     Vec3 up = unit(sub(path.upAxis, scale(front, dot(path.upAxis, front))), {0.0, 0.0, 1.0});
     const Vec3 lateral = unit(cross(up, front), {1.0, 0.0, 0.0});
     const auto lateralOf = [&](const Vec3& p) { return dot(sub(p, center), lateral); };
+    double pathDepthMin = 1e30, pathDepthMax = -1e30;
+    for (const Vec3& point : path.points) {
+        const double depth = dot(sub(point, center), front);
+        pathDepthMin = std::min(pathDepthMin, depth);
+        pathDepthMax = std::max(pathDepthMax, depth);
+    }
 
     double lowest = 1e30, highest = -1e30;
-    for (const PredictiveHole& hole : holes) {
-        lowest = std::min(lowest, lateralOf(hole.preopCenter));
-        highest = std::max(highest, lateralOf(hole.preopCenter));
+    if (holes.empty()) {
+        for (const Vec3& point : path.points) {
+            lowest = std::min(lowest, lateralOf(point));
+            highest = std::max(highest, lateralOf(point));
+        }
+    } else {
+        for (const PredictiveHole& hole : holes) {
+            lowest = std::min(lowest, lateralOf(hole.preopCenter));
+            highest = std::max(highest, lateralOf(hole.preopCenter));
+        }
     }
     lowest -= params.lateralMarginMm;
     highest += params.lateralMarginMm;
@@ -109,9 +153,16 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
         const double f = OsteotomyCore::FieldAt(*cut, p);
         if (std::abs(f) > reach)
             continue;
+        const double depth = dot(sub(p, center), front);
+        // The surgical landmarks already delimit the relevant facial depth.
+        // A full-skull envelope can contain another surface with the same cut
+        // field tens of millimetres posteriorly; it must never be considered.
+        constexpr double kDepthMarginMm = 12.0;
+        if (depth < pathDepthMin - kDepthMarginMm || depth > pathDepthMax + kDepthMarginMm)
+            continue;
         if (dot(GuideBaseCore::NormalAt(field, p), front) < 0.35)
             continue; // not the anterior wall: the nasal floor, the cut face, the back of the sinus
-        candidates.push_back({p, f, s, dot(sub(p, center), front)});
+        candidates.push_back({p, f, s, depth});
     }
     if (candidates.empty()) {
         layout.error = QStringLiteral("No se encontró la pared anterior del maxilar alrededor del corte.");

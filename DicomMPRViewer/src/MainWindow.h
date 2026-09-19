@@ -219,7 +219,7 @@ private:
     QLabel* m_orientationGuideMessage = nullptr;
     // GUIAS: surgical guides (MainWindowGuides.cpp).
     QWidget* buildGuideControlPanel(QWidget* parent);
-    void setGuidesWorkspace(bool enabled);
+    void setGuidesWorkspace(bool enabled, bool plateWorkspace = false);
     void refreshGuideSources();
     void refreshGuideCutList();
     void computeGuideWrap();
@@ -232,6 +232,10 @@ private:
     void onGuidePointPicked(int actorLabel, double x, double y, double z);
     void rebuildGuideMarkers();
     void updateGuideUi();
+    void advanceGuideWorkflow();
+    void retreatGuideWorkflow();
+    void activateGuideWorkflowStep();
+    bool guideWorkflowStepComplete() const;
     void syncGuideView();
     void applyGuideThicknessColors();
     void setGuideType(GuideType type);
@@ -339,6 +343,12 @@ private:
     QDoubleSpinBox* m_guideMarginSpin = nullptr;
     QDoubleSpinBox* m_guideHoleDiameterSpin = nullptr;
     QLabel* m_guideHintLabel = nullptr;
+    QLabel* m_guidePanelTitle = nullptr;
+    QWidget* m_guideTypeSection = nullptr;
+    QWidget* m_guideAutomaticSection = nullptr;
+    QLabel* m_guideWorkflowLabel = nullptr;
+    QPushButton* m_guideWorkflowBackButton = nullptr;
+    QPushButton* m_guideWorkflowNextButton = nullptr;
     // Panel sections, shown only once the step before them has produced something.
     QWidget* m_guideLayersSection = nullptr;
     QWidget* m_guideRegionSection = nullptr;
@@ -348,6 +358,8 @@ private:
     QWidget* m_guideBuildSection = nullptr;
     QWidget* m_guideEditSection = nullptr;
     QWidget* m_guidePlateSection = nullptr;
+    QWidget* m_guideAdvancedSection = nullptr;
+    QWidget* m_guidePlateAdvancedSection = nullptr;
     QComboBox* m_guidePlateSideCombo = nullptr;
     QComboBox* m_guidePlateTemplateCombo = nullptr;
     QPushButton* m_guidePlateViewButton = nullptr;
@@ -369,6 +381,7 @@ private:
     std::vector<PlateHole> m_guidePendingPlateHoles;  // holes of the plate being marked
     int m_guidePlateFirstArm = -1;                    // L plate: holes in the first arm, once "next arm" is pressed
     bool m_guidePlannedView = false;                  // the view shows the planned bone and the plates
+    bool m_guidePlateWorkspace = false;               // GUIAS and PLACAS share the 3-D view, not their controls
     std::vector<GuideFigure> m_guideBuiltFigures;     // figures + sleeves the guide was carved with
     QWidget* m_guideExportSection = nullptr;
     // EDITAR: the tool palette, its contextual bar and the session behind them.

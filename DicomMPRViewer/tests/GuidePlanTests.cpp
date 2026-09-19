@@ -64,6 +64,9 @@ GuidePlan samplePlan()
     tube.controlPoints = {{{0.0, 0.0, 0.0}, {2.0, 4.0, 6.0}, {5.0, 7.0, 8.0}}};
     plan.figures = {box, stl, tube};
     plan.paint = {{{1.0, 2.0, 3.0}, 4.0, false}, {{1.5, 2.0, 3.0}, 2.5, true}};
+    plan.workflowStep = GuideWorkflowStep::Holes;
+    plan.rightPaintEnd = 1;
+    plan.leftPaintEnd = 2;
     return plan;
 }
 
@@ -99,6 +102,8 @@ void testRoundTrip()
     require(back.paint.size() == 2 && back.paint[1].erase && std::abs(back.paint[1].radiusMm - 2.5) < 1e-9 &&
                 back.paint[0].center == plan.paint[0].center,
             "the brushed region was lost");
+    require(back.workflowStep == GuideWorkflowStep::Holes && back.rightPaintEnd == 1 && back.leftPaintEnd == 2,
+            "the guided workflow position was lost");
     require(std::abs(back.design.base.cornerRadiusMm - 4.5) < 1e-9, "the outline rounding was lost");
     require(std::abs(back.design.base.edgeTaperMm - 5.5) < 1e-9 &&
                 std::abs(back.design.base.edgeThicknessFraction - 0.35) < 1e-9 &&
@@ -130,6 +135,8 @@ void testEmptyAndDefaults()
     require(empty.contour.empty() && empty.slotPlan.empty() && empty.holes.empty() && empty.figures.empty(),
             "an empty plan is not empty");
     require(empty.type == GuideType::LeFort, "an older plan did not default to a Le Fort guide");
+    require(empty.workflowStep == GuideWorkflowStep::Envelope && empty.rightPaintEnd == 0 && empty.leftPaintEnd == 0,
+            "an older plan did not start at the envelope step");
     require(empty.design.base.thicknessMm > 0.0 && empty.design.edgeMarginMm > 0.0,
             "the defaults were lost on an empty plan");
 

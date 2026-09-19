@@ -295,8 +295,8 @@ void testPlateBridgesTheCutOnThePlannedBone()
 }
 
 // The case the surgeon hit: the maxilla lowered 6 mm and advanced 2 mm opens an 8 mm gap at the cut. The arm
-// must cross it in one straight bar from the cranial edge to the segment's edge — not dive into the gap, not
-// wrap round the cut faces, not break.
+// must reach the upper osteotomy edge, bend forward by the advancement and then turn down onto the moved Le Fort.
+// It must not shortcut that contour with a diagonal through the surgical gap.
 void testPlateBridgesAWideGap()
 {
     auto transform = vtkSmartPointer<vtkTransform>::New();
@@ -307,17 +307,19 @@ void testPlateBridgesAWideGap()
             motion[static_cast<size_t>(4 * r + c)] = transform->GetMatrix()->GetElement(r, c);
     const PlateBuildResult built = buildOnPlannedBone(motion);
     require(built.bridgedMm > 6.0, "the arm did not bridge the gap: " + std::to_string(built.bridgedMm) + " mm");
+    require(built.steppedBridges == 1, "the advancement did not produce one stepped surgical bend");
 
-    // The cranial base ends at z = 10 (face y = 0); the segment now starts at z = 2 (face y = 2). Halfway,
-    // the bar is on the line between the two edges...
-    const auto bar = inside(built.mesh, {{-10.0, 1.5, 6.0}, {-10.0, 0.9, 8.5}, {-10.0, 2.2, 3.5}});
-    require(bar[0] && bar[1] && bar[2], "there is no straight bar across the gap");
-    // ...and nothing hangs down into the gap or runs along the cut faces behind the front.
+    // The upper bend advances at the cranial edge (z about 11), then the second leg descends at the new face
+    // (y about 2.2). The former diagonal midpoint must remain empty.
+    const auto bend = inside(built.mesh, {{-10.0, 1.0, 11.0}, {-10.0, 2.7, 8.0}, {-10.0, 2.7, 3.5},
+                                                 {-10.0, 1.0, 6.0}});
+    require(bend[0] && bend[1] && bend[2], "the stepped bridge is not continuous at the osteotomy");
+    require(!bend[3], "the plate still shortcuts the osteotomy with a diagonal bar");
+    // Nothing hangs behind the anterior faces or runs along the cut surfaces.
     const auto gap = inside(built.mesh, {{-10.0, -1.5, 6.0}, {-10.0, -1.0, 9.3}, {-10.0, 1.0, 2.6}, {-10.0, -3.0, 4.0}});
     for (size_t i = 0; i < gap.size(); ++i)
         require(!gap[i], "the plate dips into the gap at probe " + std::to_string(i));
-    // Uniform thickness right across: crossing the bar front to back at three heights in the gap, the metal
-    // is 1 mm thick (a little more measured horizontally, the bar leans about 14°), and in one piece.
+    // The descending leg keeps uniform plate thickness through the height of the gap.
     for (const double z : {4.0, 6.0, 8.0}) {
         std::vector<Vec3> line;
         for (double y = -2.0; y <= 4.0; y += 0.02)
@@ -339,9 +341,8 @@ void testPlateBridgesAWideGap()
 // bridge at every bump.
 // The case of the surgeon's second report. The paranasal wall faces forward AND outward (here 30°); the plan
 // advances the segment 8 mm straight forward and lowers it 2 mm. Near the cut the bone turns into the cut face:
-// an arm that followed it went down into the gap and the bar was born there, colliding with the other bone and
-// curling over the corner. The plate must seat on the anterior faces only, cross in front of the gap in one flat
-// bar (1 mm thick, 4.5 mm wide), and leave the gap empty.
+// an arm that followed it went down into the gap and collided with the other bone. The plate must seat on the
+// anterior faces, make a deliberate stepped bend at the osteotomy and leave the space behind it empty.
 void testPlateBridgesALargeAdvancementFlat()
 {
     auto turn = vtkSmartPointer<vtkTransform>::New();
@@ -385,6 +386,7 @@ void testPlateBridgesALargeAdvancementFlat()
     require(built.ok, "the plate was not built: " + built.error.toStdString());
     require(built.pieces == 1, "the plate came apart: " + std::to_string(built.pieces) + " pieces");
     require(built.bridgedMm > 5.0, "the arm did not bridge the advancement: " + std::to_string(built.bridgedMm) + " mm");
+    require(built.steppedBridges == 1, "the large advancement did not produce one stepped surgical bend");
 
     // In the arm's plane (a section through its line), in wall coordinates: u runs forward out of the cranial
     // wall, z up. The cranial wall's front is u = 0 above z = 10; the segment's front is 8 mm ahead below z = 6.
@@ -395,24 +397,9 @@ void testPlateBridgesALargeAdvancementFlat()
     for (const auto& [u, z] : {std::pair{-1.0, 8.0}, std::pair{-2.0, 9.0}, std::pair{2.0, 5.5}, std::pair{-1.0, 6.5}})
         require(!inside(built.mesh, {at(u, z)})[0], "the plate goes into the gap at u = " + std::to_string(u) +
                                                            ", z = " + std::to_string(z));
-    // Crossing the bar halfway (u = 4), up and down: one run of metal, as thick as a plate leaning on the slope.
-    for (const double side : {-1.2, 0.0, 1.2}) {
-        const Vec3 across = PlateCore::TransformVector(rotation, {side, 0.0, 0.0});
-        std::vector<Vec3> line;
-        for (double z = 3.0; z <= 13.0; z += 0.02) {
-            const Vec3 q = at(4.0, z);
-            line.push_back({q[0] + across[0], q[1] + across[1], z});
-        }
-        const auto hits = inside(built.mesh, line);
-        int metal = 0, runs = 0;
-        for (size_t i = 0; i < hits.size(); ++i) {
-            metal += hits[i] ? 1 : 0;
-            runs += hits[i] && (i == 0 || !hits[i - 1]) ? 1 : 0;
-        }
-        require(runs == 1 && 0.02 * metal > 0.85 && 0.02 * metal < 1.8,
-                "the bar is not a flat strip " + std::to_string(side) + " mm off the arm: " +
-                    std::to_string(0.02 * metal) + " mm of metal in " + std::to_string(runs) + " run(s)");
-    }
+    // A straight connector would cross the centre of this section. The stepped plate travels at the upper edge
+    // and at the advanced face instead, so that diagonal midpoint must be empty.
+    require(!inside(built.mesh, {at(4.0, 8.0)})[0], "the large advancement still uses a diagonal connector");
 }
 
 void testPlateFollowsACurvedRoughBone()
@@ -517,8 +504,8 @@ int main()
         {"predictive holes go back with the segment", testPredictiveHolesGoBackWithTheSegment},
         {"sleeves sit on the pre-operative holes", testSleevesSitOnThePreoperativeHoles},
         {"the plate bridges the cut on the planned bone", testPlateBridgesTheCutOnThePlannedBone},
-        {"the plate bridges a wide gap in one straight bar", testPlateBridgesAWideGap},
-        {"the plate bridges a large advancement flat", testPlateBridgesALargeAdvancementFlat},
+        {"the plate bends at a wide osteotomy gap", testPlateBridgesAWideGap},
+        {"the plate steps across a large advancement", testPlateBridgesALargeAdvancementFlat},
         {"the plate follows a curved, rough bone", testPlateFollowsACurvedRoughBone},
         {"plates travel with the project", testPlatesTravelWithTheProject},
     };

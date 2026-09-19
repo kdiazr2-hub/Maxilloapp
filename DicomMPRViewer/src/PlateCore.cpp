@@ -130,12 +130,14 @@ std::vector<PathSample> walkOnBone(const ImplicitCore::BakedField& field, const 
 // bar across whatever is left between the two walks — the gap the movement opened at the osteotomy, the cut
 // face — lifted over any corner of bone. Without this the plate dives into the gap and falls apart.
 std::vector<PathSample> strutPath(const ImplicitCore::BakedField& field, const PathSample& a, const PathSample& b,
-                                  PlateBone boneA, PlateBone boneB, double clearance, const PlateBoneQuery& boneAt,
-                                  double* bridgedMm)
+                                   PlateBone boneA, PlateBone boneB, double clearance, const PlateBoneQuery& boneAt,
+                                   double* bridgedMm, bool* steppedBridge)
 {
     const double step = 1.0;
     if (bridgedMm)
         *bridgedMm = 0.0;
+    if (steppedBridge)
+        *steppedBridge = false;
     std::vector<PathSample> fromA = walkOnBone(field, a, b.point, boneA, clearance, boneAt, step);
     if (norm(sub(b.point, fromA.back().point)) < 1.5 * step) {
         fromA.push_back(b); // one surface all the way
@@ -160,42 +162,80 @@ std::vector<PathSample> strutPath(const ImplicitCore::BakedField& field, const P
         Vec3 barNormal = unit(cross(along, widthAxis), meanNormal);
         if (dot(barNormal, meanNormal) < 0.0)
             barNormal = scale(barNormal, -1.0);
-        // Taut over the bone, like a plate bent over it: a straight bar, and where it would cut through bone
-        // (the corner of an advanced segment, a ridge), its deepest point is lifted onto the surface and the bar
-        // bends there into two straight pieces, and so on. Lifting each sample on its own curled the bar.
+        // Across two different bones, an advancement is not joined diagonally. The plate reaches the cranial
+        // osteotomy edge, bends outward by the advancement, then bends again onto the repositioned segment.
+        // This is the stepped contour made intra-operatively and keeps the connector out of the osteotomy gap.
         std::vector<Vec3> corners{endA.point, endB.point};
-        for (int round = 0; round < 6; ++round) {
-            bool bent = false;
-            std::vector<Vec3> next{corners.front()};
-            for (size_t c = 0; c + 1 < corners.size(); ++c) {
-                const Vec3 from = corners[c], to = corners[c + 1];
-                const int samples = std::max(2, static_cast<int>(std::ceil(norm(sub(to, from)) / 0.5)));
-                double deepest = 0.05;
-                int where = -1;
-                for (int k = 1; k < samples; ++k) {
-                    const Vec3 q = add(from, scale(sub(to, from), static_cast<double>(k) / samples));
-                    const double below = clearance - field.At(q);
-                    if (below > deepest) {
-                        deepest = below;
-                        where = k;
-                    }
+        const bool crossesOsteotomy = boneA != boneB && boneA != PlateBone::Unknown && boneB != PlateBone::Unknown;
+        const PathSample& cranialEdge = boneA == PlateBone::Cranial ? endA : endB;
+        const PathSample& segmentEdge = boneA == PlateBone::Segment ? endA : endB;
+        Vec3 outward = unit(cranialEdge.normal, meanNormal);
+        if (dot(outward, meanNormal) < 0.0)
+            outward = scale(outward, -1.0);
+        const double advancement = dot(sub(segmentEdge.point, cranialEdge.point), outward);
+        const bool dogleg = crossesOsteotomy && advancement > 0.5;
+        if (dogleg) {
+            const Vec3 bend = add(cranialEdge.point, scale(outward, advancement));
+            corners = {endA.point, bend, endB.point};
+            // A titanium plate is bent over a radius, not folded into a sharp
+            // rectangular corner. Replace the dogleg vertex with a short
+            // quadratic fillet while retaining straight advancement and entry
+            // legs on either side of it.
+            const Vec3 incoming = unit(sub(corners[1], corners[0]));
+            const Vec3 outgoing = unit(sub(corners[2], corners[1]));
+            const double trim = std::min({2.0, 0.35 * norm(sub(corners[1], corners[0])),
+                                          0.35 * norm(sub(corners[2], corners[1]))});
+            if (trim > 0.2) {
+                const Vec3 before = sub(corners[1], scale(incoming, trim));
+                const Vec3 after = add(corners[1], scale(outgoing, trim));
+                std::vector<Vec3> rounded{corners[0], before};
+                for (int sample = 1; sample < 5; ++sample) {
+                    const double t = 0.25 * sample;
+                    const double u = 1.0 - t;
+                    rounded.push_back(add(add(scale(before, u * u), scale(corners[1], 2.0 * u * t)),
+                                          scale(after, t * t)));
                 }
-                if (where >= 0) {
-                    Vec3 lifted = add(from, scale(sub(to, from), static_cast<double>(where) / samples));
-                    for (int iteration = 0; iteration < 6; ++iteration) {
-                        const double below = clearance - field.At(lifted);
-                        if (below <= 1e-3)
-                            break;
-                        lifted = add(lifted, scale(barNormal, below));
-                    }
-                    next.push_back(lifted);
-                    bent = true;
-                }
-                next.push_back(to);
+                rounded.push_back(corners[2]);
+                corners = std::move(rounded);
             }
-            corners = next;
-            if (!bent)
-                break;
+            if (steppedBridge)
+                *steppedBridge = true;
+        } else {
+            // Without advancement, keep a taut connector. If it would cut through a ridge, lift only the
+            // offending corner onto the surface; lifting every sample would curl the plate.
+            for (int round = 0; round < 6; ++round) {
+                bool bent = false;
+                std::vector<Vec3> next{corners.front()};
+                for (size_t c = 0; c + 1 < corners.size(); ++c) {
+                    const Vec3 from = corners[c], to = corners[c + 1];
+                    const int samples = std::max(2, static_cast<int>(std::ceil(norm(sub(to, from)) / 0.5)));
+                    double deepest = 0.05;
+                    int where = -1;
+                    for (int k = 1; k < samples; ++k) {
+                        const Vec3 q = add(from, scale(sub(to, from), static_cast<double>(k) / samples));
+                        const double below = clearance - field.At(q);
+                        if (below > deepest) {
+                            deepest = below;
+                            where = k;
+                        }
+                    }
+                    if (where >= 0) {
+                        Vec3 lifted = add(from, scale(sub(to, from), static_cast<double>(where) / samples));
+                        for (int iteration = 0; iteration < 6; ++iteration) {
+                            const double below = clearance - field.At(lifted);
+                            if (below <= 1e-3)
+                                break;
+                            lifted = add(lifted, scale(barNormal, below));
+                        }
+                        next.push_back(lifted);
+                        bent = true;
+                    }
+                    next.push_back(to);
+                }
+                corners = next;
+                if (!bent)
+                    break;
+            }
         }
         for (size_t c = 0; c + 1 < corners.size(); ++c) {
             const Vec3 from = corners[c], to = corners[c + 1];
@@ -570,17 +610,20 @@ PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate
     std::vector<Vec3> holeNormals(holes.size());
     std::vector<bool> holeNormalSet(holes.size(), false);
     double bridged = 0.0;
+    int steppedBridges = 0;
     for (const std::vector<int>& strut : plate.struts) {
         for (size_t k = 0; k + 1 < strut.size(); ++k) {
             const int a = strut[k], b = strut[k + 1];
             if (a < 0 || b < 0 || a >= static_cast<int>(holes.size()) || b >= static_cast<int>(holes.size()))
                 continue;
             double gap = 0.0;
+            bool stepped = false;
             std::vector<PathSample> path =
                 strutPath(wrap, holes[static_cast<size_t>(a)], holes[static_cast<size_t>(b)],
                           plate.holes[static_cast<size_t>(a)].bone, plate.holes[static_cast<size_t>(b)].bone,
-                          clearance, boneAt, &gap);
+                          clearance, boneAt, &gap, &stepped);
             bridged += gap;
+            steppedBridges += stepped ? 1 : 0;
             // The wrap's normal carries a few degrees of voxel noise: smoothed along the stretches seated on
             // bone. Not across into a bridge (each straight piece keeps its own, square to it) and not at the
             // holes, which keep the bone's normal: a hole tilted by the bar's slope put its ring and its screw
@@ -613,7 +656,10 @@ PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate
                 }
                 pieces.push_back({kept[i].point, kept[i + 1].point, kept[i].normal, kept[i + 1].normal, 0.5 * width});
             }
-            for (size_t i = firstPiece; i + 1 < pieces.size(); ++i) {
+            // A sharp surgical bend is made from overlapping continuous metal.
+            // Mitring two implicit ribbons at 90 degrees leaves a notch in the
+            // inside corner, so doglegs intentionally keep their overlap.
+            for (size_t i = firstPiece; !stepped && i + 1 < pieces.size(); ++i) {
                 if (norm(sub(pieces[i].b, pieces[i + 1].a)) > 1e-6)
                     continue; // not consecutive: a seated stretch lies between them
                 const Vec3 bisector = unit(add(unit(sub(pieces[i].b, pieces[i].a)), unit(sub(pieces[i + 1].b, pieces[i + 1].a))),
@@ -703,8 +749,10 @@ PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate
             result.error = QStringLiteral("Cálculo cancelado.");
             return result;
         }
-        const auto outsideBone = ImplicitCore::Negate(ImplicitCore::Offset(wrapNode, clearance));
-        const auto bridge = ImplicitCore::Intersect(ImplicitCore::Field(ribbonField), outsideBone);
+        // The bridge path is already constructed on or outside the real bone.
+        // Clipping it with the gap-closed planning envelope removed the middle
+        // of an advancement dogleg and left two disconnected-looking stubs.
+        const auto bridge = ImplicitCore::Field(ribbonField);
         body = body ? ImplicitCore::Union(body, bridge) : bridge;
     }
     if (!body) {
@@ -772,6 +820,7 @@ PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate
     }
     result.pieces = shellsOf(result.mesh);
     result.bridgedMm = bridged;
+    result.steppedBridges = steppedBridges;
 
     // Passive fit: how far the underside of the plate, under each hole, stands off the real bone.
     if (boneAt)
@@ -796,7 +845,10 @@ PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate
                         .arg(result.pieces)
                         .arg(result.mesh->GetNumberOfPolys());
     if (bridged > 0)
-        result.report += QStringLiteral(", puente recto de %1 mm sobre el espacio del corte").arg(bridged, 0, 'f', 1);
+        result.report += steppedBridges > 0
+            ? QStringLiteral(", %1 puente(s) acodado(s) sobre %2 mm de espacio del corte")
+                  .arg(steppedBridges).arg(bridged, 0, 'f', 1)
+            : QStringLiteral(", puente de %1 mm sobre el espacio del corte").arg(bridged, 0, 'f', 1);
     if (boneAt)
         result.report += QStringLiteral(", holgura máxima bajo un agujero %1 mm").arg(result.maxFitGapMm, 0, 'f', 2);
     result.report += QStringLiteral(".");

@@ -194,13 +194,66 @@ void testTheGuideIsOnePieceWithAnOpenSlit()
                                                                   std::to_string(x));
 }
 
-void testRefusesWithoutPlatesOrEnvelope()
+void testWorksBeforePlatesAndRefusesWithoutEnvelope()
 {
     const Prepared bone = preoperativeBone();
     const LeFortGuideLayout noPlates = LeFortGuideCore::Layout(bone.preparation, bone.wrap.mesh, leFortCut(), {});
-    require(!noPlates.ok && !noPlates.error.isEmpty(), "a guide was laid out without plates");
+    require(noPlates.ok, "the pre-operative guide still depends on plates: " + noPlates.error.toStdString());
+    require(!noPlates.paint.empty() && !noPlates.slotPlan.empty() && noPlates.fixation.size() == 4,
+            "the plate-free guide lacks its band, slit or fixation screws");
     const LeFortGuideLayout noEnvelope = LeFortGuideCore::Layout({}, nullptr, leFortCut(), predictiveHoles());
     require(!noEnvelope.ok && !noEnvelope.error.isEmpty(), "a guide was laid out without an envelope");
+}
+
+void testTheGuideFindsTheAnteriorWallWhenTheSweepAxisIsReversed()
+{
+    const Prepared bone = preoperativeBone();
+    OsteotomyPath reversed = leFortCut();
+    for (double& value : reversed.depthAxis)
+        value = -value;
+    const LeFortGuideLayout layout = LeFortGuideCore::Layout(bone.preparation, bone.wrap.mesh, reversed, {});
+    require(layout.ok, "the reversed sweep axis prevented guide layout: " + layout.error.toStdString());
+    require(!layout.paint.empty(), "the reversed sweep axis produced no support band");
+
+    double meanDepth = 0.0;
+    for (const GuideBrushStroke& dab : layout.paint)
+        meanDepth += dab.center[1] / static_cast<double>(layout.paint.size());
+    require(meanDepth > -2.0, "the guide was laid out on the posterior wall instead of the anterior maxilla");
+
+    const GuideRegion region =
+        GuideBaseCore::MakeBrushRegion(bone.preparation.wrapField, layout.paint, bone.design.base);
+    const GuideDesignResult guide = GuideDesignCore::Build(bone.preparation, region, layout.slotPlan,
+                                                            layout.fixation, {}, bone.design);
+    require(guide.ok && guide.pieces == 1,
+            "the anterior guide from a reversed sweep axis is not one piece");
+}
+
+void testTheGuideIgnoresADistantSkullSurfaceInSavedProjects()
+{
+    const auto cranial = cranialPieces();
+    const auto segment = segmentBeforeCut();
+    const auto distantSkull = boxMesh({-30.0, 30.0, 35.0, 45.0, -10.0, 30.0}, false, false);
+    std::vector<vtkPolyData*> meshes;
+    for (const auto& mesh : cranial)
+        meshes.push_back(mesh);
+    meshes.push_back(segment);
+    meshes.push_back(distantSkull);
+
+    WrapParams wrapParams;
+    wrapParams.gapClosingMm = 1.5;
+    wrapParams.smallestDetailMm = 0.4;
+    const WrapResult wrap = WrapCore::Wrap(meshes, wrapParams);
+    require(wrap.ok, "the saved-project envelope with distant skull could not be wrapped");
+    GuideDesignParams design;
+    design.base.smallestDetailMm = 0.4;
+    design.slot.smallestDetailMm = 0.4;
+    const GuidePreparation prepared = GuideDesignCore::Prepare(wrap.mesh, design);
+    require(prepared.ok, "the saved-project envelope could not be prepared");
+
+    const LeFortGuideLayout layout = LeFortGuideCore::Layout(prepared, wrap.mesh, leFortCut(), {});
+    require(layout.ok && !layout.paint.empty(), "the saved-project guide could not be laid out");
+    for (const GuideBrushStroke& dab : layout.paint)
+        require(dab.center[1] < 20.0, "the guide jumped from the osteotomy to a distant skull surface");
 }
 } // namespace
 
@@ -209,7 +262,11 @@ int main()
     const std::vector<std::pair<const char*, std::function<void()>>> tests = {
         {"the guide is laid out from the plan", testTheGuideIsLaidOutFromThePlan},
         {"the guide is one piece with an open slit", testTheGuideIsOnePieceWithAnOpenSlit},
-        {"refuses without plates or envelope", testRefusesWithoutPlatesOrEnvelope},
+        {"works before plates and refuses without envelope", testWorksBeforePlatesAndRefusesWithoutEnvelope},
+        {"the guide finds the anterior wall when the sweep axis is reversed",
+         testTheGuideFindsTheAnteriorWallWhenTheSweepAxisIsReversed},
+        {"the guide ignores a distant skull surface in saved projects",
+         testTheGuideIgnoresADistantSkullSurfaceInSavedProjects},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {
