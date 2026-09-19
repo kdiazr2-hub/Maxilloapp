@@ -227,14 +227,14 @@ void testSleevesSitOnThePreoperativeHoles()
 }
 
 // ── The plate ─────────────────────────────────────────────────────────────────
-// A paranasal plate built on the bone as `motion` leaves it, the way the app builds it: a wrap that only
-// smooths the bone (1 mm closing), and the real bones named under each point.
+// A paranasal plate built on the bone as `motion` leaves it, the way the app builds it: a wrap that
+// regularises the bone (3 mm closing), and the real bones named under each point, kept clear of the cut.
 PlateBuildResult buildOnPlannedBone(const std::array<double, 16>& motion)
 {
     const auto segmentPlanned = moved(segmentBeforeCut(), motion);
     const auto cranial = cranialBase();
     WrapParams wrapParams;
-    wrapParams.gapClosingMm = 1.0;
+    wrapParams.gapClosingMm = 3.0;
     wrapParams.smallestDetailMm = 0.3;
     const WrapResult wrap = WrapCore::Wrap({cranial, segmentPlanned}, wrapParams);
     require(wrap.ok, "the planned bone could not be wrapped: " + wrap.error.toStdString());
@@ -246,31 +246,7 @@ PlateBuildResult buildOnPlannedBone(const std::array<double, 16>& motion)
     std::vector<PlateDesign> plates{paranasalPlate(motion)};
     PlateCore::AssignBones(plates, cranial, segmentPlanned);
 
-    std::vector<std::pair<PlateBone, vtkSmartPointer<vtkStaticCellLocator>>> locators;
-    for (const auto& [bone, mesh] : {std::pair{PlateBone::Cranial, cranial}, std::pair{PlateBone::Segment, segmentPlanned}}) {
-        auto locator = vtkSmartPointer<vtkStaticCellLocator>::New();
-        locator->SetDataSet(mesh);
-        locator->BuildLocator();
-        locators.emplace_back(bone, locator);
-    }
-    const PlateBoneQuery boneAt = [locators](const Vec3& p, double* distanceMm) {
-        double best = 1e30;
-        PlateBone nearest = PlateBone::Unknown;
-        for (const auto& [bone, locator] : locators) {
-            double closest[3] = {};
-            vtkIdType cell = -1;
-            int subId = 0;
-            double d2 = 0.0;
-            locator->FindClosestPoint(p.data(), closest, cell, subId, d2);
-            if (std::sqrt(d2) < best) {
-                best = std::sqrt(d2);
-                nearest = bone;
-            }
-        }
-        if (distanceMm)
-            *distanceMm = best;
-        return nearest;
-    };
+    const PlateBoneQuery boneAt = PlateCore::MakeBoneQuery(cranial, segmentPlanned, motion, leFortCut());
 
     PlateParams params;
     params.smallestDetailMm = 0.15;
@@ -299,8 +275,22 @@ void testPlateBridgesTheCutOnThePlannedBone()
     // The screw goes through: the hole's centre is empty, while the ring around it is metal.
     const auto hole = inside(built.mesh, {{-10.0, 0.5, 14.0}, {-10.0, 0.5, 16.2}});
     require(!hole[0] && hole[1], "the screw hole is not open inside its ring");
-    // The countersink widens the hole at the outer face.
-    const auto sink = inside(built.mesh, {{-10.0, 0.95, 15.6}, {-10.0, 0.1, 15.6}});
+    // The countersink widens the hole at the outer face: 1.6 mm from the hole's axis — outside the 1.05 mm bore,
+    // inside the 1.8 mm seat — there is metal near the inner face and none just under the outer one. The faces
+    // are measured on the plate itself (it seats up to a voxel off the bone, never into it).
+    std::vector<Vec3> across;
+    for (double y = -1.0; y <= 3.0; y += 0.01)
+        across.push_back({-10.0, y, 17.0});
+    const auto section = inside(built.mesh, across);
+    double innerFace = 1e9, outerFace = -1e9;
+    for (size_t i = 0; i < section.size(); ++i)
+        if (section[i]) {
+            innerFace = std::min(innerFace, across[i][1]);
+            outerFace = std::max(outerFace, across[i][1]);
+        }
+    require(outerFace - innerFace > 0.85 && outerFace - innerFace < 1.15,
+            "the plate is not 1 mm thick between the holes: " + std::to_string(outerFace - innerFace));
+    const auto sink = inside(built.mesh, {{-10.0, outerFace - 0.08, 15.6}, {-10.0, innerFace + 0.15, 15.6}});
     require(!sink[0] && sink[1], "there is no countersink at the outer face");
 }
 
@@ -347,6 +337,84 @@ void testPlateBridgesAWideGap()
 // Real bone is curved and rough. A long arm around a curved wall (80° of a 25 mm radius, with ±0.25 mm of
 // voxel-scale roughness) must follow the surface in one piece, not cut the chord through the bone nor stop and
 // bridge at every bump.
+// The case of the surgeon's second report. The paranasal wall faces forward AND outward (here 30°); the plan
+// advances the segment 8 mm straight forward and lowers it 2 mm. Near the cut the bone turns into the cut face:
+// an arm that followed it went down into the gap and the bar was born there, colliding with the other bone and
+// curling over the corner. The plate must seat on the anterior faces only, cross in front of the gap in one flat
+// bar (1 mm thick, 4.5 mm wide), and leave the gap empty.
+void testPlateBridgesALargeAdvancementFlat()
+{
+    auto turn = vtkSmartPointer<vtkTransform>::New();
+    turn->RotateZ(-30.0);
+    std::array<double, 16> rotation{};
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c)
+            rotation[static_cast<size_t>(4 * r + c)] = turn->GetMatrix()->GetElement(r, c);
+    const std::array<double, 16> motion{1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 8.0, 0.0, 0.0, 1.0, -2.0, 0.0, 0.0, 0.0, 1.0};
+    const auto cranial = moved(cranialBase(), rotation);
+    const auto segmentPlanned = moved(moved(segmentBeforeCut(), rotation), motion);
+    const OsteotomyPath cut = OsteotomyCore::TransformPath(leFortCut(), turn->GetMatrix());
+    const auto place = [&](const Vec3& p, bool onSegment) {
+        const Vec3 turned = PlateCore::TransformPoint(rotation, p);
+        return onSegment ? PlateCore::TransformPoint(motion, turned) : turned;
+    };
+    const Vec3 facing = PlateCore::TransformVector(rotation, {0.0, 1.0, 0.0});
+
+    WrapParams wrapParams;
+    wrapParams.gapClosingMm = 1.0;
+    wrapParams.smallestDetailMm = 0.3;
+    const WrapResult wrap = WrapCore::Wrap({cranial, segmentPlanned}, wrapParams);
+    require(wrap.ok, "the planned bone could not be wrapped");
+    GuideDesignParams prepareParams;
+    prepareParams.base.smallestDetailMm = 0.3;
+    const GuidePreparation planned = GuideDesignCore::Prepare(wrap.mesh, prepareParams);
+    require(planned.ok, "the planned wrap could not be measured");
+
+    PlateDesign plate;
+    plate.name = QStringLiteral("Placa");
+    for (const auto& [p, onSegment] : {std::pair{Vec3{-10.0, 0.0, 20.0}, false}, std::pair{Vec3{-10.0, 0.0, 14.0}, false},
+                                       std::pair{Vec3{-10.0, 0.0, 4.0}, true}, std::pair{Vec3{-10.0, 0.0, -2.0}, true}})
+        plate.holes.push_back({place(p, onSegment), facing, PlateBone::Unknown});
+    plate.struts = PlateCore::TemplateStruts(PlateTemplate::Paranasal, 4, 0);
+    std::vector<PlateDesign> plates{plate};
+    PlateCore::AssignBones(plates, cranial, segmentPlanned);
+    PlateParams params;
+    params.smallestDetailMm = 0.15;
+    const PlateBuildResult built = PlateCore::Build(planned, plates[0], params,
+                                                    PlateCore::MakeBoneQuery(cranial, segmentPlanned, motion, cut));
+    require(built.ok, "the plate was not built: " + built.error.toStdString());
+    require(built.pieces == 1, "the plate came apart: " + std::to_string(built.pieces) + " pieces");
+    require(built.bridgedMm > 5.0, "the arm did not bridge the advancement: " + std::to_string(built.bridgedMm) + " mm");
+
+    // In the arm's plane (a section through its line), in wall coordinates: u runs forward out of the cranial
+    // wall, z up. The cranial wall's front is u = 0 above z = 10; the segment's front is 8 mm ahead below z = 6.
+    const Vec3 origin = place({-10.0, 0.0, 0.0}, false);
+    const Vec3 forward{0.0, 1.0, 0.0};
+    const auto at = [&](double u, double z) { return Vec3{origin[0] + forward[0] * u, origin[1] + forward[1] * u, z}; };
+    // The gap stays empty: behind the fronts, between the pieces.
+    for (const auto& [u, z] : {std::pair{-1.0, 8.0}, std::pair{-2.0, 9.0}, std::pair{2.0, 5.5}, std::pair{-1.0, 6.5}})
+        require(!inside(built.mesh, {at(u, z)})[0], "the plate goes into the gap at u = " + std::to_string(u) +
+                                                           ", z = " + std::to_string(z));
+    // Crossing the bar halfway (u = 4), up and down: one run of metal, as thick as a plate leaning on the slope.
+    for (const double side : {-1.2, 0.0, 1.2}) {
+        const Vec3 across = PlateCore::TransformVector(rotation, {side, 0.0, 0.0});
+        std::vector<Vec3> line;
+        for (double z = 3.0; z <= 13.0; z += 0.02) {
+            const Vec3 q = at(4.0, z);
+            line.push_back({q[0] + across[0], q[1] + across[1], z});
+        }
+        const auto hits = inside(built.mesh, line);
+        int metal = 0, runs = 0;
+        for (size_t i = 0; i < hits.size(); ++i) {
+            metal += hits[i] ? 1 : 0;
+            runs += hits[i] && (i == 0 || !hits[i - 1]) ? 1 : 0;
+        }
+        require(runs == 1 && 0.02 * metal > 0.85 && 0.02 * metal < 1.8,
+                "the bar is not a flat strip " + std::to_string(side) + " mm off the arm: " +
+                    std::to_string(0.02 * metal) + " mm of metal in " + std::to_string(runs) + " run(s)");
+    }
+}
+
 void testPlateFollowsACurvedRoughBone()
 {
     const double radius = 25.0;
@@ -450,6 +518,7 @@ int main()
         {"sleeves sit on the pre-operative holes", testSleevesSitOnThePreoperativeHoles},
         {"the plate bridges the cut on the planned bone", testPlateBridgesTheCutOnThePlannedBone},
         {"the plate bridges a wide gap in one straight bar", testPlateBridgesAWideGap},
+        {"the plate bridges a large advancement flat", testPlateBridgesALargeAdvancementFlat},
         {"the plate follows a curved, rough bone", testPlateFollowsACurvedRoughBone},
         {"plates travel with the project", testPlatesTravelWithTheProject},
     };

@@ -5,6 +5,7 @@
 #include <QJsonArray>
 
 #include <vtkLandmarkTransform.h>
+#include <vtkIdTypeArray.h>
 #include <vtkMatrix4x4.h>
 #include <vtkPoints.h>
 #include <vtkPolyData.h>
@@ -13,6 +14,7 @@
 
 #include <algorithm>
 #include <cmath>
+
 
 namespace
 {
@@ -23,6 +25,10 @@ Vec3 sub(const Vec3& a, const Vec3& b) { return {a[0] - b[0], a[1] - b[1], a[2] 
 Vec3 scale(const Vec3& a, double s) { return {a[0] * s, a[1] * s, a[2] * s}; }
 double dot(const Vec3& a, const Vec3& b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
 double norm(const Vec3& a) { return std::sqrt(dot(a, a)); }
+Vec3 cross(const Vec3& a, const Vec3& b)
+{
+    return {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
+}
 Vec3 unit(const Vec3& a, const Vec3& fallback = {0.0, 0.0, 1.0})
 {
     const double length = norm(a);
@@ -64,6 +70,7 @@ struct PathSample
 {
     Vec3 point;  // on the bone surface (or on the straight bridge)
     Vec3 normal; // outward: the plate lies from `point` outwards along it
+    bool bridge = false; // part of a bar over the gap, not seated on bone
 };
 
 // The surface normal averaged over about a millimetre. The envelope of segmented bone is rough at the voxel
@@ -140,21 +147,65 @@ std::vector<PathSample> strutPath(const ImplicitCore::BakedField& field, const P
     const double gap = norm(sub(endB.point, endA.point));
     std::vector<PathSample> path = fromA;
     if (gap >= 1.5 * step) {
-        // The bridge: a flat bar with one normal — the holes' mean, square to the bar — so it is exactly as
-        // thick as the plate; lifted along that normal where it would cut through a corner of bone.
+        // The bridge: a flat bar, exactly as thick as the plate. Its width stays where the plate's width is —
+        // across the arm, in the bone's plane — and its normal is square to that and to the bar. (Taking the
+        // holes' normal and squaring it to the bar degenerates when a large advancement makes the bar run
+        // forward, along that very normal: the bar turned on edge and curled over the corner.)
         const Vec3 along = unit(sub(endB.point, endA.point), unit(sub(b.point, a.point)));
-        Vec3 barNormal = unit(add(a.normal, b.normal), a.normal);
-        barNormal = unit(sub(barNormal, scale(along, dot(barNormal, along))), a.normal);
-        const int pieces = std::max(1, static_cast<int>(std::ceil(gap / step)));
-        for (int k = 1; k < pieces; ++k) {
-            PathSample s{add(endA.point, scale(sub(endB.point, endA.point), static_cast<double>(k) / pieces)), barNormal};
-            for (int iteration = 0; iteration < 4; ++iteration) {
-                const double below = clearance - field.At(s.point);
-                if (below <= 1e-3)
-                    break;
-                s.point = add(s.point, scale(barNormal, below));
+        const Vec3 meanNormal = unit(add(a.normal, b.normal), a.normal);
+        Vec3 widthAxis = cross(meanNormal, unit(sub(b.point, a.point), along));
+        if (norm(widthAxis) < 1e-3)
+            widthAxis = cross(meanNormal, along);
+        widthAxis = unit(widthAxis, {1.0, 0.0, 0.0});
+        Vec3 barNormal = unit(cross(along, widthAxis), meanNormal);
+        if (dot(barNormal, meanNormal) < 0.0)
+            barNormal = scale(barNormal, -1.0);
+        // Taut over the bone, like a plate bent over it: a straight bar, and where it would cut through bone
+        // (the corner of an advanced segment, a ridge), its deepest point is lifted onto the surface and the bar
+        // bends there into two straight pieces, and so on. Lifting each sample on its own curled the bar.
+        std::vector<Vec3> corners{endA.point, endB.point};
+        for (int round = 0; round < 6; ++round) {
+            bool bent = false;
+            std::vector<Vec3> next{corners.front()};
+            for (size_t c = 0; c + 1 < corners.size(); ++c) {
+                const Vec3 from = corners[c], to = corners[c + 1];
+                const int samples = std::max(2, static_cast<int>(std::ceil(norm(sub(to, from)) / 0.5)));
+                double deepest = 0.05;
+                int where = -1;
+                for (int k = 1; k < samples; ++k) {
+                    const Vec3 q = add(from, scale(sub(to, from), static_cast<double>(k) / samples));
+                    const double below = clearance - field.At(q);
+                    if (below > deepest) {
+                        deepest = below;
+                        where = k;
+                    }
+                }
+                if (where >= 0) {
+                    Vec3 lifted = add(from, scale(sub(to, from), static_cast<double>(where) / samples));
+                    for (int iteration = 0; iteration < 6; ++iteration) {
+                        const double below = clearance - field.At(lifted);
+                        if (below <= 1e-3)
+                            break;
+                        lifted = add(lifted, scale(barNormal, below));
+                    }
+                    next.push_back(lifted);
+                    bent = true;
+                }
+                next.push_back(to);
             }
-            path.push_back(s);
+            corners = next;
+            if (!bent)
+                break;
+        }
+        for (size_t c = 0; c + 1 < corners.size(); ++c) {
+            const Vec3 from = corners[c], to = corners[c + 1];
+            // Each straight piece is flat across the plate's width, square to its own direction.
+            Vec3 pieceNormal = unit(cross(unit(sub(to, from), along), widthAxis), barNormal);
+            if (dot(pieceNormal, barNormal) < 0.0)
+                pieceNormal = scale(pieceNormal, -1.0);
+            const int pieces = std::max(1, static_cast<int>(std::ceil(norm(sub(to, from)) / step)));
+            for (int k = (c == 0 ? 1 : 0); k < pieces; ++k)
+                path.push_back({add(from, scale(sub(to, from), static_cast<double>(k) / pieces)), pieceNormal, true});
         }
         if (bridgedMm)
             *bridgedMm = gap;
@@ -429,6 +480,49 @@ std::vector<GuideFigure> SleeveFigures(const std::vector<PredictiveHole>& holes,
     return figures;
 }
 
+PlateBoneQuery MakeBoneQuery(vtkPolyData* cranialPlanned, vtkPolyData* segmentPlanned,
+                             const std::array<double, 16>& segmentMotion, const OsteotomyPath& path,
+                             double cutMarginMm)
+{
+    std::vector<std::pair<PlateBone, vtkSmartPointer<vtkStaticCellLocator>>> locators;
+    for (const auto& [bone, mesh] : {std::pair{PlateBone::Cranial, cranialPlanned}, std::pair{PlateBone::Segment, segmentPlanned}}) {
+        if (!mesh || mesh->GetNumberOfCells() == 0)
+            continue;
+        auto locator = vtkSmartPointer<vtkStaticCellLocator>::New();
+        locator->SetDataSet(mesh);
+        locator->BuildLocator();
+        locators.emplace_back(bone, locator);
+    }
+    const auto cut = path.valid ? OsteotomyCore::PreparePathField(path) : nullptr;
+    const std::array<double, 16> back = Invert(segmentMotion);
+    // Which side of the cut the segment is on: the field is negative on the caudal side by construction.
+    return [locators, cut, back, cutMarginMm](const std::array<double, 3>& p, double* distanceMm) {
+        double best = 1.0e30;
+        PlateBone nearest = PlateBone::Unknown;
+        for (const auto& [bone, locator] : locators) {
+            double closest[3] = {};
+            vtkIdType cell = -1;
+            int subId = 0;
+            double d2 = 0.0;
+            locator->FindClosestPoint(p.data(), closest, cell, subId, d2);
+            if (std::sqrt(d2) < best) {
+                best = std::sqrt(d2);
+                nearest = bone;
+            }
+        }
+        if (distanceMm)
+            *distanceMm = best;
+        if (cut && nearest != PlateBone::Unknown) {
+            const double field =
+                OsteotomyCore::FieldAt(*cut, nearest == PlateBone::Segment ? TransformPoint(back, p) : p);
+            const bool onItsSide = nearest == PlateBone::Segment ? field < 0.0 : field > 0.0;
+            if (!onItsSide || std::abs(field) < cutMarginMm)
+                return PlateBone::Unknown; // the cut face or its edge: no seat for a plate
+        }
+        return nearest;
+    };
+}
+
 // ── The plate ─────────────────────────────────────────────────────────────────
 PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate, const PlateParams& params,
                        const PlateBoneQuery& boneAt, const std::atomic<bool>* cancel)
@@ -470,7 +564,8 @@ PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate
         bool mitreA = false, mitreB = false;
         Vec3 mitreNormalA{0.0, 0.0, 0.0}, mitreNormalB{0.0, 0.0, 0.0};
     };
-    std::vector<RibbonPiece> pieces;
+    std::vector<RibbonPiece> pieces;                 // the flat bars over the gap
+    std::vector<ImplicitCore::NodePtr> seated;       // footprints of what lies on bone
     std::vector<Vec3> extent;
     std::vector<Vec3> holeNormals(holes.size());
     std::vector<bool> holeNormalSet(holes.size(), false);
@@ -486,14 +581,18 @@ PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate
                           plate.holes[static_cast<size_t>(a)].bone, plate.holes[static_cast<size_t>(b)].bone,
                           clearance, boneAt, &gap);
             bridged += gap;
-            // The wrap's normal carries a few degrees of voxel noise, and the bar turns where it leaves the
-            // bone: smoothed along the arm, the ribbon twists continuously instead of in steps.
+            // The wrap's normal carries a few degrees of voxel noise: smoothed along the stretches seated on
+            // bone. Not across into a bridge (each straight piece keeps its own, square to it) and not at the
+            // holes, which keep the bone's normal: a hole tilted by the bar's slope put its ring and its screw
+            // off the bone, and the bone carved the ring into a hook.
             for (int pass = 0; pass < 4; ++pass) {
                 const std::vector<PathSample> previous = path;
-                for (size_t i = 0; i < path.size(); ++i) {
-                    const Vec3& before = previous[i == 0 ? 0 : i - 1].normal;
-                    const Vec3& after = previous[std::min(i + 1, path.size() - 1)].normal;
-                    path[i].normal = unit(add(add(before, after), scale(previous[i].normal, 2.0)), previous[i].normal);
+                for (size_t i = 1; i + 1 < path.size(); ++i) {
+                    if (previous[i].bridge || previous[i - 1].bridge || previous[i + 1].bridge)
+                        continue;
+                    path[i].normal = unit(add(add(previous[i - 1].normal, previous[i + 1].normal),
+                                              scale(previous[i].normal, 2.0)),
+                                          previous[i].normal);
                 }
             }
             // Coincident samples would make degenerate pieces.
@@ -501,10 +600,22 @@ PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate
             for (size_t i = 1; i < path.size(); ++i)
                 if (norm(sub(path[i].point, kept.back().point)) > 0.05 || i + 1 == path.size())
                     kept.push_back(path[i]);
+            // Seated on bone, the plate is bent to it: its footprint there is a capsule along the centreline at
+            // mid-thickness, and the layer of the wrap's distance gives it the bone's exact shape. Only the
+            // pieces that leave the bone (the bridge over the gap) are flat bars swept on their own.
             const size_t firstPiece = pieces.size();
-            for (size_t i = 0; i + 1 < kept.size(); ++i)
+            for (size_t i = 0; i + 1 < kept.size(); ++i) {
+                if (!kept[i].bridge && !kept[i + 1].bridge) {
+                    seated.push_back(ImplicitCore::Capsule(add(kept[i].point, scale(kept[i].normal, middle)),
+                                                           add(kept[i + 1].point, scale(kept[i + 1].normal, middle)),
+                                                           0.5 * width));
+                    continue;
+                }
                 pieces.push_back({kept[i].point, kept[i + 1].point, kept[i].normal, kept[i + 1].normal, 0.5 * width});
+            }
             for (size_t i = firstPiece; i + 1 < pieces.size(); ++i) {
+                if (norm(sub(pieces[i].b, pieces[i + 1].a)) > 1e-6)
+                    continue; // not consecutive: a seated stretch lies between them
                 const Vec3 bisector = unit(add(unit(sub(pieces[i].b, pieces[i].a)), unit(sub(pieces[i + 1].b, pieces[i + 1].a))),
                                            unit(sub(pieces[i].b, pieces[i].a)));
                 pieces[i].mitreB = true;
@@ -514,21 +625,21 @@ PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate
             }
             for (const PathSample& s : path)
                 extent.push_back(s.point);
-            // The screw axis is the ribbon's own normal at the hole, so ring, bore and countersink line up.
-            for (const auto& [index, sample] : {std::pair{a, path.front()}, std::pair{b, path.back()}}) {
+            // The screw axis — and so the ring, the bore and the countersink — is the bone's normal at the hole.
+            for (const int index : {a, b}) {
                 const size_t h = static_cast<size_t>(index);
-                if (!holeNormalSet[h]) {
-                    holeNormals[h] = sample.normal;
-                    holeNormalSet[h] = true;
-                }
+                holeNormals[h] = holes[h].normal;
+                holeNormalSet[h] = true;
             }
         }
     }
     for (size_t h = 0; h < holes.size(); ++h) {
         if (!holeNormalSet[h])
             holeNormals[h] = holes[h].normal;
-        // The ring of material around every screw: a piece of no length, as wide as the ring.
-        pieces.push_back({holes[h].point, holes[h].point, holeNormals[h], holeNormals[h], 0.5 * ring});
+        // The ring of material round every screw, seated on the bone like the rest: it takes the bone's shape,
+        // so a hole on a curved rim is not a flat disc floating on one side and buried on the other.
+        seated.push_back(ImplicitCore::Cylinder(add(holes[h].point, scale(holeNormals[h], middle)), holeNormals[h],
+                                                0.5 * ring, thickness + 2.0));
         extent.push_back(holes[h].point);
     }
 
@@ -577,14 +688,29 @@ PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate
         }
         return best;
     };
-    const auto ribbonField = ImplicitCore::BakeFunction(sweep, bounds, detail, 0.0, cancel);
-    if (!ribbonField) {
-        result.error = QStringLiteral("Cálculo cancelado.");
+    const auto wrapNode = ImplicitCore::Field(planned.wrapField);
+    // Seated: the layer clearance ≤ d ≤ clearance + thickness of the wrap's distance, within the footprints,
+    // its rims rounded by a smooth intersection.
+    ImplicitCore::NodePtr body;
+    if (!seated.empty())
+        body = ImplicitCore::SmoothIntersect({ImplicitCore::Union(seated), ImplicitCore::Offset(wrapNode, clearance + thickness),
+                                              ImplicitCore::Negate(ImplicitCore::Offset(wrapNode, clearance))},
+                                             round);
+    // The bridge: the flat sweep, never inside the bone.
+    if (!pieces.empty()) {
+        const auto ribbonField = ImplicitCore::BakeFunction(sweep, bounds, detail, 0.0, cancel);
+        if (!ribbonField) {
+            result.error = QStringLiteral("Cálculo cancelado.");
+            return result;
+        }
+        const auto outsideBone = ImplicitCore::Negate(ImplicitCore::Offset(wrapNode, clearance));
+        const auto bridge = ImplicitCore::Intersect(ImplicitCore::Field(ribbonField), outsideBone);
+        body = body ? ImplicitCore::Union(body, bridge) : bridge;
+    }
+    if (!body) {
+        result.error = QStringLiteral("La placa quedó vacía.");
         return result;
     }
-    // Never inside the bone: where the flat ribbon meets a curve across its width, the bone carves its seat.
-    const auto outsideBone = ImplicitCore::Negate(ImplicitCore::Offset(ImplicitCore::Field(planned.wrapField), clearance));
-    const auto body = ImplicitCore::Intersect(ImplicitCore::Field(ribbonField), outsideBone);
 
     // The screw bores, and the countersink that seats each head flush with the outer face.
     std::vector<ImplicitCore::NodePtr> cutters;
@@ -609,7 +735,7 @@ PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate
 
     ImplicitCore::PolygonizeOptions options;
     options.smoothingIterations = std::max(0, params.smoothingIterations);
-    options.passBand = 0.08;
+    options.passBand = 0.05; // a finished surface: the seated part copies the bone, not its voxel roughness
     options.repair = true;
     const ImplicitCore::BuildResult built = ImplicitCore::Build(solid, bounds, detail, options, cancel);
     if (!built.ok) {
@@ -617,6 +743,33 @@ PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate
         return result;
     }
     result.mesh = built.mesh;
+    // Where a footprint grazes a nearby fold or perforation of real bone, the layer leaves a sliver apart from
+    // the plate. Slivers under 3 % of the plate are dust, not a piece: dropped. A real break is still reported.
+    {
+        auto regions = vtkSmartPointer<vtkPolyDataConnectivityFilter>::New();
+        regions->SetInputData(result.mesh);
+        regions->SetExtractionModeToAllRegions();
+        regions->Update();
+        vtkIdTypeArray* sizes = regions->GetRegionSizes();
+        const int count = regions->GetNumberOfExtractedRegions();
+        vtkIdType total = 0, largest = 0, others = 0;
+        for (int r = 0; r < count; ++r) {
+            total += sizes->GetValue(r);
+            largest = std::max(largest, sizes->GetValue(r));
+        }
+        for (int r = 0; r < count; ++r)
+            if (sizes->GetValue(r) != largest && sizes->GetValue(r) >= 0.03 * total)
+                ++others;
+        if (count > 1 && others == 0) {
+            auto keep = vtkSmartPointer<vtkPolyDataConnectivityFilter>::New();
+            keep->SetInputData(result.mesh);
+            keep->SetExtractionModeToLargestRegion();
+            keep->Update();
+            auto cleaned = vtkSmartPointer<vtkPolyData>::New();
+            cleaned->DeepCopy(keep->GetOutput());
+            result.mesh = cleaned;
+        }
+    }
     result.pieces = shellsOf(result.mesh);
     result.bridgedMm = bridged;
 

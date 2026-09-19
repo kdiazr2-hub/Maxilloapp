@@ -2488,10 +2488,12 @@ bool MainWindow::prepareGuidePlannedBone()
         QMessageBox::warning(this, tr("Placas"), tr("Falta la base craneal: realice primero la osteotomía Le Fort."));
         return false;
     }
-    // The plate lies on the bone where the plan puts it. The wrap only smooths the bone (1 mm closing): the
-    // arms bridge the gap at the cut themselves, however wide the movement opened it.
+    // The plate lies on the bone where the plan puts it, bent to it — on a regularised surface: a 3 mm closing
+    // covers the perforations and thin walls of segmented maxilla, which a plate copied as ragged patches. The
+    // arms still bridge the gap at the cut themselves: the bone query keeps them off anything further than 1 mm
+    // from real bone or within 1.5 mm of the cut, which is where the closing fills in.
     WrapParams wrapParams;
-    wrapParams.gapClosingMm = 1.0;
+    wrapParams.gapClosingMm = 3.0;
     wrapParams.smallestDetailMm = std::min(0.3, m_guideDetailSpin ? m_guideDetailSpin->value() : 0.3);
     GuideDesignParams prepareParams;
     prepareParams.base.smallestDetailMm = wrapParams.smallestDetailMm;
@@ -2518,37 +2520,13 @@ bool MainWindow::prepareGuidePlannedBone()
 
 PlateBuildResult MainWindow::buildGuidePlate(const PlateDesign& plate) const
 {
-    // The real bones in their planned position: each arm follows its own and bridges between them, and the
-    // gap under each hole (where a plate would rock instead of seating passively) is measured on them.
-    std::vector<std::pair<PlateBone, vtkSmartPointer<vtkStaticCellLocator>>> locators;
-    for (const auto& [label, bone] : {std::pair{kLeFortCranialLabel, PlateBone::Cranial},
-                                      std::pair{kLeFortSegLabel, PlateBone::Segment}}) {
-        const auto mesh = repositionMeshForLabel(label);
-        if (!mesh || mesh->GetNumberOfCells() == 0)
-            continue;
-        auto locator = vtkSmartPointer<vtkStaticCellLocator>::New();
-        locator->SetDataSet(mesh);
-        locator->BuildLocator();
-        locators.emplace_back(bone, locator);
-    }
-    const PlateBoneQuery boneAt = [locators](const std::array<double, 3>& p, double* distanceMm) {
-        double best = 1.0e30;
-        PlateBone nearest = PlateBone::Unknown;
-        for (const auto& [bone, locator] : locators) {
-            double closest[3] = {};
-            vtkIdType cell = -1;
-            int subId = 0;
-            double d2 = 0.0;
-            locator->FindClosestPoint(p.data(), closest, cell, subId, d2);
-            if (std::sqrt(d2) < best) {
-                best = std::sqrt(d2);
-                nearest = bone;
-            }
-        }
-        if (distanceMm)
-            *distanceMm = best;
-        return nearest;
-    };
+    // The real bones in their planned position, kept clear of the osteotomy: each arm follows its own bone on
+    // the anterior faces and bridges in front of the gap; the gap under each hole is measured on them too.
+    std::array<double, 16> motion{};
+    guideSegmentMotion(motion);
+    const PlateBoneQuery boneAt =
+        PlateCore::MakeBoneQuery(repositionMeshForLabel(kLeFortCranialLabel), repositionMeshForLabel(kLeFortSegLabel),
+                                 motion, guideLeFortPath());
     return PlateCore::Build(m_guidePlannedPrepared, plate, guidePlateParams(), boneAt);
 }
 

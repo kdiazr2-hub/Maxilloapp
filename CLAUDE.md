@@ -145,17 +145,29 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   (rigid least squares on corresponding vertices of `m_repositionOriginalMeshes[kLeFortSegLabel]` and the moved
   segment; fails if the mesh was re-cut), so REPOSICIÓN keeps no extra state. Templates: paranasal (one strut) or L
   (piriform arm, buttress arm, bar joining their lowest holes; `TemplateStruts`), holes clicked top to bottom, «Siguiente
-  brazo» between arms. A plate is a continuous ribbon swept along its arms (user's report, 2026-09-19: a plate built
-  as a layer on the wrap dived into the gap a large movement opens and broke up; then, on real bone, went through it).
-  `walkOnBone` walks the surface from each hole towards the next, 1 mm steps in the tangent plane dropped back onto
-  the planned wrap (1 mm closing) — never points of the chord, which on a long curved arm lie mm inside the bone —
-  with normals averaged over ~1 mm (`smoothNormal`: real bone's raw gradient swings tens of degrees between voxels).
-  It stops where the bone under it changes (`PlateBoneQuery`), the surface turns > 40° in a step or > 60° from the
-  hole, the step falls into a hollow or makes no progress (a corner); `strutPath` joins the two walks, crossing what
-  is left with a straight bar of one normal, lifted along it over any corner. Normals are smoothed along the arm; the ribbon is baked
-  with `BakeFunction` as the distance to the nearest mitred piece (rounded rectangle width × thickness, pieces cut at
-  the bisector planes so bends meet flush, only free ends rounded), ∩ outside the bone, minus bores and countersinks.
-  `PlateBuildResult::bridgedMm` reports the bar. PlateTests has an 8 mm gap case.
+  brazo» between arms. How a plate is built (user's reports, 2026-09-19: dived into the gap, went through real bone,
+  turned on edge, rings like hooks — the last three only reproduced on the user's own anatomy, see PlateProbe):
+  `walkOnBone` walks the surface from each hole towards the next (1 mm tangent steps dropped back onto the planned
+  wrap, normals averaged over ~1 mm by `smoothNormal`, since segmented bone's raw gradient swings tens of degrees per
+  voxel) and stops where the plate could not seat: a turn > 40°/step or > 60° from the hole, a hollow, no progress,
+  or `PlateCore::MakeBoneQuery` saying no bone — the nearest planned bone, but nothing within 1.5 mm of the
+  osteotomy or on its wrong side (points on the segment taken back through the motion first), so no arm goes round
+  the edge and down the cut face. `strutPath` joins the two walks; what is left is a bridge "taut over the bone":
+  straight, and where it would cut through bone (the corner of an advanced segment) its deepest point is lifted
+  onto the surface and it bends there, recursively. The bar's normal comes from the plate's width axis (the bone
+  normal × the arm), never from the bone normal squared to the bar (that degenerates when a large advancement runs
+  the bar along an anterolaterally facing normal: the bar went on edge). The plate is then two parts: seated on
+  bone (walked stretches and the hole rings), a layer 0..thickness of the planned wrap's distance within capsule /
+  ring footprints, rims rounded with `SmoothIntersect` — bent to the bone like a real PSI plate; and the bridge, a
+  flat sweep (`BakeFunction`, nearest mitred piece, rounded rectangle) intersected with outside the bone. The planned
+  wrap uses a 3 mm closing: segmented maxilla has perforations and thin walls that a conformal plate copied as ragged
+  patches. Rings, bores and countersinks use the bone normal at the hole (never the smoothed ribbon normal: the
+  bridge's slope tilted the rings and the bone carved them into hooks); normals are smoothed only along seated
+  stretches. Slivers under 3 % of the plate are dropped; a real break is still reported. `bridgedMm` reports the
+  bar. PlateTests: 8 mm gap, 8 mm advancement on a wall facing 30° outward, curved rough wall.
+  `tools/PlateProbe.cpp` (target `PlateProbe`, not a CTest) builds paranasal plates and an L plate on a real
+  project's pre-reposition bones with a given advancement/descent, reports pieces, bridge, fit gap and penetration,
+  and renders frontal/oblique/lateral PNGs: `PlateProbe.exe --project x.maxilloproject --out dir --advance 6 --down 3`.
   Defaults (user's choice): 1.0 mm plate, 2.0 mm screws, guide fixation 1.5 mm, one-piece guide across the midline;
   sleeve bore 1.6 mm / outer 4.2 mm / height 4 mm. `Check` warns (never blocks) on < 2 screws per bone, holes < 4 mm
   from the osteotomy (measured with `OsteotomyCore::PathField` before the cut), overlapping rings and holes on the

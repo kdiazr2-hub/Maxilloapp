@@ -102,7 +102,7 @@ struct PlateParams
     double clearanceMm = 0.0;            // plate on bone
     double edgeRoundMm = 0.4;            // rim rounding (smooth intersection)
     double smallestDetailMm = 0.12;      // grid spacing of the plate
-    int smoothingIterations = 20;
+    int smoothingIterations = 30;
     double minCutDistanceMm = 4.0;       // warn when a hole is closer than this to the osteotomy
     int minScrewsPerBone = 2;            // warn when a plate holds a bone with fewer screws
 };
@@ -181,6 +181,15 @@ PlateCheck Check(const std::vector<PlateDesign>& plates, const std::vector<Predi
 // One sleeve per predictive hole, as guide figures (added body, subtracted bore) at the pre-operative
 // position, so `GuideDesignCore::Build` carves them into the guide with everything else.
 std::vector<GuideFigure> SleeveFigures(const std::vector<PredictiveHole>& holes, const SleeveParams& params = {});
+
+// The bone a plate can seat on, as the arms walk it: the nearest of the two planned bones — but not within
+// `cutMarginMm` of the osteotomy, nor on the wrong side of it. Near the cut the surface turns into the cut face,
+// and an arm that followed it would go down into the gap and meet the other bone there; stopping short keeps
+// the plate on the anterior faces and the bridge in front of the gap. The cut is `path` in pre-operative
+// coordinates, so a point on the segment is taken back through the motion first. Without a path, nearest only.
+PlateBoneQuery MakeBoneQuery(vtkPolyData* cranialPlanned, vtkPolyData* segmentPlanned,
+                             const std::array<double, 16>& segmentMotion, const OsteotomyPath& path,
+                             double cutMarginMm = 1.5);
 
 // ── The plate ────────────────────────────────────────────────────────────────
 // `planned` is the wrap of the bone in its planned position (`GuideDesignCore::Prepare` on the cranial base
