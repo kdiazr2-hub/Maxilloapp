@@ -47,9 +47,9 @@ struct LeFortGuideParams
     double bandRadiusMm = 8.0;        // brush radius along the cut: the band covers ±8 mm around it
     double holePadMm = 1.8;           // material round each sleeve, past its outer radius
     // The band is an openwork frame, not a solid plate: a row of cells above and below the slit.
-    double latticeCellMm = 3.2;       // cell diameter; 0 turns the lattice off
-    double latticeSpacingMm = 5.6;    // between cell centres along the cut
-    double latticeMarginMm = 1.3;     // material left round every cell
+    double latticeCellMm = 2.6;       // cell diameter; 0 turns the lattice off
+    double latticeSpacingMm = 4.4;    // between cell centres along the cut
+    double latticeMarginMm = 1.1;     // material left round every cell
     double latticeSlitClearMm = 2.0;  // material left between a cell and the slit
     double lateralMarginMm = 5.0;     // the band runs this far past the outermost predictive hole
     double dabSpacingMm = 2.5;        // along the cut

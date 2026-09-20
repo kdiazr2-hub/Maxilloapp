@@ -1436,6 +1436,17 @@ void MainWindow::onGuidePointPicked(int, double x, double y, double z)
         hole.center = point;
         hole.axis = m_guidePlannedPrepared.ok ? GuideDesignCore::SurfaceNormalAt(m_guidePlannedPrepared, point)
                                               : std::array<double, 3>{0.0, 0.0, 1.0};
+        // A screw needs bone all round its head and room to the osteotomy. One on a bony margin holds nothing,
+        // and the guide's sleeve would stand on air there (user's rule, 2026-09-20).
+        const HoleSeat seat = guidePlateHoleSeat(hole.center, hole.axis);
+        if (!seat.ok) {
+            statusBar()->showMessage(seat.reason, 6000);
+            if (m_guidePlateCheckLabel) {
+                m_guidePlateCheckLabel->setText(QStringLiteral("⚠ ") + seat.reason);
+                m_guidePlateCheckLabel->setStyleSheet(QStringLiteral("color:#c87e1e; font-size:11px;"));
+            }
+            break;
+        }
         m_guidePendingPlateHoles.push_back(hole);
         break;
     }
@@ -2820,6 +2831,28 @@ bool MainWindow::prepareGuidePlannedBone()
     m_guidePlateMeshes.clear(); // built on the previous plan: rebuilt on demand
     statusBar()->showMessage(tr("Placas: hueso planificado listo."));
     return true;
+}
+
+HoleSeat MainWindow::guidePlateHoleSeat(const std::array<double, 3>& center,
+                                        const std::array<double, 3>& axis) const
+{
+    // Plain nearest-bone queries, with no cut margin: `CheckHoleSeat` measures the distance to the cut itself,
+    // so a query that already hides the bone near the cut would report every hole there as "no bone".
+    std::array<double, 16> motion{};
+    guideSegmentMotion(motion);
+    const auto cranial = repositionMeshForLabel(kLeFortCranialLabel);
+    const PlateBoneQuery plannedBone =
+        PlateCore::MakeBoneQuery(cranial, repositionMeshForLabel(kLeFortSegLabel), motion, {}, 0.0);
+    // The ring is judged on the bone before the movement: that is where the drill goes, through the guide.
+    const auto original = m_repositionOriginalMeshes.find(kLeFortSegLabel);
+    const auto segmentBefore = original != m_repositionOriginalMeshes.end() ? original->second
+                                                                           : repositionMeshForLabel(kLeFortSegLabel);
+    const PlateBoneQuery preopBone =
+        PlateCore::MakeBoneQuery(cranial, segmentBefore, {1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0,
+                                                          0.0, 0.0, 0.0, 1.0},
+                                 {}, 0.0);
+    return PlateCore::CheckHoleSeat(center, axis, plannedBone, preopBone, guideLeFortPath(), motion,
+                                    guidePlateParams());
 }
 
 PlateBuildResult MainWindow::buildGuidePlate(const PlateDesign& plate) const

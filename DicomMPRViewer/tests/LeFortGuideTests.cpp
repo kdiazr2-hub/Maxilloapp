@@ -16,6 +16,7 @@
 #include <cmath>
 #include <functional>
 #include <iostream>
+#include <set>
 #include <string>
 
 namespace
@@ -158,6 +159,54 @@ void testTheGuideIsLaidOutFromThePlan()
     }
 }
 
+// A drill sleeve whose pad touches nothing else is a ring of guide floating over the bone: the build reports
+// several pieces and the surgeon gets a hole with no material under it (user's report, 2026-09-20). Whatever
+// the plates ask for, the painted region has to come out as one patch.
+void testEverySleeveHasGuideUnderIt()
+{
+    const Prepared bone = preoperativeBone();
+    // A plate hole far out on the lateral wall, well beyond the band round the cut.
+    std::vector<PredictiveHole> holes = predictiveHoles();
+    PredictiveHole stray = holes.front();
+    stray.preopCenter = {-23.0, 0.0, 26.0};
+    stray.plannedCenter = stray.preopCenter;
+    stray.preopAxis = {0.0, 1.0, 0.0};
+    stray.bone = PlateBone::Cranial;
+    holes.push_back(stray);
+
+    const LeFortGuideLayout layout = LeFortGuideCore::Layout(bone.preparation, bone.wrap.mesh, leFortCut(), holes);
+    require(layout.ok, layout.error.toStdString());
+
+    // One patch: every dab reaches every other through overlaps, the stray hole's pad included.
+    std::vector<int> parent(layout.paint.size());
+    for (size_t i = 0; i < parent.size(); ++i)
+        parent[i] = static_cast<int>(i);
+    const std::function<int(int)> root = [&parent](int i) {
+        while (parent[static_cast<size_t>(i)] != i)
+            i = parent[static_cast<size_t>(i)] = parent[static_cast<size_t>(parent[static_cast<size_t>(i)])];
+        return i;
+    };
+    const auto span = [](const Vec3& a, const Vec3& b) {
+        return std::sqrt((a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2]));
+    };
+    for (size_t i = 0; i < layout.paint.size(); ++i)
+        for (size_t j = i + 1; j < layout.paint.size(); ++j)
+            if (span(layout.paint[i].center, layout.paint[j].center) <=
+                layout.paint[i].radiusMm + layout.paint[j].radiusMm - 0.5)
+                parent[static_cast<size_t>(root(static_cast<int>(i)))] = root(static_cast<int>(j));
+    std::set<int> components;
+    for (size_t i = 0; i < layout.paint.size(); ++i)
+        components.insert(root(static_cast<int>(i)));
+    require(components.size() == 1,
+            "the painted guide came out in " + std::to_string(components.size()) + " patches");
+
+    // And the stray hole really is painted over.
+    bool covered = false;
+    for (const GuideBrushStroke& dab : layout.paint)
+        covered = covered || span(dab.center, stray.preopCenter) < dab.radiusMm;
+    require(covered, "the stray sleeve has no guide under it");
+}
+
 void testTheGuideIsOnePieceWithAnOpenSlit()
 {
     const auto holes = predictiveHoles();
@@ -269,6 +318,7 @@ int main()
 {
     const std::vector<std::pair<const char*, std::function<void()>>> tests = {
         {"the guide is laid out from the plan", testTheGuideIsLaidOutFromThePlan},
+        {"every sleeve has guide under it", testEverySleeveHasGuideUnderIt},
         {"the guide is one piece with an open slit", testTheGuideIsOnePieceWithAnOpenSlit},
         {"works before plates and refuses without envelope", testWorksBeforePlatesAndRefusesWithoutEnvelope},
         {"the guide finds the anterior wall when the sweep axis is reversed",

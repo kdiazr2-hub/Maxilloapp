@@ -644,6 +644,85 @@ PlateBoneQuery MakeBoneQuery(vtkPolyData* cranialPlanned, vtkPolyData* segmentPl
     };
 }
 
+// ── Where a screw may go ──────────────────────────────────────────────────────
+HoleSeat CheckHoleSeat(const Vec3& center, const Vec3& axis, const PlateBoneQuery& plannedBone,
+                       const PlateBoneQuery& preopBone, const OsteotomyPath& path,
+                       const std::array<double, 16>& segmentMotion, const PlateParams& params)
+{
+    HoleSeat seat;
+    if (!plannedBone) {
+        seat.ok = true; // nothing to check against
+        return seat;
+    }
+    double distance = 0.0;
+    const PlateBone bone = plannedBone(center, &distance);
+    if (bone == PlateBone::Unknown || distance > 1.0) {
+        seat.reason = QStringLiteral("Ahí no hay hueso: marque sobre la base craneal o sobre el Le Fort.");
+        return seat;
+    }
+    // Everything else is judged where the drill actually goes: on the bone before the cut.
+    const std::array<double, 16> back = Invert(segmentMotion);
+    const Vec3 preopCenter = bone == PlateBone::Segment ? TransformPoint(back, center) : center;
+    const Vec3 preopAxis = bone == PlateBone::Segment ? TransformVector(back, axis) : axis;
+
+    // Bone all round the ring, in the surface's tangent plane. A hole on a free margin — the rim of the
+    // piriform aperture, the lower border of the fragment, the edge of the segmentation — leaves the screw
+    // with nothing to hold, and the guide's sleeve standing on air.
+    if (preopBone) {
+        const double ring = 0.5 * std::max(params.ringDiameterMm, params.holeDiameterMm + 1.0);
+        const double reach = ring + std::max(0.0, params.minEdgeDistanceMm);
+        constexpr double kOnBoneMm = 1.5; // the rim of a screw head this far off the surface is still carried
+        // A normal we can trust: the direction in which the distance to the bone grows, read a millimetre off
+        // the surface. The envelope's own gradient swings by tens of degrees where the wrap is coarse, and a
+        // ring laid out in a plane tilted by that much reads a flat wall as an edge.
+        const Vec3 hint = unit(preopAxis, {0.0, 0.0, 1.0});
+        Vec3 gradient{0.0, 0.0, 0.0};
+        {
+            const Vec3 probe = add(preopCenter, scale(hint, 1.0));
+            constexpr double h = 0.5;
+            for (int a = 0; a < 3; ++a) {
+                Vec3 up = probe, down = probe;
+                up[static_cast<size_t>(a)] += h;
+                down[static_cast<size_t>(a)] -= h;
+                double far = 0.0, near = 0.0;
+                preopBone(up, &far);
+                preopBone(down, &near);
+                gradient[static_cast<size_t>(a)] = far - near;
+            }
+        }
+        const Vec3 n = unit(gradient, hint);
+        const Vec3 helper = std::abs(n[2]) < 0.9 ? Vec3{0.0, 0.0, 1.0} : Vec3{1.0, 0.0, 0.0};
+        const Vec3 u = unit(cross(helper, n), {1.0, 0.0, 0.0});
+        const Vec3 v = cross(n, u);
+        constexpr int kSamples = 16;
+        for (int i = 0; i < kSamples; ++i) {
+            const double angle = 2.0 * 3.14159265358979323846 * i / kSamples;
+            const Vec3 around =
+                add(preopCenter, add(scale(u, reach * std::cos(angle)), scale(v, reach * std::sin(angle))));
+            double away = 0.0;
+            preopBone(around, &away);
+            if (away > kOnBoneMm) {
+                seat.reason = QStringLiteral("El tornillo queda en la orilla del hueso: deje al menos %1 mm de "
+                                             "hueso alrededor de la cabeza.")
+                                  .arg(params.minEdgeDistanceMm, 0, 'f', 1);
+                return seat;
+            }
+        }
+    }
+    // And clear of the osteotomy, measured before the cut.
+    if (path.valid) {
+        seat.cutDistanceMm = std::abs(OsteotomyCore::PathField(path, preopCenter));
+        if (seat.cutDistanceMm < params.minCutDistanceMm) {
+            seat.reason = QStringLiteral("El agujero queda a %1 mm de la osteotomía: deje al menos %2 mm.")
+                              .arg(seat.cutDistanceMm, 0, 'f', 1)
+                              .arg(params.minCutDistanceMm, 0, 'f', 1);
+            return seat;
+        }
+    }
+    seat.ok = true;
+    return seat;
+}
+
 // ── The plate ─────────────────────────────────────────────────────────────────
 PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate, const PlateParams& params,
                        const PlateBoneQuery& boneAt, const std::atomic<bool>* cancel, const PlateKeepOut& keepOut)

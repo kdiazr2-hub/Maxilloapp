@@ -632,6 +632,53 @@ void testTheKeepOutIsClosedBone()
                     std::to_string(inside[2]) + "): " + std::to_string(prepared.wrapField->At(inside)));
 }
 
+// A screw at a bony margin has nothing to hold it, and the guide's sleeve would stand on air there. A screw
+// at the osteotomy sits in the cortex the saw is about to take (user's rule, 2026-09-20: "no dejes que los
+// orificios se coloquen en la orilla").
+void testAScrewMayNotSitOnAMargin()
+{
+    const std::array<double, 16> motion = plannedMotion();
+    const auto segmentPlanned = moved(segmentBeforeCut(), motion);
+    const auto cranial = cranialBase();
+    // Plain nearest-bone queries: the distance to the cut is measured separately. The ring is judged before
+    // the movement, which is where the drill goes.
+    const PlateBoneQuery plannedBone = PlateCore::MakeBoneQuery(cranial, segmentPlanned, motion, {}, 0.0);
+    const std::array<double, 16> still{1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+                                       0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0};
+    const PlateBoneQuery preopBone = PlateCore::MakeBoneQuery(cranial, segmentBeforeCut(), still, {}, 0.0);
+    const Vec3 facing{0.0, 1.0, 0.0};
+    PlateParams params;
+
+    // Well inside the cranial wall, 8 mm above the cut at z = 9: sound.
+    const HoleSeat middle = PlateCore::CheckHoleSeat({-10.0, 0.0, 17.0}, facing, plannedBone, preopBone, leFortCut(), motion, params);
+    require(middle.ok, "a screw in the middle of the wall was refused: " + middle.reason.toStdString());
+    require(middle.cutDistanceMm > 7.0 && middle.cutDistanceMm < 9.0,
+            "the distance to the cut is wrong: " + std::to_string(middle.cutDistanceMm));
+
+    // On the free lower border of the cranial piece, right at the cut: refused, and for the margin, not for
+    // the cut — the ring reaches past the edge before the 4 mm to the osteotomy runs out.
+    const HoleSeat margin = PlateCore::CheckHoleSeat({-10.0, 0.0, 9.5}, facing, plannedBone, preopBone, leFortCut(), motion, params);
+    require(!margin.ok, "a screw on the cut edge was allowed");
+
+    // The cut rule on its own. Here the real cut runs along the wall's own lower border, so a hole near it
+    // fails the margin first; put an imaginary cut across the middle of the wall instead. Three millimetres
+    // from it, with bone all round, the hole is refused for the osteotomy.
+    const OsteotomyPath midWall =
+        OsteotomyCore::LeFortPath({{{-10.0, 5.0, 20.0}, {10.0, 5.0, 20.0}, {-20.0, -5.0, 20.0}, {20.0, -5.0, 20.0}}});
+    const HoleSeat close = PlateCore::CheckHoleSeat({-10.0, 0.0, 17.0}, facing, plannedBone, preopBone, midWall, motion, params);
+    require(!close.ok && close.reason.contains(QStringLiteral("osteotom")),
+            "a screw 3 mm from the osteotomy was allowed: " + close.reason.toStdString());
+
+    // On the lateral edge of the wall (it ends at x = -25): refused for the margin.
+    const HoleSeat lateral = PlateCore::CheckHoleSeat({-23.0, 0.0, 17.0}, facing, plannedBone, preopBone, leFortCut(), motion, params);
+    require(!lateral.ok && lateral.reason.contains(QStringLiteral("orilla")),
+            "a screw on the lateral edge was allowed: " + lateral.reason.toStdString());
+
+    // Off the bone altogether.
+    const HoleSeat air = PlateCore::CheckHoleSeat({-10.0, 25.0, 17.0}, facing, plannedBone, preopBone, leFortCut(), motion, params);
+    require(!air.ok, "a screw in the air was allowed");
+}
+
 void testPlatesTravelWithTheProject()
 {
     PlateDesign plate = paranasalPlate(plannedMotion());
@@ -680,6 +727,7 @@ int main()
         {"the plate steps across a large advancement", testPlateBridgesALargeAdvancementFlat},
         {"the plate follows a curved, rough bone", testPlateFollowsACurvedRoughBone},
         {"the keep-out is closed bone", testTheKeepOutIsClosedBone},
+        {"a screw may not sit on a margin", testAScrewMayNotSitOnAMargin},
         {"plates travel with the project", testPlatesTravelWithTheProject},
     };
     int failures = 0;

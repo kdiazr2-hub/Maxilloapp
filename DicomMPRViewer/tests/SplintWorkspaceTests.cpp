@@ -1377,7 +1377,9 @@ public:
                                   onSegment(x, 4.0), onSegment(x, -2.0)})
                 window.onGuidePointPicked(0, p[0], p[1], p[2]);
             require(window.m_guidePendingPlateHoles.size() == 4 && window.m_guidePlateArmButton->isEnabled(),
-                    "a guided pillar did not collect its four points");
+                    "a guided pillar did not collect its four points: " +
+                        std::to_string(window.m_guidePendingPlateHoles.size()) + ", " +
+                        (window.m_guidePlateCheckLabel ? window.m_guidePlateCheckLabel->text().toStdString() : ""));
             window.startGuidePlateArm();
             require(window.m_guidePendingPlatePillars.size() == static_cast<size_t>(pillar + 1),
                     "the guided plate did not advance to the next pillar");

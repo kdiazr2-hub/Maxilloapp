@@ -204,9 +204,18 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   The splintless template is the four-pillar plate the surgeon actually builds, and it is the one that exposes the
   guide's connectivity.
   Defaults (user's choice): 1.0 mm plate, 2.0 mm screws, guide fixation 1.5 mm, one-piece guide across the midline;
-  sleeve bore 1.6 mm / outer 4.2 mm / height 4 mm. `Check` warns (never blocks) on < 2 screws per bone, holes < 4 mm
-  from the osteotomy (measured with `OsteotomyCore::PathField` before the cut), overlapping rings and holes on the
-  wrong side of the cut; `Build` reports the gap under each hole to the real bone (passive fit). The plan keeps
+  sleeve bore 1.6 mm / outer 4.2 mm / height 4 mm. `PlateCore::CheckHoleSeat` BLOCKS a hole where a screw
+  could not hold: it needs bone all round its ring (16 samples at `ringDiameterMm`/2 + `minEdgeDistanceMm`, each
+  within 1.5 mm of bone) and `minCutDistanceMm` to the osteotomy. Both are judged on the bone BEFORE the
+  movement — that is where the drill goes, through the guide — because on the planned anatomy the osteotomy
+  itself reads as a free margin and no screw could be placed near the cut at all. The ring's plane comes from
+  the gradient of the bone's own distance a millimetre off the surface, not from the envelope's normal, which
+  swings tens of degrees where the wrap is coarse and tilted the ring off a flat wall. A screw on a bony margin
+  — the piriform rim, the lower border of the fragment, the edge of the segmentation — has nothing to hold it
+  and the guide's sleeve would stand on air (user's rule, 2026-09-20: "no dejes que los orificios se coloquen en
+  la orilla"). `MainWindow::guidePlateHoleSeat` calls it on every click in `kModePlateHoles` and refuses the
+  point with the reason in the status bar and the plate report. `Check` still warns (never blocks) on < 2 screws
+  per bone, overlapping rings and holes on the wrong side of the cut; `Build` reports the gap under each hole to the real bone (passive fit). The plan keeps
   `plates`, `plate` and `sleeve` as optional keys. UI in `MainWindowGuides.cpp` («PLACAS A MEDIDA» section, mode
   `kModePlateHoles`, `m_guidePlannedView` swaps the scene to the planned bone with the plates, predictive holes are
   purple markers on the pre-operative view, `exportGuidePlateFiles` writes `placa_N_lado.stl` plus
@@ -233,7 +242,12 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   with everything else and `KeepOutNode` stops an edit filling them in. A solid band of the same height would be a
   slab; the frame grips more of the wall, stays light and flexes onto the bone, which is what makes a printed guide
   seat passively. With a narrow solid band the far sleeves of a splintless plan came out as rings floating off the
-  guide (the build reported 2 pieces). It only fills
+  guide (the build reported 2 pieces). `connectPaint` then guarantees it: the dabs are grouped into components
+  by real overlap (allowing for the millimetre the region is opened by), and every patch but the largest is
+  joined to it by a strap of dabs laid on the surface, nearest points first. A pad round a sleeve that touches
+  nothing else is a hole drilled with no material under it, which is what the surgeon got ("que no queden
+  espacios donde se perforó sin material"). `LeFortGuideTests` "every sleeve has guide under it" puts a plate
+  hole far out on the lateral wall and requires the paint to come out as one patch covering it. It only fills
   the plan (paint, slotPlan, holes); `GuideDesignCore::Build` still carves it, and the brush and EDITAR still work.
   UI: «Generar guía de corte» in «PLACAS A MEDIDA» (`MainWindow::generateLeFortGuide`). With plates, the hand-drawn
   steps (zona, ranuras, agujeros, crear) stay hidden until the guide exists and then serve to retouch it («Reconstruir

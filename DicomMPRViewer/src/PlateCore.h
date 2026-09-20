@@ -105,7 +105,8 @@ struct PlateParams
     double edgeRoundMm = 0.4;            // rim rounding (smooth intersection)
     double smallestDetailMm = 0.12;      // grid spacing of the plate
     int smoothingIterations = 30;
-    double minCutDistanceMm = 4.0;       // warn when a hole is closer than this to the osteotomy
+    double minCutDistanceMm = 4.0;       // a hole may not go closer than this to the osteotomy
+    double minEdgeDistanceMm = 2.0;      // bone left all round the screw's ring, so it is not on a margin
     double cutEdgeMarginMm = 2.0;        // free plate edge to the osteotomy on both bones
     int minScrewsPerBone = 2;            // warn when a plate holds a bone with fewer screws
 };
@@ -165,6 +166,14 @@ struct PlateKeepOut
     std::shared_ptr<const ImplicitCore::BakedField> boneAndGap;
 };
 
+// Whether a screw may go where it was clicked, and why not.
+struct HoleSeat
+{
+    bool ok = false;
+    QString reason; // in Spanish, ready to show
+    double cutDistanceMm = -1.0;
+};
+
 // Which planned bone is nearest a point, and how far it is: lets each plate arm follow its own bone and tells
 // where it has to bridge. Without it the arms still bridge where the surface turns sharply or falls away.
 using PlateBoneQuery = std::function<PlateBone(const std::array<double, 3>&, double* distanceMm)>;
@@ -212,6 +221,21 @@ std::vector<GuideFigure> SleeveFigures(const std::vector<PredictiveHole>& holes,
 PlateBoneQuery MakeBoneQuery(vtkPolyData* cranialPlanned, vtkPolyData* segmentPlanned,
                              const std::array<double, 16>& segmentMotion, const OsteotomyPath& path,
                              double cutMarginMm = 1.5);
+
+// ── Where a screw may go ─────────────────────────────────────────────────────
+// A screw needs bone all round its ring and a margin to the osteotomy; one at a bony margin has nothing to
+// hold it, and one at the cut sits in the few tenths of cortex the saw is about to take (user's rule,
+// 2026-09-20: "no dejes que los orificios se coloquen en la orilla").
+//   · `plannedBone` says which bone was clicked, on the planned anatomy the user is looking at;
+//   · `preopBone` is the SAME bones before the movement, and the ring is judged on it, because the hole is
+//     drilled through the guide before the cut is made. Judging it on the planned anatomy made the osteotomy
+//     itself read as a free margin, and no screw could be placed near the cut at all.
+// Both must be queries without a cut margin (`MakeBoneQuery` with an invalid path): the distance to the cut is
+// measured separately. `segmentMotion` is pre-op → planned, and `path` the cut in pre-operative coordinates.
+HoleSeat CheckHoleSeat(const std::array<double, 3>& center, const std::array<double, 3>& axis,
+                       const PlateBoneQuery& plannedBone, const PlateBoneQuery& preopBone,
+                       const OsteotomyPath& path, const std::array<double, 16>& segmentMotion,
+                       const PlateParams& params = {});
 
 // ── The plate ────────────────────────────────────────────────────────────────
 // `planned` is the wrap of the bone in its planned position (`GuideDesignCore::Prepare` on the cranial base

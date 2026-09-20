@@ -271,6 +271,7 @@ private:
     // GUIAS - PLACAS A MEDIDA (Le Fort): plates on the planned bone, predictive holes into the guide.
     void setGuidePlateView(bool planned);
     bool prepareGuidePlannedBone();
+    HoleSeat guidePlateHoleSeat(const std::array<double, 3>& center, const std::array<double, 3>& axis) const;
     void ensureGuidePlateMeshes();
     PlateBuildResult buildGuidePlate(const PlateDesign& plate) const;
     void startGuidePlateArm();

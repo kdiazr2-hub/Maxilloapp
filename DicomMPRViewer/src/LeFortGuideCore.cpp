@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <map>
 
 namespace
@@ -51,6 +52,67 @@ Vec3 ontoSurface(const ImplicitCore::BakedField& field, Vec3 p)
         p = sub(p, scale(gradient, value / g2));
     }
     return p;
+}
+// Joins every painted patch to the largest one with a strap of dabs laid on the surface, and says how many it
+// had to add. A pad round a drill sleeve that touches nothing else becomes a ring of guide floating in the air
+// over the bone — the build reports the guide in several pieces and the surgeon gets a sleeve with no material
+// under it (user's report, 2026-09-20: "que no queden espacios donde se perforó sin material").
+int connectPaint(const ImplicitCore::BakedField& field, GuideBrushPaint& paint)
+{
+    if (paint.size() < 2)
+        return 0;
+    int added = 0;
+    for (int pass = 0; pass < 8; ++pass) {
+        // Components: two dabs hold together only where they really overlap, since the region is opened by a
+        // millimetre before it is carved.
+        std::vector<int> parent(paint.size());
+        for (size_t i = 0; i < parent.size(); ++i)
+            parent[i] = static_cast<int>(i);
+        const std::function<int(int)> root = [&parent](int i) {
+            while (parent[static_cast<size_t>(i)] != i)
+                i = parent[static_cast<size_t>(i)] = parent[static_cast<size_t>(parent[static_cast<size_t>(i)])];
+            return i;
+        };
+        for (size_t i = 0; i < paint.size(); ++i)
+            for (size_t j = i + 1; j < paint.size(); ++j)
+                if (norm(sub(paint[i].center, paint[j].center)) <= paint[i].radiusMm + paint[j].radiusMm - 0.5)
+                    parent[static_cast<size_t>(root(static_cast<int>(i)))] = root(static_cast<int>(j));
+        std::map<int, std::vector<size_t>> components;
+        for (size_t i = 0; i < paint.size(); ++i)
+            components[root(static_cast<int>(i))].push_back(i);
+        if (components.size() < 2)
+            break;
+        // The largest patch is the band; everything else is joined to it, nearest points first.
+        auto biggest = components.begin();
+        for (auto it = components.begin(); it != components.end(); ++it)
+            if (it->second.size() > biggest->second.size())
+                biggest = it;
+        const std::vector<size_t>& band = biggest->second;
+        for (const auto& [key, members] : components) {
+            if (key == biggest->first)
+                continue;
+            size_t from = members.front(), to = band.front();
+            double best = 1e30;
+            for (const size_t a : members)
+                for (const size_t b : band) {
+                    const double d = norm(sub(paint[a].center, paint[b].center));
+                    if (d < best) {
+                        best = d;
+                        from = a;
+                        to = b;
+                    }
+                }
+            const double strap = std::max(2.5, 0.6 * std::min(paint[from].radiusMm, paint[to].radiusMm));
+            const int steps = std::max(2, static_cast<int>(std::ceil(best / (0.8 * strap))));
+            for (int k = 1; k < steps; ++k) {
+                const Vec3 along = add(paint[from].center, scale(sub(paint[to].center, paint[from].center),
+                                                                 static_cast<double>(k) / steps));
+                paint.push_back({ontoSurface(field, along), strap, false});
+                ++added;
+            }
+        }
+    }
+    return added;
 }
 } // namespace
 
@@ -287,6 +349,10 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
         }
     }
 
+    // Nothing painted may stand on its own: a sleeve's pad that touches no other is a ring floating over the
+    // bone. This is also what makes the guide come out in one piece.
+    const int connectors = connectPaint(field, layout.paint);
+
     // The cells. A row above and a row below the slit, staggered along the cut, each taken at the envelope
     // vertex nearest its place on the anterior wall and kept clear of the slit, of every sleeve and screw, and
     // of the rim. They are subtracted figures, so `GuideDesignCore` carves them with everything else and the
@@ -377,6 +443,9 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
                         .arg(layout.fixation.size())
                         .arg(params.fixationDiameterMm, 0, 'f', 1) +
                     QStringLiteral(" Celdas del entramado: %1.").arg(layout.figures.size());
+    if (connectors > 0)
+        layout.report += QStringLiteral(" Se añadieron %1 trazo(s) de unión para que ninguna camisa quede suelta.")
+                             .arg(connectors);
     layout.ok = true;
     return layout;
 }
