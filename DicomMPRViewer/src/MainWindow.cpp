@@ -2082,24 +2082,23 @@ void MainWindow::buildToolBar()
         row->addStretch(1);
     }
 
-    // GUIAS - cutting guides built on the pre-operative anatomy
-    {
-        auto  mod  = addModule(tr("GUIAS"));
-        auto* page = mod.first;
-        // The GUIAS actions live in the guided panel on the left of the workspace (MainWindowGuides.cpp).
-        auto* guideHint = new QLabel(tr("Siga los pasos en el panel izquierdo de Guías."), page);
-        guideHint->setStyleSheet("color:#98989d; font-size:11px; padding-left:8px;");
-        mod.second->addWidget(guideHint);
-        mod.second->addStretch(1);
-    }
-
-    // PLACAS - patient-specific fixation plates on the final Le Fort position
+    // PLACAS - definitive fixation and predictive holes on the planned Le Fort
     {
         auto  mod  = addModule(tr("PLACAS"));
         auto* page = mod.first;
-        auto* plateHint = new QLabel(tr("Diseñe la placa personalizada sobre el Le Fort en posición definitiva."), page);
+        auto* plateHint = new QLabel(tr("Defina las placas y sus perforaciones sobre el Le Fort definitivo."), page);
         plateHint->setStyleSheet("color:#98989d; font-size:11px; padding-left:8px;");
         mod.second->addWidget(plateHint);
+        mod.second->addStretch(1);
+    }
+
+    // GUIAS - cutting guides on pre-operative anatomy, keyed to the plate holes
+    {
+        auto  mod  = addModule(tr("GUIAS"));
+        auto* page = mod.first;
+        auto* guideHint = new QLabel(tr("Cree la guía preoperatoria con las perforaciones definidas por las placas."), page);
+        guideHint->setStyleSheet("color:#98989d; font-size:11px; padding-left:8px;");
+        mod.second->addWidget(guideHint);
         mod.second->addStretch(1);
     }
 
@@ -2885,7 +2884,7 @@ void MainWindow::buildCentralWidget()
         m_viewModeStack->addWidget(splintPanel);  // index 6
     }
 
-    // GUIAS workspace - page 7
+    // Shared PLACAS / GUIAS workspace - page 7
     {
         auto* guidePanel = new QWidget(m_viewModeStack);
         auto* guideLayout = new QHBoxLayout(guidePanel);

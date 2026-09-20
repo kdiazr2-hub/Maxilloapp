@@ -212,8 +212,11 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
     }
 
     const double bandRadius = std::max(1.0, params.bandRadiusMm);
-    for (const BandPoint& b : band)
-        layout.paint.push_back({b.point, bandRadius, false});
+    for (const BandPoint& b : band) {
+        // Where the cut crosses the piriform aperture the band has to span open air. A full-width band there
+        // became a slab over the nose; a strap is enough to hold the two halves together.
+        layout.paint.push_back({b.point, b.onCut ? bandRadius : 0.75 * bandRadius, false});
+    }
 
     // A pad round each predictive hole, and a stem joining it to the band if it is further than the two reach.
     const double pad = 0.5 * params.sleeveOuterDiameterMm + params.holePadMm;
@@ -233,12 +236,16 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
             for (int k = 1; k < steps; ++k) {
                 const Vec3 along = add(hole.preopCenter, scale(sub(nearest->point, hole.preopCenter),
                                                                static_cast<double>(k) / steps));
-                layout.paint.push_back({ontoSurface(field, along), 0.75 * pad, false});
+                layout.paint.push_back({ontoSurface(field, along), std::min(pad, bandRadius), false});
             }
         }
     }
 
-    // Four fixation screws: above and below the cut at each lateral end, clear of the predictive holes.
+    // The guide is screwed to the bone before anything is drilled or cut (Gander et al. 2015: "each was fixed
+    // with two 1.5-mm-diameter standard osteosynthesis screws"; Ho et al. 2025: "temporarily fixed with two or
+    // four monocortical positioning screws"). They go on the cranial side of the cut, which does not move, at
+    // each end of the band and clear of the definitive plate holes; without plates the older layout of four
+    // (above and below) is kept, since then nothing else holds the guide down.
     const auto clearOfHoles = [&](const Vec3& p) {
         for (const PredictiveHole& hole : holes)
             if (norm(sub(p, hole.preopCenter)) < params.minFixationToHoleMm)
@@ -248,72 +255,66 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
                 return false;
         return true;
     };
-    for (const int endSide : {-1, 1}) {
-        for (const double sign : {1.0, -1.0}) {
-            const double wanted = sign * params.fixationOffsetMm;
-            bool placed = false;
-            // From the end inwards, a bin at a time, until a spot clear of the holes turns up.
-            for (int step = 0; step < bins && !placed; ++step) {
-                const int bin = endSide < 0 ? step : bins - 1 - step;
-                const auto found = byBin.find(bin);
-                if (found == byBin.end())
-                    continue;
-                const Candidate* pick = nullptr;
-                for (const Candidate* c : found->second)
-                    if (std::abs(c->field - wanted) < 1.0 && (!pick || c->depth > pick->depth))
-                        pick = c;
-                if (!pick || !clearOfHoles(pick->point))
-                    continue;
-                GuideFixationHole screw;
-                screw.center = pick->point;
-                screw.axis = GuideBaseCore::NormalAt(field, pick->point);
-                screw.diameterMm = params.fixationDiameterMm;
-                layout.fixation.push_back(screw);
-                layout.paint.push_back({pick->point, 3.5, false});
-                placed = true;
+    {
+        // With plates, only the cranial side: a screw below the cut would be drilled into the piece that is
+        // about to be mobilised, and its hole would travel away with the maxilla.
+        const std::vector<double> sides = holes.empty() ? std::vector<double>{1.0, -1.0} : std::vector<double>{1.0};
+        for (const int endSide : {-1, 1}) {
+            for (const double sign : sides) {
+                const double wanted = sign * params.fixationOffsetMm;
+                bool placed = false;
+                // From the end inwards, a bin at a time, until a spot clear of the holes turns up.
+                for (int step = 0; step < bins && !placed; ++step) {
+                    const int bin = endSide < 0 ? step : bins - 1 - step;
+                    const auto found = byBin.find(bin);
+                    if (found == byBin.end())
+                        continue;
+                    const Candidate* pick = nullptr;
+                    for (const Candidate* c : found->second)
+                        if (std::abs(c->field - wanted) < 1.0 && (!pick || c->depth > pick->depth))
+                            pick = c;
+                    if (!pick || !clearOfHoles(pick->point))
+                        continue;
+                    GuideFixationHole screw;
+                    screw.center = pick->point;
+                    screw.axis = GuideBaseCore::NormalAt(field, pick->point);
+                    screw.diameterMm = params.fixationDiameterMm;
+                    layout.fixation.push_back(screw);
+                    layout.paint.push_back({pick->point, 3.5, false});
+                    placed = true;
+                }
             }
         }
     }
 
     // The slit, in pieces between bridges: one at the midline (lateral 0 is the middle of the plates) and
-    // every `bridgeSpacingMm` from it. Each piece is a slot limited to its two ends on the cut line.
-    std::vector<BandPoint> onCut;
-    for (const BandPoint& b : band)
-        if (b.onCut)
-            onCut.push_back(b);
+    // every `bridgeSpacingMm` from it. The slit runs the whole length of the band, because the slab it is cut
+    // with IS the planned osteotomy and `GuideDesignCore` clips it to the guide's own material: where there is
+    // no guide there is no slit. Ending each piece at the last envelope vertex that happened to sit exactly on
+    // the cut left a row of short stubs instead of a saw slit (user's report, 2026-09-20).
     const double halfBridge = 0.5 * std::max(0.5, params.bridgeWidthMm);
     const double period = std::max(4.0 * halfBridge, params.bridgeSpacingMm);
-    const auto bridgeIndex = [&](double s) { return static_cast<int>(std::floor((s + 0.5 * period) / period)); };
-    const auto inBridge = [&](double s) {
-        const double offset = s - period * bridgeIndex(s);
-        return std::abs(offset) < halfBridge;
-    };
-    std::vector<BandPoint> run;
-    const auto closeRun = [&] {
-        if (run.size() >= 2 && std::abs(run.back().lateral - run.front().lateral) >= 3.0) {
+    const auto atLateral = [&](double s) { return add(center, scale(lateral, s)); };
+    const int firstBridge = static_cast<int>(std::floor((lowest + 0.5 * period) / period));
+    const int lastBridge = static_cast<int>(std::ceil((highest + 0.5 * period) / period));
+    double pieceStart = lowest;
+    for (int index = firstBridge; index <= lastBridge + 1; ++index) {
+        // Each bridge is a `bridgeWidthMm` band of uncut guide centred on `index * period`; the midline
+        // (lateral 0, index 0) always has one.
+        const double bridgeAt = period * index;
+        const double pieceEnd = std::min(highest, bridgeAt - halfBridge);
+        if (pieceEnd - pieceStart >= 3.0) {
             GuideSlot slot;
             slot.path = path;
-            slot.start = run.front().point;
-            slot.end = run.back().point;
+            slot.start = atLateral(pieceStart);
+            slot.end = atLateral(pieceEnd);
             slot.hasExtent = true;
             layout.slotPlan.push_back(slot);
         }
-        run.clear();
-    };
-    for (size_t i = 0; i < onCut.size(); ++i) {
-        const BandPoint& b = onCut[i];
-        // The slit is the planned cut itself; a bin without an envelope vertex right on it is not a break.
-        // Only a real hole in the anterior wall (the aperture) or a bridge ends a piece.
-        const bool gapBefore = i > 0 && (b.lateral - onCut[i - 1].lateral > std::max(6.0, 2.5 * spacing) ||
-                                         bridgeIndex(b.lateral) != bridgeIndex(onCut[i - 1].lateral));
-        if (gapBefore)
-            closeRun();
-        if (!inBridge(b.lateral))
-            run.push_back(b);
-        else
-            closeRun();
+        pieceStart = std::max(pieceStart, bridgeAt + halfBridge);
+        if (pieceStart >= highest)
+            break;
     }
-    closeRun();
 
     layout.report = QStringLiteral("Guía de corte Le Fort: banda de %1 mm sobre el corte (%2 tramo(s) por debajo de la "
                                    "apertura), %3 camisa(s), %4 tramo(s) de ranura con puentes, %5 tornillo(s) de "

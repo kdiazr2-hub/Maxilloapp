@@ -313,7 +313,10 @@ bool completeRegion(GuideRegion& region, const ImplicitCore::BakedField& field, 
     for (size_t c = 0; c < cells; ++c)
         outline->values[c] =
             static_cast<float>((mask[c] ? -(std::sqrt(toOutside[c]) - 0.5) : (std::sqrt(toInside[c]) - 0.5)) * h);
-    blur2D(outline->values, nu, nv, 1.2);
+    // A hand-painted outline contains small direction changes even when the intended border is continuous.
+    // Smooth its signed distance in millimetres so the result is equally regular at every grid resolution.
+    const double outlineSigmaCells = std::clamp(0.2 * params.cornerRadiusMm / h, 1.2, 1.5);
+    blur2D(outline->values, nu, nv, outlineSigmaCells);
 
     // Height of the first surface met coming in along -axis, over the whole grid.
     double aTop = -kFar, aBottom = kFar;
@@ -484,11 +487,19 @@ GuideRegion MakeBrushRegion(const std::shared_ptr<const ImplicitCore::BakedField
                 if (std::hypot(g.u0 + i * h - uv[0], g.v0 + j * h - uv[1]) <= r)
                     mask[g.index(i, j)] = stroke.erase ? 0 : 1;
     }
-    // A painted area is a union of discs: its rim is scalloped between dabs. Closing fills those notches and
-    // a light opening rounds the corners, so the guide's rim follows the stroke, not the dabs.
-    const double closeCells = 2.0 / h, openCells = 1.0 / h;
+    // A painted area is a union of discs: its rim is scalloped between dabs. Regularise it in millimetres so
+    // the final border follows the surgeon's broad gesture rather than every individual brush sample.
+    const std::vector<uint8_t> paintedMask = mask;
+    const double regularizeMm = std::clamp(params.cornerRadiusMm, 2.5, 5.0);
+    const double closeCells = regularizeMm / h;
+    const double openCells = std::min(1.5, 0.4 * regularizeMm) / h;
     mask = erode(dilate(mask, g.nu, g.nv, closeCells), g.nu, g.nv, closeCells);
     mask = dilate(erode(mask, g.nu, g.nv, openCells), g.nu, g.nv, openCells);
+    // Morphology on a raster can move a curved zero line out by several cells. Keep the polished border within
+    // half a millimetre of what was actually painted, so smoothing never makes the guide unexpectedly larger.
+    const std::vector<uint8_t> paintLimit = dilate(paintedMask, g.nu, g.nv, 0.5 / h);
+    for (size_t i = 0; i < mask.size(); ++i)
+        mask[i] = mask[i] && paintLimit[i] ? 1 : 0;
     if (std::none_of(mask.begin(), mask.end(), [](uint8_t c) { return c != 0; })) {
         region.error = QStringLiteral("La zona pintada quedó vacía: vuelva a pintarla.");
         return region;

@@ -166,20 +166,27 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   stretches. Slivers under 3 % of the plate are dropped; a real break is still reported. The seated outer face lies
   on a Gaussian-smoothed copy of the bone field (`smoothedField`, σ 1.2 mm, local to the plate) with a 70 % minimum
   thickness over bumps, and the seated centreline is smoothed too: the plate is uniform like a machined one while
-  its inner face follows the bone (user's report 2026-09-19: "tiene como irregularidades"). Across an advancement the
-  bridge is a stepped bend (parallel session's design: out by the advancement at the cranial edge, filleted, then
-  down the moved face) — its outward direction lies in the arm's plane (the bone normal at the piriform rim faces
-  outward too and sent it on a lateral detour), its pieces are mitred (overlapping pieces showed rings), and the whole
-  plate is clipped against the real bone (`Build`'s `realBone`: a 0.5 mm-closing wrap made alongside the planning
-  wrap in `prepareGuidePlannedBone`); clipping with the 3 mm planning wrap removed the step, not clipping let it
-  0.5 mm into the bone. Step 9 always shows the Le Fort in its planned position (it used to depend on a guide mesh
+  its inner face follows the bone (user's report 2026-09-19: "tiene como irregularidades"). Across the osteotomy the bridge
+  is a band pulled taut over `PlateKeepOut::boneAndGap` (`tautBand`: the straight chord relaxed by alternating a push
+  out of that field, in the arm's plane only, with a Laplacian smoothing pass). That field is a 0.5 mm-closing wrap of
+  the two planned bones AND the Le Fort segment in its pre-operative position, so it also fills the space the movement
+  vacated: the band ramps across the step instead of dropping into the cut and standing in the way of the maxilla
+  (user's report, 2026-09-20: "las placas se meten a la osteotomía e interfieren con el lefort"). This replaced a
+  hand-drawn right-angled dogleg, which showed on the patient as a zig-zag no surgeon would bend, and it removes the
+  need to tell an advancement from a flat span — with nothing in the way the taut band is simply the straight line.
+  `PlateKeepOut::bone` (the same wrap without the pre-operative segment) clips the whole plate: clipping with the 3 mm
+  planning wrap removed the middle of the bridge, not clipping let it 0.5 mm into the bone. Both wraps are made
+  alongside the planning wrap in `prepareGuidePlannedBone`. The bridge's pieces are mitred (overlapping pieces showed
+  rings) and its width axis comes from the arm's plane (the bone normal at the piriform rim faces outward too and sent
+  it on a lateral detour). `steppedBridges` now counts the arms whose band actually had to climb. Step 9 always shows the Le Fort in its planned position (it used to depend on a guide mesh
   being in memory, so after reopening a project the advancement "disappeared"), and `guideMotionSummary` states the
   movement (advance/retreat, ascent/descent, lateral, rotation) at the top of the plate report, or warns when the Le
   Fort has not been moved. `bridgedMm` reports the
   bar. PlateTests: 8 mm gap, 8 mm advancement on a wall facing 30° outward, curved rough wall.
   `tools/PlateProbe.cpp` (target `PlateProbe`, not a CTest) builds paranasal plates and an L plate on a real
   project's pre-reposition bones with a given advancement/descent, reports pieces, bridge, fit gap and penetration,
-  and renders frontal/oblique/lateral PNGs: `PlateProbe.exe --project x.maxilloproject --out dir --advance 6 --down 3`.
+  then lays out and builds the cutting guide those plates imply, and renders frontal/oblique/lateral PNGs of both:
+  `PlateProbe.exe --project x.maxilloproject --out dir --advance 6 --down 3`.
   Defaults (user's choice): 1.0 mm plate, 2.0 mm screws, guide fixation 1.5 mm, one-piece guide across the midline;
   sleeve bore 1.6 mm / outer 4.2 mm / height 4 mm. `Check` warns (never blocks) on < 2 screws per bone, holes < 4 mm
   from the osteotomy (measured with `OsteotomyCore::PathField` before the cut), overlapping rings and holes on the
@@ -195,8 +202,15 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   across the plates' lateral extent (+5 mm), the most anterior forward-facing envelope vertex with |PathField| < 0.75;
   where the cut crosses the piriform aperture and there is none, the band dips to the alveolar wall just below it;
   a pad round every predictive hole, with a stem to the band if needed; the slit as `GuideSlot` pieces with ends,
-  broken by 3 mm bridges at the midline and every 15 mm (and at real holes in the wall), so the halves stay rigid;
-  four 1.5 mm fixation screws 6 mm above and below the cut at the lateral ends, clear of the sleeves. It only fills
+  broken by 3 mm bridges at the midline and every 15 mm, so the halves stay rigid. The slit spans the whole band and
+  comes from the plan, not from the envelope: `GuideDesignCore` cuts it with a slab of the planned osteotomy clipped
+  to the guide's own material, so ending each piece at the last wrap vertex that happened to land exactly on the cut
+  only produced a row of stubs (user's report, 2026-09-20). Where the band dips below the aperture it is a 0.75-width
+  strap (a full band there was a slab over the nose) and there is no material on the cut for the slit to open.
+  Positioning screws of 1.5 mm hold the guide while the holes are drilled and the cut is made, as both published
+  protocols do (Gander 2015 "fixed with two 1.5-mm screws"; Ho 2025 "two or four monocortical positioning screws"):
+  one at each lateral end, above the cut only when there are plates (the cranial side does not move), four above and
+  below without them. Band 8 mm wide and hole pads 1.8 mm past the sleeve, so the guide is a strip and not a blob. It only fills
   the plan (paint, slotPlan, holes); `GuideDesignCore::Build` still carves it, and the brush and EDITAR still work.
   UI: «Generar guía de corte» in «PLACAS A MEDIDA» (`MainWindow::generateLeFortGuide`). With plates, the hand-drawn
   steps (zona, ranuras, agujeros, crear) stay hidden until the guide exists and then serve to retouch it («Reconstruir

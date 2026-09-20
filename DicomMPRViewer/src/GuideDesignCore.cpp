@@ -84,7 +84,9 @@ std::vector<ImplicitCore::NodePtr> cutterNodes(const GuideRegion& region, double
                                                const std::atomic<bool>* cancel, QString* error)
 {
     std::vector<ImplicitCore::NodePtr> cutters;
-    const double detail = std::clamp(params.base.smallestDetailMm, 0.05, 2.0);
+    // Guides are inspected and printed at close range. Keep their final contour finer than the preview/wrap,
+    // including projects saved with the older 0.30 mm default.
+    const double detail = std::min(0.25, std::clamp(params.base.smallestDetailMm, 0.05, 2.0));
     for (const GuideFigure& figure : figures) {
         if (figure.operation != GuideFigureOperation::Subtract)
             continue;
@@ -388,7 +390,9 @@ GuideDesignResult Build(const GuidePreparation& prepared, const GuideRegion& reg
         result.error = prepared.error.isEmpty() ? QStringLiteral("La envolvente no está preparada.") : prepared.error;
         return result;
     }
-    const double detail = std::clamp(params.base.smallestDetailMm, 0.05, 2.0);
+    // Guides are inspected and printed at close range. Keep their final contour finer than the preview/wrap,
+    // including projects saved with the older 0.30 mm default.
+    const double detail = std::min(0.25, std::clamp(params.base.smallestDetailMm, 0.05, 2.0));
     if (!region.valid) {
         result.error = region.error.isEmpty() ? QStringLiteral("Marque la zona de apoyo de la guía.") : region.error;
         return result;
@@ -456,8 +460,8 @@ GuideDesignResult Build(const GuidePreparation& prepared, const GuideRegion& reg
 
     const auto solid = cutters.empty() ? grown : ImplicitCore::Subtract(grown, ImplicitCore::Union(cutters));
     ImplicitCore::PolygonizeOptions options;
-    options.smoothingIterations = std::max(params.base.smoothingIterations, 40);
-    options.passBand = 0.035; // smooth the painted support while retaining slots and collars
+    options.smoothingIterations = std::max(params.base.smoothingIterations, 70);
+    options.passBand = 0.02; // smoother support and rim while the implicit cutters retain slots and collars
     options.repair = true;
     const ImplicitCore::BuildResult built = ImplicitCore::Build(solid, bounds, detail, options, cancel);
     if (!built.ok) {

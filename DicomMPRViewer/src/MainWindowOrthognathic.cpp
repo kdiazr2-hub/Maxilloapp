@@ -27,8 +27,8 @@ const std::array<const char*, kOrthoSteps> kStepNames = {
     QT_TRANSLATE_NOOP("MainWindow", "Segmentación"),   QT_TRANSLATE_NOOP("MainWindow", "Modelos compuestos"),
     QT_TRANSLATE_NOOP("MainWindow", "Orientación"),    QT_TRANSLATE_NOOP("MainWindow", "Osteotomías"),
     QT_TRANSLATE_NOOP("MainWindow", "Registro de mordida"), QT_TRANSLATE_NOOP("MainWindow", "Reposición"),
-    QT_TRANSLATE_NOOP("MainWindow", "Férulas"),      QT_TRANSLATE_NOOP("MainWindow", "Guías"),
-    QT_TRANSLATE_NOOP("MainWindow", "Placa personalizada")};
+    QT_TRANSLATE_NOOP("MainWindow", "Férulas"),      QT_TRANSLATE_NOOP("MainWindow", "Placa personalizada"),
+    QT_TRANSLATE_NOOP("MainWindow", "Guías")};
 
 const std::array<const char*, kOrthoSteps> kStepHints = {
     QT_TRANSLATE_NOOP("MainWindow", "Segmente el TAC y separe maxilar y mandíbula."),
@@ -38,8 +38,8 @@ const std::array<const char*, kOrthoSteps> kStepHints = {
     QT_TRANSLATE_NOOP("MainWindow", "Registre los segmentos con el escaneo de mordida."),
     QT_TRANSLATE_NOOP("MainWindow", "Mueva los segmentos a su posición planificada."),
     QT_TRANSLATE_NOOP("MainWindow", "Diseñe las férulas intermedia y final."),
-    QT_TRANSLATE_NOOP("MainWindow", "Cree la guía de corte sobre la anatomía preoperatoria."),
-    QT_TRANSLATE_NOOP("MainWindow", "Diseñe la placa sobre el Le Fort en su posición definitiva.")};
+    QT_TRANSLATE_NOOP("MainWindow", "Defina las placas y sus perforaciones sobre el Le Fort definitivo."),
+    QT_TRANSLATE_NOOP("MainWindow", "Cree la guía preoperatoria con las mismas perforaciones de las placas.")};
 
 void repolish(QWidget* widget)
 {
@@ -54,8 +54,8 @@ const QStringList& MainWindow::orthognathicStepTitles()
     static const QStringList titles = {QStringLiteral("SEGMENTACION"), QStringLiteral("MODELOS"),
                                        QStringLiteral("ORIENTACION"),  QStringLiteral("OSTEOTOMIA"),
                                        QStringLiteral("REGISTRO MORDIDA"), QStringLiteral("REPOSICIÓN"),
-                                       QStringLiteral("FERULA"),   QStringLiteral("GUIAS"),
-                                       QStringLiteral("PLACAS")};
+                                       QStringLiteral("FERULA"),   QStringLiteral("PLACAS"),
+                                       QStringLiteral("GUIAS")};
     return titles;
 }
 
@@ -146,8 +146,8 @@ void MainWindow::updateOrthognathicSteps()
         false, // repositioning has no single finished state
         std::any_of(m_splintDesigns.begin(), m_splintDesigns.end(),
                     [this](const SplintDesign& design) { return objectEntryExists(design.label); }),
-        present(m_guideMesh),
-        !m_guidePlan.plates.empty()};
+        !m_guidePlan.plates.empty(),
+        present(m_guideMesh)};
     for (int i = 0; i < kOrthoSteps; ++i) {
         QToolButton* button = m_orthoStepButtons[i];
         const QString name = tr(kStepNames[static_cast<size_t>(i)]);

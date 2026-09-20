@@ -354,9 +354,9 @@ endif()
 vtk_module_autoinit(TARGETS SplintBenchmark MODULES ${VTK_LIBRARIES})
 
 # Custom Le Fort plates on a real project's bones, with renderings (a development tool, not a CTest).
-add_executable(PlateProbe tools/PlateProbe.cpp src/PlateCore.cpp src/GuideDesignCore.cpp src/GuideBaseCore.cpp
-    src/CutSlotCore.cpp src/WrapCore.cpp src/OsteotomyCore.cpp src/ImplicitCore.cpp src/MeshRepairCore.cpp
-    src/CompositeBlockCore.cpp)
+add_executable(PlateProbe tools/PlateProbe.cpp src/PlateCore.cpp src/LeFortGuideCore.cpp src/GuideDesignCore.cpp
+    src/GuideBaseCore.cpp src/CutSlotCore.cpp src/WrapCore.cpp src/OsteotomyCore.cpp src/ImplicitCore.cpp
+    src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)
 target_include_directories(PlateProbe PRIVATE src)
 target_link_libraries(PlateProbe PRIVATE Qt6::Core Qt6::Concurrent ${VTK_LIBRARIES})
 if(MSVC)

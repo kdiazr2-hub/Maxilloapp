@@ -361,7 +361,6 @@ private:
     QWidget* m_guidePlateSection = nullptr;
     QWidget* m_guideAdvancedSection = nullptr;
     QWidget* m_guidePlateAdvancedSection = nullptr;
-    QComboBox* m_guidePlateSideCombo = nullptr;
     QComboBox* m_guidePlateTemplateCombo = nullptr;
     QPushButton* m_guidePlateViewButton = nullptr;
     QPushButton* m_guidePlateHolesButton = nullptr;
@@ -371,6 +370,7 @@ private:
     QPushButton* m_guideGenerateButton = nullptr;
     QListWidget* m_guidePlateList = nullptr;
     QLabel* m_guidePlateCheckLabel = nullptr;
+    QLabel* m_guidePlateStepLabel = nullptr;
     QDoubleSpinBox* m_guidePlateThicknessSpin = nullptr;
     QDoubleSpinBox* m_guidePlateMinCutSpin = nullptr;
     QDoubleSpinBox* m_guideSleeveBoreSpin = nullptr;
@@ -378,10 +378,10 @@ private:
     QDoubleSpinBox* m_guideSleeveHeightSpin = nullptr;
     GuidePreparation m_guidePlannedPrepared;          // wrap of the bone in its planned position, for the plates
     std::array<double, 16> m_guidePlannedMotion{};    // the segment motion that wrap was made for
-    std::shared_ptr<const ImplicitCore::BakedField> m_guidePlannedRealBone; // tight wrap: plates never enter it
+    PlateKeepOut m_guidePlannedKeepOut; // the bone plates may not enter, and the gap they ramp over
     std::vector<vtkSmartPointer<vtkPolyData>> m_guidePlateMeshes; // one per plan plate, in the planned position
     std::vector<PlateHole> m_guidePendingPlateHoles;  // holes of the plate being marked
-    int m_guidePlateFirstArm = -1;                    // L plate: holes in the first arm, once "next arm" is pressed
+    std::vector<std::vector<PlateHole>> m_guidePendingPlatePillars; // accepted pillars in guided clinical order
     bool m_guidePlannedView = false;                  // the view shows the planned bone and the plates
     bool m_guidePlateWorkspace = false;               // GUIAS and PLACAS share the 3-D view, not their controls
     std::vector<GuideFigure> m_guideBuiltFigures;     // figures + sleeves the guide was carved with

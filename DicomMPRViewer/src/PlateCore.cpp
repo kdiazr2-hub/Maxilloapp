@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <set>
 
 
 namespace
@@ -82,7 +83,13 @@ Vec3 smoothNormal(const ImplicitCore::BakedField& field, const Vec3& p, const Ve
     const Vec3 gradient{field.At({p[0] + h, p[1], p[2]}) - field.At({p[0] - h, p[1], p[2]}),
                         field.At({p[0], p[1] + h, p[2]}) - field.At({p[0], p[1] - h, p[2]}),
                         field.At({p[0], p[1], p[2] + h}) - field.At({p[0], p[1], p[2] - h})};
-    return unit(gradient, fallback);
+    Vec3 normal = unit(gradient, fallback);
+    // Complex lateral buttresses can put the sample between two nearby surfaces. Keep the field gradient in the
+    // same outward hemisphere as the picked surface normal; an inverted normal puts the ribbon inside the bone
+    // and leaves a hooked or open-looking arm after the bone is subtracted.
+    if (dot(normal, fallback) < 0.0)
+        normal = scale(normal, -1.0);
+    return normal;
 }
 
 // Walks on the bone from `start` towards `target`, a millimetre at a time in the tangent plane, each step
@@ -94,6 +101,10 @@ std::vector<PathSample> walkOnBone(const ImplicitCore::BakedField& field, const 
                                    PlateBone expected, double clearance, const PlateBoneQuery& boneAt, double step)
 {
     std::vector<PathSample> walked{start};
+    const Vec3 direct = sub(target, start.point);
+    const double directLength = norm(direct);
+    const Vec3 directAxis = unit(direct, {0.0, 0.0, 1.0});
+    const double corridorMm = std::max(2.5, 0.15 * directLength);
     const double cosEdge = std::cos(40.0 * 3.14159265358979323846 / 180.0); // from one step to the next
     const double cosBend = std::cos(60.0 * 3.14159265358979323846 / 180.0); // from the hole the walk left
     const int maxSteps = static_cast<int>(3.0 * norm(sub(target, start.point)) / step) + 4;
@@ -109,6 +120,13 @@ std::vector<PathSample> walkOnBone(const ImplicitCore::BakedField& field, const 
         const Vec3 guess = add(current.point, scale(unit(tangent), step));
         const Vec3 p = projectToLevel(field, guess, clearance);
         const Vec3 n = smoothNormal(field, p, current.normal);
+        const Vec3 fromStart = sub(p, start.point);
+        const double alongDirect = dot(fromStart, directAxis);
+        const double offDirect = norm(sub(fromStart, scale(directAxis, alongDirect)));
+        // Near the zygomatic buttress a geodesic walk may turn around the lateral rim and return towards the
+        // target from behind. Stop at that point and let the bridge span the corner instead of making a loop.
+        if (offDirect > corridorMm || alongDirect < -0.25 * step || alongDirect > directLength + 0.25 * step)
+            break;
         if (dot(n, current.normal) < cosEdge || dot(n, start.normal) < cosBend)
             break;
         if (norm(sub(p, guess)) > step) // the surface fell away under the step: a hollow or the gap
@@ -126,12 +144,66 @@ std::vector<PathSample> walkOnBone(const ImplicitCore::BakedField& field, const 
     return walked;
 }
 
+// The bridge over the osteotomy, pulled taut over `obstacle` — the bones plus the space the movement vacated.
+// Where the maxilla was advanced, that space is solid to the band, so it climbs the step in one smooth ramp,
+// the shape a patient-specific implant really has, instead of diving into the cut and standing in the way of
+// the maxilla. It used to be drawn as a right-angled dogleg, which no surgeon would bend and which showed as a
+// zig-zag on the patient (user's report, 2026-09-20). The band bends along its length only: pushed out of the
+// obstacle in the arm's own plane, never sideways, so it does not wander off round a buttress.
+std::vector<Vec3> tautBand(const ImplicitCore::BakedField* obstacle, const Vec3& from, const Vec3& to,
+                           double clearance, const Vec3& widthAxis, double* riseMm)
+{
+    const double length = norm(sub(to, from));
+    const int count = std::clamp(static_cast<int>(std::ceil(length / 0.4)), 2, 400);
+    std::vector<Vec3> band;
+    band.reserve(static_cast<size_t>(count) + 1);
+    for (int i = 0; i <= count; ++i)
+        band.push_back(add(from, scale(sub(to, from), static_cast<double>(i) / count)));
+    if (riseMm)
+        *riseMm = 0.0;
+    if (!obstacle)
+        return band;
+    const double h = std::max(0.2, obstacle->spacingMm);
+    const auto pushOut = [&] {
+        for (size_t i = 1; i + 1 < band.size(); ++i) {
+            const Vec3 p = band[i];
+            const double d = obstacle->At(p);
+            if (d >= clearance)
+                continue;
+            Vec3 gradient{obstacle->At({p[0] + h, p[1], p[2]}) - obstacle->At({p[0] - h, p[1], p[2]}),
+                          obstacle->At({p[0], p[1] + h, p[2]}) - obstacle->At({p[0], p[1] - h, p[2]}),
+                          obstacle->At({p[0], p[1], p[2] + h}) - obstacle->At({p[0], p[1], p[2] - h})};
+            gradient = sub(gradient, scale(widthAxis, dot(gradient, widthAxis)));
+            band[i] = add(p, scale(unit(gradient, {0.0, 0.0, 0.0}), clearance - d));
+        }
+    };
+    for (int iteration = 0; iteration < 80; ++iteration) {
+        pushOut();
+        // Taut: every point drawn back towards the middle of its neighbours. Alternated with the push, this
+        // settles on the shortest band that stays outside the bone — the shape a strip of titanium takes.
+        const std::vector<Vec3> previous = band;
+        for (size_t i = 1; i + 1 < band.size(); ++i) {
+            const Vec3 middle = scale(add(previous[i - 1], previous[i + 1]), 0.5);
+            band[i] = add(previous[i], scale(sub(middle, previous[i]), 0.5));
+        }
+    }
+    pushOut(); // the smoothing runs last above: nothing may be left inside the bone
+    if (riseMm) {
+        const Vec3 chord = unit(sub(to, from), {0.0, 0.0, 1.0});
+        for (const Vec3& p : band) {
+            const Vec3 r = sub(p, from);
+            *riseMm = std::max(*riseMm, norm(sub(r, scale(chord, dot(r, chord)))));
+        }
+    }
+    return band;
+}
+
 // The path of one plate arm from hole `a` to hole `b`: on each hole's bone as far as it goes, and a straight
 // bar across whatever is left between the two walks — the gap the movement opened at the osteotomy, the cut
 // face — lifted over any corner of bone. Without this the plate dives into the gap and falls apart.
 std::vector<PathSample> strutPath(const ImplicitCore::BakedField& field, const PathSample& a, const PathSample& b,
                                    PlateBone boneA, PlateBone boneB, double clearance, const PlateBoneQuery& boneAt,
-                                   double* bridgedMm, bool* steppedBridge)
+                                   const ImplicitCore::BakedField* boneAndGap, double* bridgedMm, bool* steppedBridge)
 {
     const double step = 1.0;
     if (bridgedMm)
@@ -162,83 +234,23 @@ std::vector<PathSample> strutPath(const ImplicitCore::BakedField& field, const P
         Vec3 barNormal = unit(cross(along, widthAxis), meanNormal);
         if (dot(barNormal, meanNormal) < 0.0)
             barNormal = scale(barNormal, -1.0);
-        // Across two different bones, an advancement is not joined diagonally. The plate reaches the cranial
-        // osteotomy edge, bends outward by the advancement, then bends again onto the repositioned segment.
-        // This is the stepped contour made intra-operatively and keeps the connector out of the osteotomy gap.
-        std::vector<Vec3> corners{endA.point, endB.point};
+        // The band across: taut over the bones and over the space the movement vacated. It leaves the cranial
+        // bone, ramps across the step the advancement opened and lands on the moved maxilla, in one smooth
+        // curve — a shape a surgeon could bend, which the right-angled dogleg this replaces was not. Telling an
+        // advancement from a flat span is no longer needed either: with nothing in the way, the taut band is
+        // simply the straight line between the two walks.
+        double rise = 0.0;
+        const std::vector<Vec3> band = tautBand(boneAndGap, endA.point, endB.point, clearance + 0.15, widthAxis, &rise);
         const bool crossesOsteotomy = boneA != boneB && boneA != PlateBone::Unknown && boneB != PlateBone::Unknown;
-        const PathSample& cranialEdge = boneA == PlateBone::Cranial ? endA : endB;
-        const PathSample& segmentEdge = boneA == PlateBone::Segment ? endA : endB;
-        // Outward in the arm's own plane: the bone normal with its across-the-arm part removed. At the piriform
-        // rim the normal faces forward and outward, and stepping along it sent the plate on a lateral detour.
-        Vec3 outward = unit(sub(meanNormal, scale(widthAxis, dot(meanNormal, widthAxis))), meanNormal);
-        if (dot(outward, meanNormal) < 0.0)
-            outward = scale(outward, -1.0);
-        const double advancement = dot(sub(segmentEdge.point, cranialEdge.point), outward);
-        const bool dogleg = crossesOsteotomy && advancement > 0.5;
-        if (dogleg) {
-            const Vec3 bend = add(cranialEdge.point, scale(outward, advancement));
-            corners = {endA.point, bend, endB.point};
-            // A titanium plate is bent over a radius, not folded into a sharp
-            // rectangular corner. Replace the dogleg vertex with a short
-            // quadratic fillet while retaining straight advancement and entry
-            // legs on either side of it.
-            const Vec3 incoming = unit(sub(corners[1], corners[0]));
-            const Vec3 outgoing = unit(sub(corners[2], corners[1]));
-            const double trim = std::min({2.0, 0.35 * norm(sub(corners[1], corners[0])),
-                                          0.35 * norm(sub(corners[2], corners[1]))});
-            if (trim > 0.2) {
-                const Vec3 before = sub(corners[1], scale(incoming, trim));
-                const Vec3 after = add(corners[1], scale(outgoing, trim));
-                std::vector<Vec3> rounded{corners[0], before};
-                for (int sample = 1; sample < 5; ++sample) {
-                    const double t = 0.25 * sample;
-                    const double u = 1.0 - t;
-                    rounded.push_back(add(add(scale(before, u * u), scale(corners[1], 2.0 * u * t)),
-                                          scale(after, t * t)));
-                }
-                rounded.push_back(corners[2]);
-                corners = std::move(rounded);
-            }
-            if (steppedBridge)
-                *steppedBridge = true;
-        } else {
-            // Without advancement, keep a taut connector. If it would cut through a ridge, lift only the
-            // offending corner onto the surface; lifting every sample would curl the plate.
-            for (int round = 0; round < 6; ++round) {
-                bool bent = false;
-                std::vector<Vec3> next{corners.front()};
-                for (size_t c = 0; c + 1 < corners.size(); ++c) {
-                    const Vec3 from = corners[c], to = corners[c + 1];
-                    const int samples = std::max(2, static_cast<int>(std::ceil(norm(sub(to, from)) / 0.5)));
-                    double deepest = 0.05;
-                    int where = -1;
-                    for (int k = 1; k < samples; ++k) {
-                        const Vec3 q = add(from, scale(sub(to, from), static_cast<double>(k) / samples));
-                        const double below = clearance - field.At(q);
-                        if (below > deepest) {
-                            deepest = below;
-                            where = k;
-                        }
-                    }
-                    if (where >= 0) {
-                        Vec3 lifted = add(from, scale(sub(to, from), static_cast<double>(where) / samples));
-                        for (int iteration = 0; iteration < 6; ++iteration) {
-                            const double below = clearance - field.At(lifted);
-                            if (below <= 1e-3)
-                                break;
-                            lifted = add(lifted, scale(barNormal, below));
-                        }
-                        next.push_back(lifted);
-                        bent = true;
-                    }
-                    next.push_back(to);
-                }
-                corners = next;
-                if (!bent)
-                    break;
-            }
-        }
+        if (steppedBridge)
+            *steppedBridge = crossesOsteotomy && rise > 0.75;
+        // One corner per `step` of band, so its pieces are as long as the walked ones.
+        std::vector<Vec3> corners{band.front()};
+        for (size_t i = 1; i + 1 < band.size(); ++i)
+            if (norm(sub(band[i], corners.back())) >= step)
+                corners.push_back(band[i]);
+        corners.push_back(band.back());
+
         for (size_t c = 0; c + 1 < corners.size(); ++c) {
             const Vec3 from = corners[c], to = corners[c + 1];
             // Each straight piece is flat across the plate's width, square to its own direction.
@@ -454,6 +466,28 @@ std::vector<std::vector<int>> TemplateStruts(PlateTemplate kind, int firstArmHol
     return struts;
 }
 
+std::vector<std::vector<int>> SplintlessStruts(const std::array<int, 4>& pillarHoles)
+{
+    std::vector<std::vector<int>> struts;
+    std::array<int, 4> first{};
+    int offset = 0;
+    for (size_t pillar = 0; pillar < pillarHoles.size(); ++pillar) {
+        first[pillar] = offset;
+        std::vector<int> arm;
+        for (int i = 0; i < std::max(0, pillarHoles[pillar]); ++i)
+            arm.push_back(offset + i);
+        if (arm.size() >= 2)
+            struts.push_back(arm);
+        offset += std::max(0, pillarHoles[pillar]);
+    }
+    if (std::all_of(pillarHoles.begin(), pillarHoles.end(), [](int count) { return count > 0; })) {
+        // Along the lower Le Fort border: lateral right -> nasal right -> nasal left -> lateral left.
+        struts.push_back({first[1] + pillarHoles[1] - 1, first[0] + pillarHoles[0] - 1,
+                          first[2] + pillarHoles[2] - 1, first[3] + pillarHoles[3] - 1});
+    }
+    return struts;
+}
+
 std::vector<PredictiveHole> PredictHoles(const std::vector<PlateDesign>& plates,
                                          const std::array<double, 16>& segmentMotion, const OsteotomyPath& path,
                                          const std::array<double, 3>& segmentProbe)
@@ -612,8 +646,7 @@ PlateBoneQuery MakeBoneQuery(vtkPolyData* cranialPlanned, vtkPolyData* segmentPl
 
 // ── The plate ─────────────────────────────────────────────────────────────────
 PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate, const PlateParams& params,
-                       const PlateBoneQuery& boneAt, const std::atomic<bool>* cancel,
-                       const std::shared_ptr<const ImplicitCore::BakedField>& realBone)
+                       const PlateBoneQuery& boneAt, const std::atomic<bool>* cancel, const PlateKeepOut& keepOut)
 {
     PlateBuildResult result;
     if (!planned.ok || !planned.wrapField) {
@@ -659,17 +692,21 @@ PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate
     std::vector<bool> holeNormalSet(holes.size(), false);
     double bridged = 0.0;
     int steppedBridges = 0;
+    std::set<std::pair<int, int>> builtEdges;
     for (const std::vector<int>& strut : plate.struts) {
         for (size_t k = 0; k + 1 < strut.size(); ++k) {
             const int a = strut[k], b = strut[k + 1];
             if (a < 0 || b < 0 || a >= static_cast<int>(holes.size()) || b >= static_cast<int>(holes.size()))
+                continue;
+            const std::pair<int, int> edge = std::minmax(a, b);
+            if (!builtEdges.insert(edge).second)
                 continue;
             double gap = 0.0;
             bool stepped = false;
             std::vector<PathSample> path =
                 strutPath(wrap, holes[static_cast<size_t>(a)], holes[static_cast<size_t>(b)],
                           plate.holes[static_cast<size_t>(a)].bone, plate.holes[static_cast<size_t>(b)].bone,
-                          clearance, boneAt, &gap, &stepped);
+                          clearance, boneAt, keepOut.boneAndGap.get(), &gap, &stepped);
             bridged += gap;
             steppedBridges += stepped ? 1 : 0;
             // The wrap's normal carries a few degrees of voxel noise: smoothed along the stretches seated on
@@ -807,9 +844,8 @@ PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate
             result.error = QStringLiteral("Cálculo cancelado.");
             return result;
         }
-        // The bridge path is already constructed on or outside the real bone.
-        // Clipping it with the gap-closed planning envelope removed the middle
-        // of an advancement dogleg and left two disconnected-looking stubs.
+        // The band is already taut on the outside of the bone and of the gap. Clipping it with the gap-closed
+        // planning envelope would remove the middle of a ramp and leave two disconnected-looking stubs.
         const auto bridge = ImplicitCore::Field(ribbonField);
         body = body ? ImplicitCore::Union(body, bridge) : bridge;
     }
@@ -818,8 +854,9 @@ PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate
         return result;
     }
     // Never into the bone itself.
-    if (realBone)
-        body = ImplicitCore::Intersect(body, ImplicitCore::Negate(ImplicitCore::Offset(ImplicitCore::Field(realBone), clearance)));
+    if (keepOut.bone)
+        body = ImplicitCore::Intersect(body,
+                                       ImplicitCore::Negate(ImplicitCore::Offset(ImplicitCore::Field(keepOut.bone), clearance)));
 
     // The screw bores, and the countersink that seats each head flush with the outer face.
     std::vector<ImplicitCore::NodePtr> cutters;
@@ -907,7 +944,7 @@ PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate
                         .arg(result.mesh->GetNumberOfPolys());
     if (bridged > 0)
         result.report += steppedBridges > 0
-            ? QStringLiteral(", %1 puente(s) acodado(s) sobre %2 mm de espacio del corte")
+            ? QStringLiteral(", %1 puente(s) en rampa sobre %2 mm de espacio del corte")
                   .arg(steppedBridges).arg(bridged, 0, 'f', 1)
             : QStringLiteral(", puente de %1 mm sobre el espacio del corte").arg(bridged, 0, 'f', 1);
     if (boneAt)
@@ -932,11 +969,15 @@ QJsonObject ToJson(const PlateDesign& plate)
             chain.append(index);
         struts.append(chain);
     }
+    const QString templateName = plate.kind == PlateTemplate::Splintless
+                                     ? QStringLiteral("splintless")
+                                     : plate.kind == PlateTemplate::LShape ? QStringLiteral("L")
+                                                                          : QStringLiteral("paranasal");
     return QJsonObject{{QStringLiteral("name"), plate.name},
                        {QStringLiteral("side"), plate.side == PlateSide::Left ? QStringLiteral("left")
-                                                                              : QStringLiteral("right")},
-                       {QStringLiteral("template"), plate.kind == PlateTemplate::LShape ? QStringLiteral("L")
-                                                                                        : QStringLiteral("paranasal")},
+                                                : plate.side == PlateSide::Bilateral ? QStringLiteral("bilateral")
+                                                                                     : QStringLiteral("right")},
+                       {QStringLiteral("template"), templateName},
                        {QStringLiteral("holes"), holes},
                        {QStringLiteral("struts"), struts}};
 }
@@ -945,10 +986,14 @@ PlateDesign FromJson(const QJsonObject& object)
 {
     PlateDesign plate;
     plate.name = object.value(QStringLiteral("name")).toString();
-    plate.side = object.value(QStringLiteral("side")).toString() == QStringLiteral("left") ? PlateSide::Left
-                                                                                           : PlateSide::Right;
-    plate.kind = object.value(QStringLiteral("template")).toString() == QStringLiteral("L") ? PlateTemplate::LShape
-                                                                                            : PlateTemplate::Paranasal;
+    const QString side = object.value(QStringLiteral("side")).toString();
+    plate.side = side == QStringLiteral("left") ? PlateSide::Left
+                 : side == QStringLiteral("bilateral") ? PlateSide::Bilateral
+                                                         : PlateSide::Right;
+    const QString templateName = object.value(QStringLiteral("template")).toString();
+    plate.kind = templateName == QStringLiteral("splintless") ? PlateTemplate::Splintless
+                 : templateName == QStringLiteral("L")        ? PlateTemplate::LShape
+                                                               : PlateTemplate::Paranasal;
     for (const QJsonValue& value : object.value(QStringLiteral("holes")).toArray()) {
         const QJsonObject hole = value.toObject();
         PlateHole parsed;
@@ -980,6 +1025,7 @@ QJsonObject ParamsToJson(const PlateParams& p)
                        {QStringLiteral("smallestDetailMm"), p.smallestDetailMm},
                        {QStringLiteral("smoothingIterations"), p.smoothingIterations},
                        {QStringLiteral("minCutDistanceMm"), p.minCutDistanceMm},
+                       {QStringLiteral("cutEdgeMarginMm"), p.cutEdgeMarginMm},
                        {QStringLiteral("minScrewsPerBone"), p.minScrewsPerBone}};
 }
 
@@ -1000,6 +1046,7 @@ PlateParams ParamsFromJson(const QJsonObject& o)
     p.smallestDetailMm = number("smallestDetailMm", p.smallestDetailMm);
     p.smoothingIterations = o.value(QStringLiteral("smoothingIterations")).toInt(p.smoothingIterations);
     p.minCutDistanceMm = number("minCutDistanceMm", p.minCutDistanceMm);
+    p.cutEdgeMarginMm = std::max(3.5, number("cutEdgeMarginMm", p.cutEdgeMarginMm));
     p.minScrewsPerBone = o.value(QStringLiteral("minScrewsPerBone")).toInt(p.minScrewsPerBone);
     return p;
 }

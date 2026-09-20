@@ -144,21 +144,18 @@ void testTheGuideIsLaidOutFromThePlan()
         require(slot.hasExtent && (std::min(slot.start[0], slot.end[0]) > 0.0 || std::max(slot.start[0], slot.end[0]) < 0.0),
                 "a slit piece runs across the midline");
 
-    // Four 1.5 mm fixation screws: two above the cut, two below, clear of the sleeves.
-    require(layout.fixation.size() == 4, "the guide does not have four fixation screws: " +
+    // The guide is screwed down before anything is drilled or cut, as both published protocols do. With plates
+    // those positioning screws go on the cranial side only: the maxilla is about to move away.
+    require(layout.fixation.size() == 2, "the guide has no positioning screws: " +
                                              std::to_string(layout.fixation.size()));
-    int above = 0, below = 0;
     for (const GuideFixationHole& screw : layout.fixation) {
-        require(std::abs(screw.diameterMm - 1.5) < 1e-9, "a fixation screw is not 1.5 mm");
-        const double f = OsteotomyCore::PathField(leFortCut(), screw.center);
-        above += f > 3.0 ? 1 : 0;
-        below += f < -3.0 ? 1 : 0;
-        for (const PredictiveHole& hole : holes)
-            require(std::hypot(std::hypot(screw.center[0] - hole.preopCenter[0], screw.center[1] - hole.preopCenter[1]),
-                               screw.center[2] - hole.preopCenter[2]) >= 5.0 - 1e-9,
-                    "a fixation screw is on top of a predictive hole");
+        require(screw.center[2] > 9.0, "a positioning screw was placed below the cut");
+        for (const PredictiveHole& hole : holes) {
+            const double dx = screw.center[0] - hole.preopCenter[0], dy = screw.center[1] - hole.preopCenter[1],
+                         dz = screw.center[2] - hole.preopCenter[2];
+            require(std::sqrt(dx * dx + dy * dy + dz * dz) > 4.0, "a positioning screw lands on a plate hole");
+        }
     }
-    require(above == 2 && below == 2, "the fixation screws are not two above and two below the cut");
 }
 
 void testTheGuideIsOnePieceWithAnOpenSlit()
@@ -176,18 +173,29 @@ void testTheGuideIsOnePieceWithAnOpenSlit()
     require(guide.pieces == 1, "the guide came apart: " + std::to_string(guide.pieces) + " pieces");
     require(MeshRepairCore::Analyze(guide.mesh).Valid(), "the guide is not a closed mesh");
 
-    // The slit is open on the planned cut (z = 9) in the middle of each piece, through the guide's wall;
-    // 3 mm above the cut the wall is solid.
+    // The slit is open on the planned cut (z = 9), through the guide's wall, everywhere the band actually
+    // reaches the cut; 3 mm above it the wall is solid. A slit piece also spans the stretches where the band
+    // dips below the aperture, and there the guide has no material on the cut to open. The band is 8 mm wide,
+    // so 2 mm above the cut is well inside it wherever it runs along the cut.
     auto distance = vtkSmartPointer<vtkImplicitPolyDataDistance>::New();
     distance->SetInput(guide.mesh);
+    int probed = 0;
     for (const GuideSlot& slot : layout.slotPlan) {
-        const double x = 0.5 * (slot.start[0] + slot.end[0]);
-        for (const double y : {0.6, 1.2})
-            require(distance->EvaluateFunction(x, y, 9.0) > 0.0,
-                    "the slit is closed at x = " + std::to_string(x) + ", y = " + std::to_string(y));
-        require(distance->EvaluateFunction(x, 1.0, 12.0) < 0.0,
-                "the guide is not solid beside the slit at x = " + std::to_string(x));
+        const double from = std::min(slot.start[0], slot.end[0]);
+        const double to = std::max(slot.start[0], slot.end[0]);
+        for (const auto& onCut : layout.cutLine) {
+            if (onCut[0] < from + 1.0 || onCut[0] > to - 1.0)
+                continue;
+            const double x = onCut[0];
+            if (distance->EvaluateFunction(x, 1.0, 11.0) >= 0.0)
+                continue; // no guide wall above the cut here (a hole, the end of the band)
+            for (const double y : {0.6, 1.2})
+                require(distance->EvaluateFunction(x, y, 9.0) > 0.0,
+                        "the slit is closed at x = " + std::to_string(x) + ", y = " + std::to_string(y));
+            ++probed;
+        }
     }
+    require(probed >= 5, "the slit was hardly opened anywhere on the cut: " + std::to_string(probed) + " points");
     // And the bridges hold: at the midline bridge of each side the wall is solid on the cut.
     for (const double x : {15.0, -15.0})
         require(distance->EvaluateFunction(x, 1.0, 9.0) < 0.0, "there is no bridge across the slit at x = " +

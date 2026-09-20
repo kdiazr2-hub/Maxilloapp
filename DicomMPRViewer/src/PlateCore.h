@@ -21,8 +21,8 @@
 // The plate is a field like the guide (never a chain of mesh booleans): a
 // ribbon of uniform thickness swept along each arm, lying on the bone. Each arm
 // follows its holes' bone while that bone is under it and turns gently. Where
-// advancement separates the cut edges, it reaches the cranial edge, bends
-// outward by the advancement and then turns onto the repositioned Le Fort —
+// advancement separates the cut edges, it leaves a free margin at the superior
+// Le Fort edge, turns inward to the cranial limit and then rises on the cranium —
 // the stepped contour of a surgically bent plate. Edges are rounded by sweeping a shrunken ribbon and growing it back,
 // the bone carves the seat where the flat ribbon meets a curve across its width,
 // and the screw bores and countersinks are subtracted. Contoured once.
@@ -54,13 +54,15 @@ class vtkPolyData;
 enum class PlateTemplate
 {
     Paranasal, // minimally invasive: one strut along the piriform rim
-    LShape     // conventional: piriform strut + zygomaticomaxillary buttress strut, joined below the cut
+    LShape,    // legacy: piriform strut + zygomaticomaxillary buttress strut, joined below the cut
+    Splintless // four pillars joined across the repositioned Le Fort segment
 };
 
 enum class PlateSide
 {
     Right,
-    Left
+    Left,
+    Bilateral
 };
 
 // The bone a screw goes into.
@@ -104,6 +106,7 @@ struct PlateParams
     double smallestDetailMm = 0.12;      // grid spacing of the plate
     int smoothingIterations = 30;
     double minCutDistanceMm = 4.0;       // warn when a hole is closer than this to the osteotomy
+    double cutEdgeMarginMm = 3.5;        // free plate edge to the osteotomy on both bones
     int minScrewsPerBone = 2;            // warn when a plate holds a bone with fewer screws
 };
 
@@ -144,7 +147,20 @@ struct PlateBuildResult
     int pieces = 0;
     double maxFitGapMm = 0.0; // largest gap under a hole between the plate and the real bone
     double bridgedMm = 0.0;   // gap bridged at the cut, summed over the arms
-    int steppedBridges = 0;   // arms bent outward at the cranial edge before entering the moved segment
+    int steppedBridges = 0;   // arms that ramp across the step the movement opened at the cut
+};
+
+// Where a plate may not go. Both are tight wraps (no gap closing to speak of), so they are the bone itself and
+// not the regularised surface the plate is laid on.
+struct PlateKeepOut
+{
+    // The two bones where the plan puts them. No part of a plate may enter this.
+    std::shared_ptr<const ImplicitCore::BakedField> bone;
+    // The same two bones plus the Le Fort segment in its PRE-OPERATIVE position, so their union also fills the
+    // space the movement vacated: the osteotomy gap. An arm crossing the cut is pulled taut over this, which is
+    // how a real patient-specific implant is shaped — it ramps across the step the advancement makes, instead
+    // of falling into the cut and standing in the way of the maxilla (user's report, 2026-09-20).
+    std::shared_ptr<const ImplicitCore::BakedField> boneAndGap;
 };
 
 // Which planned bone is nearest a point, and how far it is: lets each plate arm follow its own bone and tells
@@ -168,6 +184,9 @@ std::array<double, 3> TransformVector(const std::array<double, 16>& matrix, cons
 void AssignBones(std::vector<PlateDesign>& plates, vtkPolyData* cranialPlanned, vtkPolyData* segmentPlanned);
 // The struts a template joins the holes with, from how many holes each arm has (clicked top to bottom).
 std::vector<std::vector<int>> TemplateStruts(PlateTemplate kind, int firstArmHoles, int secondArmHoles);
+// Four groups in clinical marking order: nasomaxillary right, zygomaticomaxillary right,
+// nasomaxillary left, zygomaticomaxillary left. Each group is top-to-bottom.
+std::vector<std::vector<int>> SplintlessStruts(const std::array<int, 4>& pillarHoles);
 
 // ── Predictive holes ─────────────────────────────────────────────────────────
 // Every hole carried to its pre-operative position (`segmentMotion` is pre-op → planned), with its distance
@@ -196,12 +215,12 @@ PlateBoneQuery MakeBoneQuery(vtkPolyData* cranialPlanned, vtkPolyData* segmentPl
 // `planned` is the wrap of the bone in its planned position (`GuideDesignCore::Prepare` on the cranial base
 // and the moved segment, with a small gap closing so it follows the bone). `boneAt`, when given, names the
 // real bone under a point: the arms follow it and bridge between bones, and the gap under each hole is reported.
-// `realBone`, when given, is the distance to the bone itself (a tight wrap, no gap closing to speak of): the
-// whole plate is kept out of it. The planning wrap cannot do that job — it fills the corner of the step at the
-// cut, so clipping with it removed the middle of a stepped bridge, and not clipping let the bridge into the bone.
+// `keepOut` carries the real bone and the gap; without it an arm crossing the osteotomy has nothing to ramp
+// over and runs straight, which is only right when the movement opened no step. The planning wrap cannot do
+// either job — it fills the corner of the step at the cut.
 PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate, const PlateParams& params = {},
                        const PlateBoneQuery& boneAt = {}, const std::atomic<bool>* cancel = nullptr,
-                       const std::shared_ptr<const ImplicitCore::BakedField>& realBone = nullptr);
+                       const PlateKeepOut& keepOut = {});
 
 // ── Persistence ─────────────────────────────────────────────────────────────
 QJsonObject ToJson(const PlateDesign& plate);

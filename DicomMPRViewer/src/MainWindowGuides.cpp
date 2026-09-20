@@ -24,6 +24,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
 #include <QDoubleSpinBox>
@@ -85,6 +86,21 @@ constexpr int kModeSculpt = 5;
 constexpr int kModeTrim = 6;
 constexpr int kModeTube = 7;
 constexpr int kModePlateHoles = 8; // plate screw holes, on the planned bone
+constexpr int kPlateDesignConventional = 0;
+constexpr int kPlateDesignThreePsi = 1;
+constexpr int kPlateDesignSplintless = 2;
+constexpr int kPlatePillarCount = 4;
+
+QString platePillarName(int pillar)
+{
+    switch (pillar) {
+    case 0: return QCoreApplication::translate("MainWindow", "Pilar nasomaxilar derecho");
+    case 1: return QCoreApplication::translate("MainWindow", "Pilar maxilomalar derecho");
+    case 2: return QCoreApplication::translate("MainWindow", "Pilar nasomaxilar izquierdo");
+    case 3: return QCoreApplication::translate("MainWindow", "Pilar maxilomalar izquierdo");
+    default: return QCoreApplication::translate("MainWindow", "Pilares completos");
+    }
+}
 
 // The EDITAR palette, in the order the buttons sit in the grid.
 constexpr int kToolSmooth = 0;
@@ -509,27 +525,26 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
     connect(m_guideGenerateButton, &QPushButton::clicked, this, &MainWindow::generateLeFortGuide);
     m_guideGenerateButton->hide();
 
-    // ── Custom plates: designed only after the guide, on the final planned bone ──
+    // ── Custom plates: define the definitive holes before the pre-operative guide ──
     auto* plateBox = step(tr("1. DISEÑO · POSICIÓN DEFINITIVA"));
     m_guidePlateSection = plateBox->parentWidget();
     auto* plateForm = new QFormLayout();
-    m_guidePlateSideCombo = new QComboBox(panel);
-    m_guidePlateSideCombo->addItem(tr("Derecha"), static_cast<int>(PlateSide::Right));
-    m_guidePlateSideCombo->addItem(tr("Izquierda"), static_cast<int>(PlateSide::Left));
     m_guidePlateTemplateCombo = new QComboBox(panel);
-    m_guidePlateTemplateCombo->addItem(tr("Paranasal (mínimamente invasiva)"),
-                                       static_cast<int>(PlateTemplate::Paranasal));
-    m_guidePlateTemplateCombo->addItem(tr("En L (paranasal + cigomática)"), static_cast<int>(PlateTemplate::LShape));
+    m_guidePlateTemplateCombo->addItem(tr("Convencionales · 4 placas"), kPlateDesignConventional);
+    m_guidePlateTemplateCombo->addItem(tr("Splintless · 3 PSI"), kPlateDesignThreePsi);
+    m_guidePlateTemplateCombo->addItem(tr("Splintless · monobloque"), kPlateDesignSplintless);
     connect(m_guidePlateTemplateCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
-            [this](int) { updateGuideUi(); });
-    plateForm->addRow(tr("Lado:"), m_guidePlateSideCombo);
-    plateForm->addRow(tr("Plantilla:"), m_guidePlateTemplateCombo);
+            [this](int) { clearGuidePlateHoles(); });
+    plateForm->addRow(tr("Diseño:"), m_guidePlateTemplateCombo);
     plateBox->addLayout(plateForm);
+    m_guidePlateStepLabel = new QLabel(panel);
+    m_guidePlateStepLabel->setWordWrap(true);
+    plateBox->addWidget(m_guidePlateStepLabel);
     m_guidePlateViewButton = new QPushButton(tr("Ver posición planificada"), panel);
     m_guidePlateViewButton->setCheckable(true);
     connect(m_guidePlateViewButton, &QPushButton::toggled, this, &MainWindow::setGuidePlateView);
     plateBox->addWidget(m_guidePlateViewButton);
-    m_guidePlateHolesButton = new QPushButton(tr("Marcar agujeros"), panel);
+    m_guidePlateHolesButton = new QPushButton(tr("Marcar puntos del pilar"), panel);
     m_guidePlateHolesButton->setCheckable(true);
     connect(m_guidePlateHolesButton, &QPushButton::toggled, this, [this](bool on) {
         if (!on) {
@@ -542,14 +557,14 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
     plateBox->addWidget(m_guidePlateHolesButton);
     auto* plateHoleRow = new QHBoxLayout();
     plateHoleRow->setSpacing(4);
-    m_guidePlateArmButton = new QPushButton(tr("Siguiente brazo"), panel);
+    m_guidePlateArmButton = new QPushButton(tr("Aceptar pilar y continuar"), panel);
     connect(m_guidePlateArmButton, &QPushButton::clicked, this, &MainWindow::startGuidePlateArm);
     plateHoleRow->addWidget(m_guidePlateArmButton);
     auto* clearPlateHoles = new QPushButton(tr("Borrar agujeros"), panel);
     connect(clearPlateHoles, &QPushButton::clicked, this, &MainWindow::clearGuidePlateHoles);
     plateHoleRow->addWidget(clearPlateHoles);
     plateBox->addLayout(plateHoleRow);
-    m_guidePlateCreateButton = new QPushButton(tr("Crear placa"), panel);
+    m_guidePlateCreateButton = new QPushButton(tr("Crear placas"), panel);
     connect(m_guidePlateCreateButton, &QPushButton::clicked, this, &MainWindow::createGuidePlate);
     plateBox->addWidget(m_guidePlateCreateButton);
     m_guidePlateList = new QListWidget(panel);
@@ -825,20 +840,20 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
     m_guideAdvancedSection = advancedHolder;
     auto* advancedForm = new QFormLayout();
     m_guideGapSpin = spin(1.5, 0.0, 10.0, 0.1);
-    m_guideDetailSpin = spin(0.3, 0.1, 1.0, 0.05);
+    m_guideDetailSpin = spin(0.25, 0.1, 1.0, 0.05);
     m_guideClearanceSpin = spin(0.1, 0.0, 2.0, 0.05);
     m_guideBladeSpin = spin(0.6, 0.2, 2.0, 0.1);
     m_guideMarginSpin = spin(2.0, 0.0, 10.0, 0.5);
-    m_guideCornerSpin = spin(3.0, 0.0, 10.0, 0.5);
+    m_guideCornerSpin = spin(4.0, 0.0, 10.0, 0.5);
     // The rim finish of a printed guide pad: thinner and rounded towards the edge.
-    m_guideTaperSpin = spin(4.0, 0.0, 15.0, 0.5);
+    m_guideTaperSpin = spin(5.0, 0.0, 15.0, 0.5);
     m_guideEdgeFractionSpin = new QDoubleSpinBox(panel);
     m_guideEdgeFractionSpin->setRange(10.0, 100.0);
     m_guideEdgeFractionSpin->setSingleStep(5.0);
     m_guideEdgeFractionSpin->setDecimals(0);
     m_guideEdgeFractionSpin->setValue(40.0);
     m_guideEdgeFractionSpin->setSuffix(tr(" %"));
-    m_guideEdgeRoundSpin = spin(1.2, 0.0, 4.0, 0.1);
+    m_guideEdgeRoundSpin = spin(1.5, 0.0, 4.0, 0.1);
     m_guideWrapOpacitySpin = new QDoubleSpinBox(panel);
     m_guideWrapOpacitySpin->setRange(0.1, 1.0);
     m_guideWrapOpacitySpin->setSingleStep(0.1);
@@ -1058,6 +1073,7 @@ void MainWindow::computeGuideWrap()
     m_guidePlan.sourceLabels = GuidePlanCore::SourceLabelsFor(m_guidePlan.type);
     m_guidePlan.wrap.gapClosingMm = m_guideGapSpin->value();
     m_guidePlan.wrap.smallestDetailMm = m_guideDetailSpin->value();
+    m_guidePlan.wrap.smoothingIterations = std::max(m_guidePlan.wrap.smoothingIterations, 30);
     m_guidePlan.design.base.smallestDetailMm = m_guideDetailSpin->value();
     m_guidePlan.design.base.thicknessMm = m_guideThicknessSpin->value();
     m_guidePlan.design.base.clearanceMm = m_guideClearanceSpin->value();
@@ -1138,7 +1154,9 @@ bool MainWindow::guideWorkflowStepComplete() const
     case GuideWorkflowStep::PaintBridge:
         return hasPaintSince(m_guidePlan.leftPaintEnd);
     case GuideWorkflowStep::Holes:
-        return m_guidePlan.holes.size() >= 2;
+        return m_guidePlan.type == GuideType::LeFort && !m_guidePlan.plates.empty()
+                   ? !guidePredictiveHoles().empty()
+                   : m_guidePlan.holes.size() >= 2;
     case GuideWorkflowStep::Slots:
         return std::any_of(m_guidePlan.slotPlan.begin(), m_guidePlan.slotPlan.end(),
                            [](const GuideSlot& slot) { return slot.hasExtent; });
@@ -1162,7 +1180,8 @@ void MainWindow::activateGuideWorkflowStep()
         setGuidePointMode(kModeRegion);
         break;
     case GuideWorkflowStep::Holes:
-        setGuidePointMode(kModeHoles);
+        setGuidePointMode(m_guidePlan.type == GuideType::LeFort && !m_guidePlan.plates.empty() ? kModeNone
+                                                                                              : kModeHoles);
         break;
     case GuideWorkflowStep::Slots:
         if (m_guideCutList && m_guideCutList->currentRow() < 0 && m_guideCutList->count() > 0)
@@ -1185,7 +1204,11 @@ void MainWindow::advanceGuideWorkflow()
         case GuideWorkflowStep::PaintRight: message = tr("Pinte primero la zona de apoyo derecha."); break;
         case GuideWorkflowStep::PaintLeft: message = tr("Pinte primero la zona de apoyo izquierda."); break;
         case GuideWorkflowStep::PaintBridge: message = tr("Una las dos zonas por debajo de la espina nasal."); break;
-        case GuideWorkflowStep::Holes: message = tr("Coloque al menos dos perforaciones de fijación."); break;
+        case GuideWorkflowStep::Holes:
+            message = m_guidePlan.type == GuideType::LeFort
+                          ? tr("Planifique primero las placas; sus perforaciones se transferirán a la guía.")
+                          : tr("Coloque al menos dos perforaciones de fijación.");
+            break;
         case GuideWorkflowStep::Slots: message = tr("Marque los dos extremos de una hendidura de corte."); break;
         default: message = tr("Complete el paso actual antes de continuar."); break;
         }
@@ -1696,7 +1719,10 @@ void MainWindow::rebuildGuideMarkers()
         return;
     m_guideView->clearPointMarkers();
     if (m_guidePlannedView) {
-        // The planned bone: only the holes of the plate being marked (the built plates show their own).
+        // The planned bone: accepted pillars plus the pillar currently being marked.
+        for (const auto& pillar : m_guidePendingPlatePillars)
+            for (const PlateHole& hole : pillar)
+                m_guideView->addPointMarker(hole.center[0], hole.center[1], hole.center[2], QColor(48, 209, 88));
         for (const PlateHole& hole : m_guidePendingPlateHoles)
             m_guideView->addPointMarker(hole.center[0], hole.center[1], hole.center[2], kPlateHoleColor);
         m_guideView->removeOverlay(kGuideRegionOverlayKey);
@@ -2010,6 +2036,10 @@ void MainWindow::updateGuideUi()
     const bool hasWrap = m_guideWrapMesh && m_guideWrapMesh->GetNumberOfPolys() > 0;
     const bool hasRegion = GuideBaseCore::PaintValid(m_guidePlan.paint) || GuideBaseCore::ContourValid(m_guidePlan.contour);
     const bool hasGuide = m_guideMesh && m_guideMesh->GetNumberOfPolys() > 0;
+    const auto plateSegment = repositionMeshForLabel(kLeFortSegLabel);
+    const auto plateCranium = repositionMeshForLabel(kLeFortCranialLabel);
+    const bool hasPlateAnatomy = plateSegment && plateSegment->GetNumberOfPolys() > 0 &&
+                                 plateCranium && plateCranium->GetNumberOfPolys() > 0;
     const bool figureSelected = m_guideFigureList && m_guideFigureList->currentRow() >= 0;
     const auto showSection = [](QWidget* section, bool visible) {
         if (section)
@@ -2018,6 +2048,7 @@ void MainWindow::updateGuideUi()
     const bool leFort = m_guidePlan.type == GuideType::LeFort;
     const bool hasPlates = !m_guidePlan.plates.empty();
     const int pendingPlateHoles = static_cast<int>(m_guidePendingPlateHoles.size());
+    const int acceptedPillars = static_cast<int>(m_guidePendingPlatePillars.size());
     const GuideWorkflowStep workflow = hasWrap ? m_guidePlan.workflowStep : GuideWorkflowStep::Envelope;
     // GUIAS and PLACAS share the renderer and project data, but each module
     // presents only the controls for its own clinical product.
@@ -2026,14 +2057,38 @@ void MainWindow::updateGuideUi()
     showSection(m_guidePlateSection, m_guidePlateWorkspace && leFort);
     showSection(m_guideAdvancedSection, !m_guidePlateWorkspace && workflow == GuideWorkflowStep::Complete);
     showSection(m_guidePlateAdvancedSection, m_guidePlateWorkspace);
-    if (m_guidePlateArmButton)
-        m_guidePlateArmButton->setEnabled(m_guidePlateTemplateCombo &&
-                                          m_guidePlateTemplateCombo->currentData().toInt() ==
-                                              static_cast<int>(PlateTemplate::LShape) &&
-                                           m_guidePlateFirstArm < 0 && pendingPlateHoles >= 2 && hasGuide);
-    if (m_guidePlateViewButton) m_guidePlateViewButton->setEnabled(hasGuide);
-    if (m_guidePlateHolesButton) m_guidePlateHolesButton->setEnabled(hasGuide);
-    if (m_guidePlateCreateButton) m_guidePlateCreateButton->setEnabled(hasGuide && pendingPlateHoles >= 2);
+    if (m_guidePlateStepLabel) {
+        const QString stepText = acceptedPillars < kPlatePillarCount
+                                     ? tr("%1 de 4 · %2").arg(acceptedPillars + 1).arg(platePillarName(acceptedPillars))
+                                     : tr("4 de 4 · Pilares completos");
+        m_guidePlateStepLabel->setText(stepText +
+            (acceptedPillars < kPlatePillarCount
+                 ? tr("\nMarque al menos cuatro puntos de arriba abajo: dos en cráneo y dos en Le Fort.")
+                 : tr("\nYa puede generar el diseño seleccionado.")));
+    }
+    if (m_guidePlateArmButton) {
+        m_guidePlateArmButton->setText(acceptedPillars + 1 < kPlatePillarCount
+                                           ? tr("Aceptar pilar y continuar")
+                                           : acceptedPillars < kPlatePillarCount ? tr("Aceptar último pilar")
+                                                                                 : tr("Pilares completos"));
+        m_guidePlateArmButton->setEnabled(acceptedPillars < kPlatePillarCount && pendingPlateHoles >= 4 && hasPlateAnatomy);
+    }
+    if (m_guidePlateViewButton) m_guidePlateViewButton->setEnabled(hasPlateAnatomy);
+    if (m_guidePlateHolesButton) {
+        m_guidePlateHolesButton->setEnabled(hasPlateAnatomy && acceptedPillars < kPlatePillarCount);
+        m_guidePlateHolesButton->setText(acceptedPillars < kPlatePillarCount
+                                             ? tr("Marcar · %1").arg(platePillarName(acceptedPillars))
+                                             : tr("Marcación terminada"));
+    }
+    if (m_guidePlateCreateButton) {
+        const int design = m_guidePlateTemplateCombo ? m_guidePlateTemplateCombo->currentData().toInt()
+                                                      : kPlateDesignConventional;
+        m_guidePlateCreateButton->setText(design == kPlateDesignConventional ? tr("Crear 4 placas")
+                                             : design == kPlateDesignThreePsi ? tr("Crear 3 PSI")
+                                                                               : tr("Crear PSI monobloque"));
+        m_guidePlateCreateButton->setEnabled(hasPlateAnatomy && acceptedPillars == kPlatePillarCount &&
+                                             pendingPlateHoles == 0);
+    }
     if (m_guidePlateExportButton) m_guidePlateExportButton->setEnabled(hasPlates);
     if (m_guideGenerateButton) m_guideGenerateButton->hide();
     showSection(m_guideLayersSection, !m_guidePlateWorkspace && hasWrap && !m_guidePlannedView);
@@ -2041,7 +2096,8 @@ void MainWindow::updateGuideUi()
                            workflow == GuideWorkflowStep::PaintLeft ||
                            workflow == GuideWorkflowStep::PaintBridge;
     showSection(m_guideRegionSection, !m_guidePlateWorkspace && hasWrap && paintStep);
-    showSection(m_guideHoleSection, !m_guidePlateWorkspace && workflow == GuideWorkflowStep::Holes);
+    showSection(m_guideHoleSection, !m_guidePlateWorkspace && workflow == GuideWorkflowStep::Holes &&
+                                          !(leFort && hasPlates));
     showSection(m_guideSlotSection, !m_guidePlateWorkspace && workflow == GuideWorkflowStep::Slots);
     showSection(m_guideFiguresSection, !m_guidePlateWorkspace && workflow == GuideWorkflowStep::Complete);
     showSection(m_guideBuildSection, !m_guidePlateWorkspace &&
@@ -2056,10 +2112,13 @@ void MainWindow::updateGuideUi()
     if (m_guideHoleButton) m_guideHoleButton->setEnabled(hasWrap);
     if (m_guidePlaceFigureButton) m_guidePlaceFigureButton->setEnabled(hasWrap);
     if (m_guideMoveFigureButton) m_guideMoveFigureButton->setEnabled(figureSelected);
-    if (m_guideBuildButton)
-        m_guideBuildButton->setEnabled(hasWrap && hasRegion && m_guidePlan.holes.size() >= 2 &&
+    if (m_guideBuildButton) {
+        const bool hasDrillHoles = leFort && hasPlates ? !guidePredictiveHoles().empty()
+                                                       : m_guidePlan.holes.size() >= 2;
+        m_guideBuildButton->setEnabled(hasWrap && hasRegion && hasDrillHoles &&
             std::any_of(m_guidePlan.slotPlan.begin(), m_guidePlan.slotPlan.end(),
                         [](const GuideSlot& slot) { return slot.hasExtent; }));
+    }
     if (m_guideExportButton) m_guideExportButton->setEnabled(hasGuide);
     if (m_guideThicknessCheck) m_guideThicknessCheck->setEnabled(hasGuide);
 
@@ -2070,7 +2129,10 @@ void MainWindow::updateGuideUi()
         case GuideWorkflowStep::PaintRight: text = tr("2 de 7 · Pintar apoyo derecho"); break;
         case GuideWorkflowStep::PaintLeft: text = tr("3 de 7 · Pintar apoyo izquierdo"); break;
         case GuideWorkflowStep::PaintBridge: text = tr("4 de 7 · Unión bajo la espina nasal"); break;
-        case GuideWorkflowStep::Holes: text = tr("5 de 7 · Colocar perforaciones"); break;
+        case GuideWorkflowStep::Holes:
+            text = leFort && hasPlates ? tr("5 de 7 · Verificar perforaciones de las placas")
+                                       : tr("5 de 7 · Colocar perforaciones");
+            break;
         case GuideWorkflowStep::Slots: text = tr("6 de 7 · Marcar hendiduras de corte"); break;
         case GuideWorkflowStep::Build: text = tr("7 de 7 · Crear la guía"); break;
         case GuideWorkflowStep::Complete: text = tr("Guía creada · lista para revisar"); break;
@@ -2099,10 +2161,10 @@ void MainWindow::updateGuideUi()
         return;
     QString hint;
     if (m_guidePointMode == kModePlateHoles)
-        hint = m_guidePlateFirstArm >= 0 ? tr("Brazo cigomático: marque sus agujeros de arriba abajo.")
-                                         : tr("Marque los agujeros de la placa de arriba abajo, cruzando el corte.");
-    else if (m_guidePlateWorkspace && !hasGuide)
-        hint = tr("Cree primero la guía de corte preoperatoria. Después podrá diseñar aquí la placa definitiva.");
+        hint = tr("%1: marque de arriba abajo, cruzando el corte, y acepte el pilar para continuar.")
+                   .arg(platePillarName(acceptedPillars));
+    else if (m_guidePlateWorkspace && !hasPlateAnatomy)
+        hint = tr("Complete la osteotomía y la reposición del Le Fort antes de planificar los implantes.");
     else if (m_guidePlateWorkspace && m_guidePlannedView)
         hint = tr("Le Fort definitivo: marque los agujeros de arriba abajo, cruzando el borde de la osteotomía.");
     else if (!hasWrap)
@@ -2115,7 +2177,9 @@ void MainWindow::updateGuideUi()
     else if (workflow == GuideWorkflowStep::PaintBridge)
         hint = tr("Con el pincel pequeño una ambos apoyos por debajo de la espina nasal.");
     else if (workflow == GuideWorkflowStep::Holes)
-        hint = tr("Marque al menos dos perforaciones de fijación sobre las zonas pintadas.");
+        hint = leFort && hasPlates
+                   ? tr("Las perforaciones predictivas son las mismas de las placas y ya están incorporadas a la guía.")
+                   : tr("Marque al menos dos perforaciones de fijación sobre las zonas pintadas.");
     else if (workflow == GuideWorkflowStep::Slots)
         hint = m_guidePendingEnds.empty() ? tr("Seleccione Le Fort I y marque el inicio de la hendidura.")
                                           : tr("Marque el final de la hendidura sobre la osteotomía.");
@@ -2190,7 +2254,7 @@ void MainWindow::restoreGuidePlan(const ProjectState& state)
     m_guidePlannedPrepared = GuidePreparation{};
     m_guidePlateMeshes.clear();
     m_guidePendingPlateHoles.clear();
-    m_guidePlateFirstArm = -1;
+    m_guidePendingPlatePillars.clear();
     m_guidePlannedView = false;
     if (m_guidePlateThicknessSpin) m_guidePlateThicknessSpin->setValue(m_guidePlan.plate.thicknessMm);
     if (m_guidePlateMinCutSpin) m_guidePlateMinCutSpin->setValue(m_guidePlan.plate.minCutDistanceMm);
@@ -2681,9 +2745,12 @@ std::vector<PredictiveHole> MainWindow::guidePredictiveHoles() const
 
 std::vector<GuideFigure> MainWindow::guideFiguresWithSleeves() const
 {
-    // The cutting guide is frozen before plate design. Plate holes belong to
-    // the definitive-position plate and must not perforate or deform the guide.
-    return m_guidePlan.figures;
+    std::vector<GuideFigure> figures = m_guidePlan.figures;
+    if (m_guidePlan.type == GuideType::LeFort && !m_guidePlan.plates.empty()) {
+        const auto sleeves = PlateCore::SleeveFigures(guidePredictiveHoles(), guideSleeveParams());
+        figures.insert(figures.end(), sleeves.begin(), sleeves.end());
+    }
+    return figures;
 }
 
 bool MainWindow::prepareGuidePlannedBone()
@@ -2722,7 +2789,7 @@ bool MainWindow::prepareGuidePlannedBone()
         prepared = GuideDesignCore::Prepare(wrap.mesh, prepareParams);
     // And the bone itself (0.5 mm closing), which no part of a plate may enter. The planning wrap fills the
     // corner of the step at the cut, so it cannot be the one that clips the bridge.
-    std::shared_ptr<const ImplicitCore::BakedField> realBone;
+    PlateKeepOut keepOut;
     if (prepared.ok) {
         WrapParams tightParams = wrapParams;
         tightParams.gapClosingMm = 0.5;
@@ -2730,8 +2797,23 @@ bool MainWindow::prepareGuidePlannedBone()
         if (tight.ok) {
             const GuidePreparation tightPrepared = GuideDesignCore::Prepare(tight.mesh, prepareParams);
             if (tightPrepared.ok)
-                realBone = tightPrepared.wrapField;
+                keepOut.bone = tightPrepared.wrapField;
         }
+        // The same bones with the segment ALSO where it was before the movement: their union fills the gap the
+        // Le Fort opened. An arm crossing the cut is pulled taut over it, so it ramps across the step instead
+        // of dropping into the osteotomy and getting in the way of the maxilla.
+        const auto original = m_repositionOriginalMeshes.find(kLeFortSegLabel);
+        if (original != m_repositionOriginalMeshes.end() && original->second &&
+            original->second->GetNumberOfPolys() > 0) {
+            const WrapResult both = WrapCore::Wrap({cranial.Get(), segment.Get(), original->second.Get()}, tightParams);
+            if (both.ok) {
+                const GuidePreparation bothPrepared = GuideDesignCore::Prepare(both.mesh, prepareParams);
+                if (bothPrepared.ok)
+                    keepOut.boneAndGap = bothPrepared.wrapField;
+            }
+        }
+        if (!keepOut.boneAndGap)
+            keepOut.boneAndGap = keepOut.bone; // not moved yet: there is no gap to ramp over
     }
     QApplication::restoreOverrideCursor();
     if (!wrap.ok || !prepared.ok) {
@@ -2739,7 +2821,7 @@ bool MainWindow::prepareGuidePlannedBone()
         return false;
     }
     m_guidePlannedPrepared = prepared;
-    m_guidePlannedRealBone = realBone;
+    m_guidePlannedKeepOut = keepOut;
     m_guidePlannedMotion = motion;
     m_guidePlateMeshes.clear(); // built on the previous plan: rebuilt on demand
     statusBar()->showMessage(tr("Placas: hueso planificado listo."));
@@ -2752,10 +2834,14 @@ PlateBuildResult MainWindow::buildGuidePlate(const PlateDesign& plate) const
     // the anterior faces and bridges in front of the gap; the gap under each hole is measured on them too.
     std::array<double, 16> motion{};
     guideSegmentMotion(motion);
+    const PlateParams params = guidePlateParams();
+    // The query works on the centreline. Add half the strip width so the physical plate edge, not merely its
+    // centre, remains two millimetres away from the Le Fort and cranial osteotomy borders.
+    const double cutMargin = std::max(3.5, params.cutEdgeMarginMm) + 0.5 * params.widthMm;
     const PlateBoneQuery boneAt =
         PlateCore::MakeBoneQuery(repositionMeshForLabel(kLeFortCranialLabel), repositionMeshForLabel(kLeFortSegLabel),
-                                 motion, guideLeFortPath());
-    return PlateCore::Build(m_guidePlannedPrepared, plate, guidePlateParams(), boneAt, nullptr, m_guidePlannedRealBone);
+                                 motion, guideLeFortPath(), cutMargin);
+    return PlateCore::Build(m_guidePlannedPrepared, plate, params, boneAt, nullptr, m_guidePlannedKeepOut);
 }
 
 void MainWindow::ensureGuidePlateMeshes()
@@ -2790,89 +2876,152 @@ void MainWindow::setGuidePlateView(bool planned)
 
 void MainWindow::startGuidePlateArm()
 {
-    if (m_guidePendingPlateHoles.size() < 2) {
-        statusBar()->showMessage(tr("Placas: marque al menos dos agujeros en el primer brazo."));
+    if (m_guidePendingPlatePillars.size() >= kPlatePillarCount)
+        return;
+    if (m_guidePendingPlateHoles.size() < 4) {
+        statusBar()->showMessage(tr("Placas: marque al menos cuatro puntos en este pilar, de arriba abajo."));
         return;
     }
-    m_guidePlateFirstArm = static_cast<int>(m_guidePendingPlateHoles.size());
+    m_guidePendingPlatePillars.push_back(m_guidePendingPlateHoles);
+    m_guidePendingPlateHoles.clear();
+    if (m_guidePendingPlatePillars.size() == kPlatePillarCount) {
+        setGuidePointMode(kModeNone);
+        if (m_guidePlateHolesButton) {
+            QSignalBlocker blocker(m_guidePlateHolesButton);
+            m_guidePlateHolesButton->setChecked(false);
+        }
+    }
+    rebuildGuideMarkers();
     updateGuideUi();
 }
 
 void MainWindow::clearGuidePlateHoles()
 {
     m_guidePendingPlateHoles.clear();
-    m_guidePlateFirstArm = -1;
+    m_guidePendingPlatePillars.clear();
     rebuildGuideMarkers();
     updateGuideUi();
 }
 
 void MainWindow::createGuidePlate()
 {
-    if (m_guidePendingPlateHoles.size() < 2) {
-        QMessageBox::warning(this, tr("Placas"), tr("Marque los agujeros de la placa, de arriba abajo."));
+    if (m_guidePendingPlatePillars.size() != kPlatePillarCount) {
+        QMessageBox::warning(this, tr("Placas"),
+                             tr("Complete y acepte los cuatro pilares antes de crear el diseño."));
         return;
     }
     if (!prepareGuidePlannedBone())
         return;
     ensureGuidePlateMeshes(); // the list and the meshes stay in step
 
-    PlateDesign plate;
-    plate.side = static_cast<PlateSide>(m_guidePlateSideCombo->currentData().toInt());
-    plate.kind = static_cast<PlateTemplate>(m_guidePlateTemplateCombo->currentData().toInt());
-    const int total = static_cast<int>(m_guidePendingPlateHoles.size());
-    int first = total;
-    if (plate.kind == PlateTemplate::LShape) {
-        if (m_guidePlateFirstArm < 2 || total - m_guidePlateFirstArm < 2) {
+    const int design = m_guidePlateTemplateCombo ? m_guidePlateTemplateCombo->currentData().toInt()
+                                                  : kPlateDesignConventional;
+    std::vector<PlateDesign> assigned;
+    const auto pillarPlate = [this](int pillar, const QString& name, PlateTemplate kind) {
+        PlateDesign plate;
+        plate.name = name;
+        plate.side = pillar < 2 ? PlateSide::Right : PlateSide::Left;
+        plate.kind = kind;
+        plate.holes = m_guidePendingPlatePillars[static_cast<size_t>(pillar)];
+        plate.struts = PlateCore::TemplateStruts(PlateTemplate::Paranasal,
+                                                  static_cast<int>(plate.holes.size()), 0);
+        return plate;
+    };
+    if (design == kPlateDesignConventional) {
+        for (int pillar = 0; pillar < kPlatePillarCount; ++pillar) {
+            assigned.push_back(pillarPlate(pillar, tr("Placa · %1").arg(platePillarName(pillar)),
+                                                   PlateTemplate::Paranasal));
+        }
+    } else if (design == kPlateDesignThreePsi) {
+        assigned.push_back(pillarPlate(1, tr("PSI maxilomalar derecho"), PlateTemplate::Splintless));
+        PlateDesign paranasal;
+        paranasal.name = tr("PSI paranasal bilateral");
+        paranasal.side = PlateSide::Bilateral;
+        paranasal.kind = PlateTemplate::Splintless;
+        const auto& right = m_guidePendingPlatePillars[0];
+        const auto& left = m_guidePendingPlatePillars[2];
+        paranasal.holes.insert(paranasal.holes.end(), right.begin(), right.end());
+        paranasal.holes.insert(paranasal.holes.end(), left.begin(), left.end());
+        paranasal.struts = PlateCore::TemplateStruts(PlateTemplate::LShape,
+                                                      static_cast<int>(right.size()), static_cast<int>(left.size()));
+        assigned.push_back(std::move(paranasal));
+        assigned.push_back(pillarPlate(3, tr("PSI maxilomalar izquierdo"), PlateTemplate::Splintless));
+    } else {
+        PlateDesign plate;
+        plate.name = tr("Placa splintless Le Fort");
+        plate.kind = PlateTemplate::Splintless;
+        std::array<int, 4> counts{};
+        for (int pillar = 0; pillar < kPlatePillarCount; ++pillar) {
+            const auto& holes = m_guidePendingPlatePillars[static_cast<size_t>(pillar)];
+            counts[static_cast<size_t>(pillar)] = static_cast<int>(holes.size());
+            plate.holes.insert(plate.holes.end(), holes.begin(), holes.end());
+        }
+        plate.struts = PlateCore::SplintlessStruts(counts);
+        assigned.push_back(std::move(plate));
+    }
+    vtkPolyData* cranialMesh = repositionMeshForLabel(kLeFortCranialLabel);
+    vtkPolyData* segmentMesh = repositionMeshForLabel(kLeFortSegLabel);
+    std::vector<PlateDesign> pillarChecks;
+    for (int pillar = 0; pillar < kPlatePillarCount; ++pillar) {
+        PlateDesign check;
+        check.name = platePillarName(pillar);
+        check.holes = m_guidePendingPlatePillars[static_cast<size_t>(pillar)];
+        pillarChecks.push_back(std::move(check));
+    }
+    PlateCore::AssignBones(pillarChecks, cranialMesh, segmentMesh);
+    for (const PlateDesign& plate : pillarChecks) {
+        const int cranial = static_cast<int>(std::count_if(plate.holes.begin(), plate.holes.end(),
+            [](const PlateHole& hole) { return hole.bone == PlateBone::Cranial; }));
+        const int segment = static_cast<int>(std::count_if(plate.holes.begin(), plate.holes.end(),
+            [](const PlateHole& hole) { return hole.bone == PlateBone::Segment; }));
+        if (cranial < 2 || segment < 2) {
             QMessageBox::warning(this, tr("Placas"),
-                                 tr("La placa en L necesita dos brazos: marque el brazo paranasal, pulse «Siguiente "
-                                    "brazo» y marque el brazo cigomático, cada uno de arriba abajo."));
-            return;
-        }
-        first = m_guidePlateFirstArm;
-    }
-    int sameSide = 1;
-    for (const PlateDesign& other : m_guidePlan.plates)
-        sameSide += other.side == plate.side ? 1 : 0;
-    plate.name = (plate.side == PlateSide::Left ? tr("Placa izquierda") : tr("Placa derecha")) +
-                 (sameSide > 1 ? QStringLiteral(" %1").arg(sameSide) : QString());
-    plate.holes = m_guidePendingPlateHoles;
-    plate.struts = PlateCore::TemplateStruts(plate.kind, first, total - first);
-    std::vector<PlateDesign> assigned{plate};
-    PlateCore::AssignBones(assigned, repositionMeshForLabel(kLeFortCranialLabel),
-                           repositionMeshForLabel(kLeFortSegLabel));
-    if (plate.kind == PlateTemplate::LShape) {
-        const auto& a = assigned.front().holes[static_cast<size_t>(first - 1)].center;
-        const auto& b = assigned.front().holes.back().center;
-        const double junctionSpan = std::hypot(std::hypot(a[0] - b[0], a[1] - b[1]), a[2] - b[2]);
-        if (junctionSpan > 30.0) {
-            QMessageBox::warning(
-                this, tr("Placas"),
-                tr("Los dos brazos están separados %1 mm y formarían una barra transversal demasiado larga. "
-                   "Cree dos placas paranasales independientes, o vuelva a marcar una placa en L sobre el mismo lado.")
-                    .arg(junctionSpan, 0, 'f', 1));
+                                 tr("%1 necesita al menos dos puntos en cráneo y dos en Le Fort.")
+                                     .arg(plate.name));
             return;
         }
     }
+    PlateCore::AssignBones(assigned, cranialMesh, segmentMesh);
 
     QApplication::setOverrideCursor(Qt::WaitCursor);
-    statusBar()->showMessage(tr("Placas: construyendo %1…").arg(plate.name));
-    const PlateBuildResult built = buildGuidePlate(assigned.front());
+    statusBar()->showMessage(design == kPlateDesignConventional ? tr("Placas: construyendo cuatro placas…")
+                                     : design == kPlateDesignThreePsi ? tr("Placas: construyendo tres PSI…")
+                                                                       : tr("Placas: construyendo PSI monobloque…"));
+    std::vector<vtkSmartPointer<vtkPolyData>> meshes;
+    QStringList reports;
+    QString buildError;
+    for (const PlateDesign& plate : assigned) {
+        const PlateBuildResult built = buildGuidePlate(plate);
+        if (!built.ok) {
+            buildError = tr("%1: %2").arg(plate.name, built.error);
+            break;
+        }
+        meshes.push_back(built.mesh);
+        reports << built.report;
+    }
     QApplication::restoreOverrideCursor();
-    if (!built.ok) {
-        QMessageBox::warning(this, tr("Placas"), built.error);
+    if (!buildError.isEmpty()) {
+        QMessageBox::warning(this, tr("Placas"), buildError);
         return;
     }
     m_guidePlan.plate = guidePlateParams();
-    m_guidePlan.plates.push_back(assigned.front());
-    m_guidePlateMeshes.push_back(built.mesh);
+    m_guidePlan.plates.insert(m_guidePlan.plates.end(), assigned.begin(), assigned.end());
+    m_guidePlateMeshes.insert(m_guidePlateMeshes.end(), meshes.begin(), meshes.end());
+    // The guide is keyed to the definitive plate holes, so an existing guide is stale now.
+    m_guideMesh = nullptr;
+    m_guideBuiltFigures.clear();
+    if (m_guidePlan.workflowStep == GuideWorkflowStep::Complete)
+        m_guidePlan.workflowStep = GuideWorkflowStep::Build;
     m_guidePendingPlateHoles.clear();
-    m_guidePlateFirstArm = -1;
+    m_guidePendingPlatePillars.clear();
     setGuidePointMode(kModeNone);
     refreshGuidePlates();
     syncGuideView();
     if (m_guideReportLabel)
-        m_guideReportLabel->setText(built.report);
-    statusBar()->showMessage(built.report);
+        m_guideReportLabel->setText(reports.join(QStringLiteral("\n")));
+    statusBar()->showMessage(design == kPlateDesignConventional ? tr("Placas: cuatro placas creadas.")
+                                     : design == kPlateDesignThreePsi ? tr("Placas: tres PSI creados.")
+                                                                       : tr("Placas: PSI monobloque creado."));
 }
 
 void MainWindow::removeGuidePlate()
@@ -2883,6 +3032,10 @@ void MainWindow::removeGuidePlate()
     m_guidePlan.plates.erase(m_guidePlan.plates.begin() + row);
     if (m_guidePlateMeshes.size() > static_cast<size_t>(row))
         m_guidePlateMeshes.erase(m_guidePlateMeshes.begin() + row);
+    m_guideMesh = nullptr;
+    m_guideBuiltFigures.clear();
+    if (m_guidePlan.workflowStep == GuideWorkflowStep::Complete)
+        m_guidePlan.workflowStep = GuideWorkflowStep::Build;
     refreshGuidePlates();
     syncGuideView();
 }
@@ -2899,9 +3052,11 @@ void MainWindow::refreshGuidePlates()
                 cranial += hole.bone == PlateBone::Cranial ? 1 : 0;
                 segment += hole.bone == PlateBone::Segment ? 1 : 0;
             }
+            const QString kind = plate.kind == PlateTemplate::Splintless ? tr("splintless")
+                                 : plate.kind == PlateTemplate::LShape    ? tr("en L")
+                                                                          : tr("convencional");
             m_guidePlateList->addItem(tr("%1 · %2 · %3 + %4 tornillos")
-                                          .arg(plate.name,
-                                               plate.kind == PlateTemplate::LShape ? tr("en L") : tr("paranasal"))
+                                          .arg(plate.name, kind)
                                           .arg(cranial)
                                           .arg(segment));
         }
@@ -2978,10 +3133,10 @@ bool MainWindow::exportGuidePlateFiles(const QString& folder, QString* report)
         const auto mesh = i < m_guidePlateMeshes.size() ? m_guidePlateMeshes[i] : nullptr;
         if (!mesh || mesh->GetNumberOfPolys() == 0)
             return fail(tr("La placa %1 no se pudo construir.").arg(i + 1));
-        const QString name = QStringLiteral("placa_%1_%2.stl")
-                                 .arg(i + 1)
-                                 .arg(m_guidePlan.plates[i].side == PlateSide::Left ? QStringLiteral("izquierda")
-                                                                                    : QStringLiteral("derecha"));
+        const QString side = m_guidePlan.plates[i].side == PlateSide::Left ? QStringLiteral("izquierda")
+                             : m_guidePlan.plates[i].side == PlateSide::Bilateral ? QStringLiteral("bilateral")
+                                                                                  : QStringLiteral("derecha");
+        const QString name = QStringLiteral("placa_%1_%2.stl").arg(i + 1).arg(side);
         auto writer = vtkSmartPointer<vtkSTLWriter>::New();
         writer->SetFileName(dir.filePath(name).toUtf8().constData());
         writer->SetInputData(mesh);
@@ -3057,8 +3212,15 @@ void MainWindow::generateLeFortGuide()
     statusBar()->showMessage(tr("Guía de corte: trazando sobre la osteotomía preoperatoria…"));
     LeFortGuideParams params;
     params.sleeveOuterDiameterMm = guideSleeveParams().outerDiameterMm;
+    const std::vector<PredictiveHole> predictive = guidePredictiveHoles();
+    if (predictive.empty()) {
+        QApplication::restoreOverrideCursor();
+        QMessageBox::warning(this, tr("Guía de corte"),
+                             tr("Planifique primero las placas y sus tornillos. La guía utilizará exactamente esas perforaciones."));
+        return;
+    }
     const LeFortGuideLayout layout =
-        LeFortGuideCore::Layout(m_guidePrepared, m_guideWrapMesh, path, {}, params);
+        LeFortGuideCore::Layout(m_guidePrepared, m_guideWrapMesh, path, predictive, params);
     QApplication::restoreOverrideCursor();
     if (!layout.ok) {
         QMessageBox::warning(this, tr("Guía de corte"), layout.error);
@@ -3068,7 +3230,7 @@ void MainWindow::generateLeFortGuide()
     m_guidePlan.contour.clear();
     m_guidePlan.paint = layout.paint;
     m_guidePlan.slotPlan = layout.slotPlan;
-    m_guidePlan.holes = layout.fixation;
+    m_guidePlan.holes.clear(); // every drill bore comes from the definitive plate plan
     // Regeneration is a fresh automatic cutting-guide layout. Saved projects
     // may still contain legacy sleeves, imported figures or connector tubes in
     // the old coordinate frame; keeping them is what made isolated pieces

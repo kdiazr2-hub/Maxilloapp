@@ -322,7 +322,8 @@ void testBrushedRegion()
     // It covers the painted band — the dabs' discs — and not more.
     require(b[0] > -8.0 - radius - 0.8 && b[1] < 8.0 + radius + 0.8 && b[2] > -2.0 - radius - 0.8 &&
                 b[3] < 2.0 + radius + 0.8,
-            "the brushed base spills past the painted dabs");
+            "the brushed base spills past the painted dabs: [" + std::to_string(b[0]) + ", " +
+                std::to_string(b[1]) + "] x [" + std::to_string(b[2]) + ", " + std::to_string(b[3]) + "]");
     require(b[1] > 8.0 + radius - 1.0 && b[3] > 2.0 + radius - 1.0, "the brushed base does not reach the painted edge");
     // Area of a stadium 16 mm long, 4 + 2r wide, walled at 2.5 mm.
     const double area = 16.0 * (4.0 + 2.0 * radius) + kPiValue * (2.0 + radius) * (2.0 + radius);

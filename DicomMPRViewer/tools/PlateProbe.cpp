@@ -7,8 +7,15 @@
 // the given advancement (forward) and descent, puts a paranasal plate on each side of the aperture (two
 // holes above the cut, two below), builds them with PlateCore, and writes the plates as STL, a report, and
 // frontal / oblique / lateral renderings of the planned bone with the plates on it.
+//
+// It then lays out the cutting guide those plates imply (LeFortGuideCore, on the bone BEFORE the cut) and
+// renders it the same way, so both halves of the workflow can be judged on real anatomy.
+//
+// It then lays out the cutting guide those plates imply (LeFortGuideCore on the bone BEFORE the cut) and
+// renders it the same way, so both halves of the workflow can be judged on real anatomy.
 
 #include "GuideDesignCore.h"
+#include "LeFortGuideCore.h"
 #include "OsteotomyCore.h"
 #include "PlateCore.h"
 #include "WrapCore.h"
@@ -25,6 +32,7 @@
 #include <vtkCamera.h>
 #include <vtkPNGWriter.h>
 #include <vtkPolyData.h>
+#include <vtkPolyDataConnectivityFilter.h>
 #include <vtkPolyDataMapper.h>
 #include <vtkProperty.h>
 #include <vtkRenderWindow.h>
@@ -92,6 +100,15 @@ bool hit(vtkPolyData* mesh, const Vec3& from, const Vec3& to, Vec3& at)
         return false;
     at = {x[0], x[1], x[2]};
     return true;
+}
+
+int shells(vtkPolyData* mesh)
+{
+    auto regions = vtkSmartPointer<vtkPolyDataConnectivityFilter>::New();
+    regions->SetInputData(mesh);
+    regions->SetExtractionModeToAllRegions();
+    regions->Update();
+    return regions->GetNumberOfExtractedRegions();
 }
 
 void render(const std::vector<vtkPolyData*>& bones, const std::vector<vtkPolyData*>& plates, const Vec3& focal,
@@ -213,12 +230,19 @@ int main(int argc, char** argv)
     prepareParams.base.thicknessMm = 1.0;
     const GuidePreparation planned = GuideDesignCore::Prepare(wrap.mesh, prepareParams);
     // Penetration is judged on the real bone: a tight wrap (0.5 mm closing), not the planning wrap that fills
-    // the corner of the step at the cut.
+    // the corner of the step at the cut. The same bones with the segment also where it was before the movement
+    // close the osteotomy gap: the arms are pulled taut over that, so they ramp across the step.
     WrapParams tightParams;
     tightParams.gapClosingMm = 0.5;
     tightParams.smallestDetailMm = detail;
     const WrapResult tightWrap = WrapCore::Wrap({cranial.Get(), segmentPlanned.Get()}, tightParams);
     const GuidePreparation tight = tightWrap.ok ? GuideDesignCore::Prepare(tightWrap.mesh, prepareParams) : GuidePreparation{};
+    const WrapResult gapWrap = WrapCore::Wrap({cranial.Get(), segmentPlanned.Get(), segmentBefore.Get()}, tightParams);
+    const GuidePreparation withGap = gapWrap.ok ? GuideDesignCore::Prepare(gapWrap.mesh, prepareParams) : GuidePreparation{};
+    PlateKeepOut keepOut;
+    if (tight.ok)
+        keepOut.bone = tight.wrapField;
+    keepOut.boneAndGap = withGap.ok ? withGap.wrapField : keepOut.bone;
     std::cout << "planned bone wrapped in "
               << std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count() << " s\n";
 
@@ -289,7 +313,7 @@ int main(int argc, char** argv)
         PlateParams params;
         const auto t0 = std::chrono::steady_clock::now();
         const PlateBuildResult result =
-            PlateCore::Build(planned, plate, params, boneAt, nullptr, tight.ok ? tight.wrapField : nullptr);
+            PlateCore::Build(planned, plate, params, boneAt, nullptr, keepOut);
         const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         if (!result.ok) {
             std::cerr << plate.name.toStdString() << ": " << result.error.toStdString() << "\n";
@@ -326,10 +350,61 @@ int main(int argc, char** argv)
     for (const auto& mesh : built)
         plateMeshes.push_back(mesh);
     const Vec3 lateral{forward[1], -forward[0], 0.0};
-    render(bones, plateMeshes, focal, forward, QDir(outDir).filePath(QStringLiteral("frontal.png")));
     const Vec3 oblique{0.7 * forward[0] + 0.7 * lateral[0], 0.7 * forward[1] + 0.7 * lateral[1], 0.15};
+    const Vec3 side{lateral[0], lateral[1], 0.0};
+    render(bones, plateMeshes, focal, forward, QDir(outDir).filePath(QStringLiteral("frontal.png")));
     render(bones, plateMeshes, focal, oblique, QDir(outDir).filePath(QStringLiteral("oblique.png")));
-    render(bones, plateMeshes, focal, {lateral[0], lateral[1], 0.0}, QDir(outDir).filePath(QStringLiteral("lateral.png")));
+    render(bones, plateMeshes, focal, side, QDir(outDir).filePath(QStringLiteral("lateral.png")));
+
+    // ── The cutting guide those plates imply, on the bone BEFORE the cut ─────────────────────────────────
+    const Vec3 segmentMiddle{0.5 * (b[0] + b[1]), 0.5 * (b[2] + b[3]), 0.5 * (b[4] + b[5])};
+    const std::vector<PredictiveHole> predictive = PlateCore::PredictHoles(plates, motion, path, segmentMiddle);
+    WrapParams guideWrapParams;
+    guideWrapParams.smallestDetailMm = detail;
+    guideWrapParams.smoothingIterations = 30;
+    GuideDesignParams guideDesign;
+    guideDesign.base.smallestDetailMm = detail;
+    const WrapResult preopWrap = WrapCore::Wrap({cranial.Get(), segmentBefore.Get()}, guideWrapParams);
+    const GuidePreparation preopPrepared =
+        preopWrap.ok ? GuideDesignCore::Prepare(preopWrap.mesh, guideDesign) : GuidePreparation{};
+    if (!preopPrepared.ok) {
+        std::cerr << "the pre-operative envelope failed: "
+                  << (preopWrap.ok ? preopPrepared.error : preopWrap.error).toStdString() << std::endl;
+        return 1;
+    }
+    LeFortGuideParams guideParams;
+    const SleeveParams sleeveParams;
+    guideParams.sleeveOuterDiameterMm = sleeveParams.outerDiameterMm;
+    const LeFortGuideLayout layout =
+        LeFortGuideCore::Layout(preopPrepared, preopWrap.mesh, path, predictive, guideParams);
+    if (!layout.ok) {
+        std::cerr << "the guide layout failed: " << layout.error.toStdString() << std::endl;
+        return 1;
+    }
+    std::cout << layout.report.toStdString() << std::endl;
+    const GuideRegion region = GuideBaseCore::MakeBrushRegion(preopPrepared.wrapField, layout.paint, guideDesign.base);
+    const std::vector<GuideFigure> sleeves = PlateCore::SleeveFigures(predictive, sleeveParams);
+    const auto guideStarted = std::chrono::steady_clock::now();
+    const GuideDesignResult guide =
+        GuideDesignCore::Build(preopPrepared, region, layout.slotPlan, layout.fixation, sleeves, guideDesign);
+    if (!guide.ok) {
+        std::cerr << "the guide was not built: " << guide.error.toStdString() << std::endl;
+        return 1;
+    }
+    std::cout << "guide: " << guide.mesh->GetNumberOfPolys() << " triangles, " << shells(guide.mesh) << " piece(s), "
+              << std::chrono::duration<double>(std::chrono::steady_clock::now() - guideStarted).count() << " s"
+              << std::endl;
+    auto guideWriter = vtkSmartPointer<vtkSTLWriter>::New();
+    guideWriter->SetFileName(QDir(outDir).filePath(QStringLiteral("guia.stl")).toUtf8().constData());
+    guideWriter->SetInputData(guide.mesh);
+    guideWriter->Write();
+    std::vector<vtkPolyData*> preopBones{cranial, segmentBefore};
+    std::vector<vtkPolyData*> guideMesh{guide.mesh};
+    render(preopBones, guideMesh, focal, forward, QDir(outDir).filePath(QStringLiteral("guia_frontal.png")));
+    render(preopBones, guideMesh, focal, oblique, QDir(outDir).filePath(QStringLiteral("guia_oblicua.png")));
+    render(preopBones, guideMesh, focal, side, QDir(outDir).filePath(QStringLiteral("guia_lateral.png")));
+    render({}, guideMesh, focal, forward, QDir(outDir).filePath(QStringLiteral("guia_sola.png")));
+
     std::cout << "written to " << outDir.toStdString() << "\n";
     return 0;
 }

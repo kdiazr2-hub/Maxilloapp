@@ -18,6 +18,7 @@
 #include <cmath>
 #include <functional>
 #include <iostream>
+#include <set>
 #include <string>
 
 namespace
@@ -103,6 +104,37 @@ std::vector<bool> inside(vtkPolyData* mesh, const std::vector<Vec3>& points)
     return out;
 }
 
+// The back and front of the plate along a line across it: the smallest and largest `u` with metal on it,
+// where `at(u)` walks out of the bone. `found` is false where the line misses the plate altogether.
+struct Section
+{
+    bool found = false;
+    double back = 0.0, front = 0.0;
+    int runs = 0; // one run is one wall of plate; more than one means the line crossed it twice
+    double thickness() const { return front - back; }
+};
+
+Section sectionOf(vtkPolyData* mesh, const std::function<Vec3(double)>& at, double from, double to, double step)
+{
+    std::vector<Vec3> line;
+    for (double u = from; u <= to; u += step)
+        line.push_back(at(u));
+    const std::vector<bool> hits = inside(mesh, line);
+    Section section;
+    for (size_t i = 0; i < hits.size(); ++i) {
+        if (!hits[i])
+            continue;
+        const double u = from + step * static_cast<double>(i);
+        if (!section.found) {
+            section.found = true;
+            section.back = u;
+        }
+        section.front = u;
+        section.runs += (i == 0 || !hits[i - 1]) ? 1 : 0;
+    }
+    return section;
+}
+
 // ── Motion ────────────────────────────────────────────────────────────────────
 void testRigidMotionIsRecoveredFromTheMeshes()
 {
@@ -146,6 +178,19 @@ void testTemplatesJoinTheHoles()
     require(shapeL.size() == 3, "the L plate does not have two arms and a bar");
     require(shapeL[1] == std::vector<int>({4, 5, 6}), "the buttress arm is not the second set of holes");
     require(shapeL[2] == std::vector<int>({3, 6}), "the bar does not join the lowest hole of each arm");
+    std::set<std::pair<int, int>> edges;
+    for (const std::vector<int>& strut : shapeL)
+        for (size_t i = 0; i + 1 < strut.size(); ++i)
+            require(edges.insert(std::minmax(strut[i], strut[i + 1])).second,
+                    "the L plate contains a duplicated edge");
+
+    const auto splintless = PlateCore::SplintlessStruts({4, 4, 4, 4});
+    require(splintless.size() == 5, "the splintless plate does not have four pillars and one lower union");
+    require(splintless[0] == std::vector<int>({0, 1, 2, 3}) &&
+                splintless[3] == std::vector<int>({12, 13, 14, 15}),
+            "the splintless pillar indices do not follow the clinical marking order");
+    require(splintless[4] == std::vector<int>({7, 3, 11, 15}),
+            "the splintless lower union does not run lateral-right to lateral-left");
 }
 
 void testPredictiveHolesGoBackWithTheSegment()
@@ -227,6 +272,30 @@ void testSleevesSitOnThePreoperativeHoles()
 }
 
 // ── The plate ─────────────────────────────────────────────────────────────────
+// What the app hands PlateCore as the keep-out: the real bone where the plan puts it, and the same bones with
+// the segment also where it was before the movement, whose union fills the osteotomy gap. An arm crossing the
+// cut is pulled taut over the second one, so it ramps across the step instead of dropping into the cut.
+PlateKeepOut keepOutFor(vtkPolyData* cranial, vtkPolyData* segmentPlanned, vtkPolyData* segmentBefore, double detail)
+{
+    WrapParams tightParams;
+    tightParams.gapClosingMm = 0.5;
+    tightParams.smallestDetailMm = detail;
+    GuideDesignParams prepareParams;
+    prepareParams.base.smallestDetailMm = detail;
+    PlateKeepOut keepOut;
+    const WrapResult tight = WrapCore::Wrap({cranial, segmentPlanned}, tightParams);
+    require(tight.ok, "the real bone could not be wrapped: " + tight.error.toStdString());
+    const GuidePreparation tightPrepared = GuideDesignCore::Prepare(tight.mesh, prepareParams);
+    require(tightPrepared.ok, "the real bone could not be measured");
+    keepOut.bone = tightPrepared.wrapField;
+    const WrapResult both = WrapCore::Wrap({cranial, segmentPlanned, segmentBefore}, tightParams);
+    require(both.ok, "the bone and the gap could not be wrapped: " + both.error.toStdString());
+    const GuidePreparation bothPrepared = GuideDesignCore::Prepare(both.mesh, prepareParams);
+    require(bothPrepared.ok, "the bone and the gap could not be measured");
+    keepOut.boneAndGap = bothPrepared.wrapField;
+    return keepOut;
+}
+
 // A paranasal plate built on the bone as `motion` leaves it, the way the app builds it: a wrap that
 // regularises the bone (3 mm closing), and the real bones named under each point, kept clear of the cut.
 PlateBuildResult buildOnPlannedBone(const std::array<double, 16>& motion)
@@ -246,11 +315,13 @@ PlateBuildResult buildOnPlannedBone(const std::array<double, 16>& motion)
     std::vector<PlateDesign> plates{paranasalPlate(motion)};
     PlateCore::AssignBones(plates, cranial, segmentPlanned);
 
-    const PlateBoneQuery boneAt = PlateCore::MakeBoneQuery(cranial, segmentPlanned, motion, leFortCut());
-
     PlateParams params;
     params.smallestDetailMm = 0.15;
-    const PlateBuildResult built = PlateCore::Build(planned, plates[0], params, boneAt);
+    const PlateBoneQuery boneAt = PlateCore::MakeBoneQuery(
+        cranial, segmentPlanned, motion, leFortCut(), params.cutEdgeMarginMm + 0.5 * params.widthMm);
+    const PlateBuildResult built =
+        PlateCore::Build(planned, plates[0], params, boneAt, nullptr,
+                         keepOutFor(cranial, segmentPlanned, segmentBeforeCut(), 0.3));
     require(built.ok, "the plate was not built: " + built.error.toStdString());
     require(built.pieces == 1, "the plate did not bridge the cut: " + std::to_string(built.pieces) + " pieces");
     const MeshCheck mesh = MeshRepairCore::Analyze(built.mesh);
@@ -295,8 +366,8 @@ void testPlateBridgesTheCutOnThePlannedBone()
 }
 
 // The case the surgeon hit: the maxilla lowered 6 mm and advanced 2 mm opens an 8 mm gap at the cut. The arm
-// must reach the upper osteotomy edge, bend forward by the advancement and then turn down onto the moved Le Fort.
-// It must not shortcut that contour with a diagonal through the surgical gap.
+// crosses it as one ramp between the two anterior faces — the shape of a real patient-specific implant — with
+// nothing behind those faces and nothing standing out in front of the advanced one.
 void testPlateBridgesAWideGap()
 {
     auto transform = vtkSmartPointer<vtkTransform>::New();
@@ -307,32 +378,34 @@ void testPlateBridgesAWideGap()
             motion[static_cast<size_t>(4 * r + c)] = transform->GetMatrix()->GetElement(r, c);
     const PlateBuildResult built = buildOnPlannedBone(motion);
     require(built.bridgedMm > 6.0, "the arm did not bridge the gap: " + std::to_string(built.bridgedMm) + " mm");
-    require(built.steppedBridges == 1, "the advancement did not produce one stepped surgical bend");
 
-    // The upper bend advances at the cranial edge (z about 11), then the second leg descends at the new face
-    // (y about 2.2). The former diagonal midpoint must remain empty.
-    const auto bend = inside(built.mesh, {{-10.0, 1.0, 11.0}, {-10.0, 2.7, 8.0}, {-10.0, 2.7, 3.5},
-                                                 {-10.0, 1.0, 6.0}});
-    require(bend[0] && bend[1] && bend[2], "the stepped bridge is not continuous at the osteotomy");
-    require(!bend[3], "the plate still shortcuts the osteotomy with a diagonal bar");
     // Nothing hangs behind the anterior faces or runs along the cut surfaces.
-    const auto gap = inside(built.mesh, {{-10.0, -1.5, 6.0}, {-10.0, -1.0, 9.3}, {-10.0, 1.0, 2.6}, {-10.0, -3.0, 4.0}});
+    const auto gap = inside(built.mesh, {{-10.0, -1.5, 6.0}, {-10.0, -1.0, 9.3},
+                                         {-10.0, -3.0, 4.0}});
     for (size_t i = 0; i < gap.size(); ++i)
         require(!gap[i], "the plate dips into the gap at probe " + std::to_string(i));
-    // The descending leg keeps uniform plate thickness through the height of the gap.
-    for (const double z : {4.0, 6.0, 8.0}) {
-        std::vector<Vec3> line;
-        for (double y = -2.0; y <= 4.0; y += 0.02)
-            line.push_back({-10.0, y, z});
-        const auto hits = inside(built.mesh, line);
-        int metal = 0, runs = 0;
-        for (size_t i = 0; i < hits.size(); ++i) {
-            metal += hits[i] ? 1 : 0;
-            runs += hits[i] && (i == 0 || !hits[i - 1]) ? 1 : 0;
-        }
-        const double thickness = 0.02 * metal;
-        require(runs == 1 && thickness > 0.9 && thickness < 1.25,
-                "the bar is not 1 mm thick at z = " + std::to_string(z) + ": " + std::to_string(thickness) + " mm");
+
+    // Across the gap the plate is one wall of titanium, 1 mm thick, whose front travels from the cranial face
+    // (y = 0) to the advanced one (y = 2) without ever going beyond it and without a step: over any 2 mm of
+    // height it moves less than 1.5 mm, so a surgeon could bend it.
+    double previousFront = 0.0;
+    bool first = true;
+    for (double z = 3.5; z <= 9.0; z += 0.5) {
+        const Section across =
+            sectionOf(built.mesh, [z](double y) { return Vec3{-10.0, y, z}; }, -2.0, 5.0, 0.02);
+        require(across.found, "the ramp is interrupted at z = " + std::to_string(z));
+        require(across.runs == 1 && across.thickness() > 0.9 && across.thickness() < 1.25,
+                "the ramp is not 1 mm thick at z = " + std::to_string(z) + ": " +
+                    std::to_string(across.thickness()) + " mm");
+        require(across.front < 3.2, "the ramp stands out in front of the advanced face at z = " + std::to_string(z));
+        require(across.back > -0.35, "the ramp is behind the cranial face at z = " + std::to_string(z));
+        // Going up, from the advanced face back to the cranial one: always retreating, never in a step.
+        if (!first)
+            require(across.front - previousFront < 0.05 && across.front - previousFront > -0.75,
+                    "the ramp has a step at z = " + std::to_string(z) + ": " +
+                        std::to_string(across.front - previousFront) + " mm in half a millimetre");
+        previousFront = across.front;
+        first = false;
     }
 }
 
@@ -342,7 +415,7 @@ void testPlateBridgesAWideGap()
 // The case of the surgeon's second report. The paranasal wall faces forward AND outward (here 30°); the plan
 // advances the segment 8 mm straight forward and lowers it 2 mm. Near the cut the bone turns into the cut face:
 // an arm that followed it went down into the gap and collided with the other bone. The plate must seat on the
-// anterior faces, make a deliberate stepped bend at the osteotomy and leave the space behind it empty.
+// anterior faces, ramp between them across the osteotomy and leave the space behind it empty.
 void testPlateBridgesALargeAdvancementFlat()
 {
     auto turn = vtkSmartPointer<vtkTransform>::New();
@@ -353,7 +426,8 @@ void testPlateBridgesALargeAdvancementFlat()
             rotation[static_cast<size_t>(4 * r + c)] = turn->GetMatrix()->GetElement(r, c);
     const std::array<double, 16> motion{1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 8.0, 0.0, 0.0, 1.0, -2.0, 0.0, 0.0, 0.0, 1.0};
     const auto cranial = moved(cranialBase(), rotation);
-    const auto segmentPlanned = moved(moved(segmentBeforeCut(), rotation), motion);
+    const auto segmentBefore = moved(segmentBeforeCut(), rotation);
+    const auto segmentPlanned = moved(segmentBefore, motion);
     const OsteotomyPath cut = OsteotomyCore::TransformPath(leFortCut(), turn->GetMatrix());
     const auto place = [&](const Vec3& p, bool onSegment) {
         const Vec3 turned = PlateCore::TransformPoint(rotation, p);
@@ -382,11 +456,13 @@ void testPlateBridgesALargeAdvancementFlat()
     PlateParams params;
     params.smallestDetailMm = 0.15;
     const PlateBuildResult built = PlateCore::Build(planned, plates[0], params,
-                                                    PlateCore::MakeBoneQuery(cranial, segmentPlanned, motion, cut));
+                                                    PlateCore::MakeBoneQuery(
+                                                        cranial, segmentPlanned, motion, cut,
+                                                        params.cutEdgeMarginMm + 0.5 * params.widthMm),
+                                                    nullptr, keepOutFor(cranial, segmentPlanned, segmentBefore, 0.3));
     require(built.ok, "the plate was not built: " + built.error.toStdString());
     require(built.pieces == 1, "the plate came apart: " + std::to_string(built.pieces) + " pieces");
     require(built.bridgedMm > 5.0, "the arm did not bridge the advancement: " + std::to_string(built.bridgedMm) + " mm");
-    require(built.steppedBridges == 1, "the large advancement did not produce one stepped surgical bend");
 
     // In the arm's plane (a section through its line), in wall coordinates: u runs forward out of the cranial
     // wall, z up. The cranial wall's front is u = 0 above z = 10; the segment's front is 8 mm ahead below z = 6.
@@ -397,9 +473,41 @@ void testPlateBridgesALargeAdvancementFlat()
     for (const auto& [u, z] : {std::pair{-1.0, 8.0}, std::pair{-2.0, 9.0}, std::pair{2.0, 5.5}, std::pair{-1.0, 6.5}})
         require(!inside(built.mesh, {at(u, z)})[0], "the plate goes into the gap at u = " + std::to_string(u) +
                                                            ", z = " + std::to_string(z));
-    // A straight connector would cross the centre of this section. The stepped plate travels at the upper edge
-    // and at the advanced face instead, so that diagonal midpoint must be empty.
-    require(!inside(built.mesh, {at(4.0, 8.0)})[0], "the large advancement still uses a diagonal connector");
+    // One ramp between the two faces: at every height it is one wall of titanium, its front moves forward
+    // steadily from the cranial face towards the advanced one and never passes it.
+    // The line is oblique to this 30° wall, so read the two faces off the bones themselves along the very
+    // same line rather than from the millimetres of the plan.
+    const double advancedFace = sectionOf(segmentPlanned, [&](double u) { return at(u, 0.0); }, -5.0, 15.0, 0.02).front;
+    const double cranialFace = sectionOf(cranial, [&](double u) { return at(u, 14.0); }, -5.0, 15.0, 0.02).front;
+    // The arms stop 5 mm short of the cut on each bone, so the ramp runs from about z = 2 to about z = 11;
+    // higher than that the plate is seated on the cranium and the section crosses it twice as it lifts off.
+    double previousFront = 1e9, previousMoved = 1e9;
+    for (double z = 3.0; z <= 11.0; z += 0.5) {
+        const Section across = sectionOf(built.mesh, [&](double u) { return at(u, z); }, -2.0, 11.0, 0.02);
+        require(across.found, "the ramp is interrupted at z = " + std::to_string(z));
+        require(across.runs == 1, "the ramp doubles back on itself at z = " + std::to_string(z));
+        require(across.front < advancedFace + 2.0, // the line crosses the 1 mm plate obliquely
+                "the ramp stands out in front of the advanced face at z = " + std::to_string(z) + ": " +
+                    std::to_string(across.front) + " against " + std::to_string(advancedFace));
+        require(across.back > cranialFace - 0.5, "the ramp is behind the cranial face at z = " + std::to_string(z));
+        // No step anywhere. A right-angled dogleg travels the whole 8 mm of the advancement between two
+        // neighbouring heights and turns twice; a ramp moves a little at a time and its slope changes slowly.
+        const double moved = across.front - previousFront;
+        if (previousFront < 1e8) {
+            require(std::abs(moved) < 2.5, "the ramp has a step at z = " + std::to_string(z) + ": " +
+                                               std::to_string(moved) + " mm in half a millimetre");
+            if (previousMoved < 1e8)
+                require(std::abs(moved - previousMoved) < 1.0,
+                        "the ramp turns a corner at z = " + std::to_string(z) + ": " +
+                            std::to_string(moved - previousMoved));
+            previousMoved = moved;
+        }
+        previousFront = across.front;
+    }
+    // And it really did cross: above the ramp the plate is seated on the cranial face again.
+    const Section seated = sectionOf(built.mesh, [&](double u) { return at(u, 13.0); }, -2.0, 11.0, 0.02);
+    require(seated.found && seated.back < cranialFace + 1.2, // the line crosses the wall obliquely
+            "the arm did not come back onto the cranium: " + std::to_string(seated.back));
 }
 
 void testPlateFollowsACurvedRoughBone()
@@ -485,12 +593,21 @@ void testPlatesTravelWithTheProject()
             "the bone of each hole was lost");
     require(distance(back.holes[3].center, plate.holes[3].center) < 1e-9, "a hole moved on the way");
 
+    plate.kind = PlateTemplate::Splintless;
+    const PlateDesign splintlessBack = PlateCore::FromJson(PlateCore::ToJson(plate));
+    require(splintlessBack.kind == PlateTemplate::Splintless, "the splintless design type did not survive");
+
     PlateParams params;
     params.thicknessMm = 1.3;
+    params.cutEdgeMarginMm = 4.0;
     params.minScrewsPerBone = 3;
     const PlateParams paramsBack = PlateCore::ParamsFromJson(PlateCore::ParamsToJson(params));
-    require(std::abs(paramsBack.thicknessMm - 1.3) < 1e-12 && paramsBack.minScrewsPerBone == 3,
+    require(std::abs(paramsBack.thicknessMm - 1.3) < 1e-12 &&
+                std::abs(paramsBack.cutEdgeMarginMm - 4.0) < 1e-12 && paramsBack.minScrewsPerBone == 3,
             "the plate parameters did not survive");
+    require(std::abs(PlateCore::ParamsFromJson(QJsonObject{{QStringLiteral("cutEdgeMarginMm"), 2.0}}).cutEdgeMarginMm -
+                         3.5) < 1e-12,
+            "a saved plate kept an unsafe legacy margin at the osteotomy");
     require(std::abs(PlateCore::ParamsFromJson({}).thicknessMm - PlateParams{}.thicknessMm) < 1e-12,
             "an empty object does not give the defaults");
 }

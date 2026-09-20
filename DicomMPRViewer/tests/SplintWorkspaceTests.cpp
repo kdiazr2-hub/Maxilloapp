@@ -142,17 +142,17 @@ public:
                     window.m_orthoNextButton->isEnabled(),
                 "the step rail did not jump to FERULA");
         require(window.m_splintView->standardViewIndex() == 0, "FERULA does not open in the frontal view");
-        // GUIAS and PLACAS are separate consecutive products.
+        // PLACAS defines the drill map; GUIAS consumes that map as the final step.
         window.m_orthoStepButtons[7]->click();
         settle();
         require(window.m_orthoStep == 7 && window.m_viewModeStack->currentIndex() == 7 &&
-                    window.m_orthoNextButton->isEnabled() && !window.m_guidePlateWorkspace,
-                "GUIAS is not the pre-operative guide step");
+                    window.m_orthoNextButton->isEnabled() && window.m_guidePlateWorkspace,
+                "PLACAS is not the definitive-hole step");
         window.m_orthoStepButtons[8]->click();
         settle();
         require(window.m_orthoStep == 8 && window.m_viewModeStack->currentIndex() == 7 &&
-                    !window.m_orthoNextButton->isEnabled() && window.m_guidePlateWorkspace,
-                "PLACAS is not the final separate step of the bar");
+                    !window.m_orthoNextButton->isEnabled() && !window.m_guidePlateWorkspace,
+                "GUIAS is not the final pre-operative step of the bar");
         window.m_orthoStepButtons[6]->click();
         settle();
         for (auto* tab : window.findChildren<QToolButton*>(QStringLiteral("MT")))
@@ -914,7 +914,7 @@ public:
         settle();
         require(window.m_viewModeStack->currentIndex() == 7 && window.m_guideView != nullptr,
                 "GUIAS did not open its workspace");
-        require(window.m_orthoStep == 7, "GUIAS is not the eighth step of the bar");
+        require(window.m_orthoStep == 8, "GUIAS is not the ninth step of the bar");
         require(window.findChild<QWidget*>(QStringLiteral("GuideControlPanel")) != nullptr,
                 "the guides side panel is missing");
         // Only the reachable steps are on show: before the envelope there is nothing else to do.
@@ -1336,43 +1336,12 @@ public:
                                                                 {-20.0, -5.0, 9.0}, {20.0, -5.0, 9.0}}}),
                                     GuideType::LeFort);
 
-        for (auto* tab : window.findChildren<QToolButton*>(QStringLiteral("MT")))
-            if (tab->text() == QStringLiteral("GUIAS"))
-                tab->click();
-        settle();
-        require(window.m_guideTypeCombo->currentText().contains(QStringLiteral("Guía de corte")),
-                "the Le Fort workflow does not start with the cutting guide");
-        require(!window.m_guidePlateSection->isVisibleTo(&window),
-                "the final-position plate is offered before the cutting guide exists");
-        window.m_guideDetailSpin->setValue(0.5); // coarse: a wiring test
-
-        // 1. The cutting guide is made first, on the preserved pre-operative
-        // anatomy and without plate sleeves or final-position geometry.
-        require(window.m_guideGenerateButton->isEnabled(),
-                "the pre-operative cutting guide cannot be generated before plates");
-        GuideFigure legacyFigure;
-        legacyFigure.shape = GuideFigureShape::Sphere;
-        legacyFigure.operation = GuideFigureOperation::Add;
-        legacyFigure.diameterMm = 8.0;
-        legacyFigure.matrix[3] = 80.0; // stale saved-project figure behind the intended guide
-        window.m_guidePlan.figures.push_back(legacyFigure);
-        window.m_guideGenerateButton->click();
-        settle();
-        require(window.m_guideWrapMesh && window.m_guidePrepared.ok && window.m_guideMesh,
-                "the pre-operative cutting guide was not built");
-        require(!window.m_guidePlannedView,
-                "the cutting guide was shown on the final repositioned bone");
-        require(window.m_guidePlan.plates.empty() && window.m_guidePlan.figures.empty() &&
-                    window.m_guideBuiltFigures.empty(),
-                "the cutting guide retained legacy or plate-derived geometry");
-        require(!window.m_guidePlateSection->isVisibleTo(&window),
-                "plate controls leaked into the cutting-guide module");
-
+        // 1. The definitive plates come first. Their holes are planned on the final Le Fort position.
         for (auto* tab : window.findChildren<QToolButton*>(QStringLiteral("MT")))
             if (tab->text() == QStringLiteral("PLACAS"))
                 tab->click();
         settle();
-        require(window.m_guidePlateWorkspace && window.m_orthoStep == 8 &&
+        require(window.m_guidePlateWorkspace && window.m_orthoStep == 7 &&
                     window.m_guidePlateSection->isVisibleTo(&window) &&
                     !window.m_guideTypeSection->isVisibleTo(&window) && window.m_guidePlannedView,
                 "the personalized-plate module did not open independently on the final Le Fort");
@@ -1386,27 +1355,13 @@ public:
             window.m_guideView->meshData(objectActorKey(kLeFortSegLabel))->GetBounds(shown);
             require(std::abs(shown[5] - 2.0) < 0.2, "the plate step does not show the lowered Le Fort segment");
         }
-        // After reopening a project the guide is no longer in memory: the plate step must still show the final
-        // position (it used to fall back to the pre-operative bone and hide the advancement).
-        {
-            auto keptGuide = window.m_guideMesh;
-            window.m_guideMesh = nullptr;
-            for (auto* tab : window.findChildren<QToolButton*>(QStringLiteral("MT")))
-                if (tab->text() == QStringLiteral("GUIAS"))
-                    tab->click();
-            settle();
-            for (auto* tab : window.findChildren<QToolButton*>(QStringLiteral("MT")))
-                if (tab->text() == QStringLiteral("PLACAS"))
-                    tab->click();
-            settle();
-            require(window.m_guidePlannedView, "without a guide in memory the plate step lost the final position");
-            window.m_guideMesh = keptGuide;
-        }
-
-        // 2. A paranasal plate on the right: marking its holes switches to the planned bone.
-        window.m_guidePlateSideCombo->setCurrentIndex(window.m_guidePlateSideCombo->findData(static_cast<int>(PlateSide::Right)));
-        window.m_guidePlateTemplateCombo->setCurrentIndex(
-            window.m_guidePlateTemplateCombo->findData(static_cast<int>(PlateTemplate::Paranasal)));
+        // 2. The module offers four conventional plates, the three-PSI design from the article, and a monoblock.
+        require(window.m_guidePlateTemplateCombo->count() == 3 &&
+                    window.m_guidePlateTemplateCombo->itemText(0).contains(QStringLiteral("Convencionales")) &&
+                    window.m_guidePlateTemplateCombo->itemText(1).contains(QStringLiteral("3 PSI")) &&
+                    window.m_guidePlateTemplateCombo->itemText(2).contains(QStringLiteral("monobloque")),
+                "the plate module does not offer conventional, three-PSI and monoblock designs");
+        window.m_guidePlateTemplateCombo->setCurrentIndex(1);
         window.m_guidePlateHolesButton->setChecked(true);
         settle();
         require(window.m_guidePlannedView && window.m_guidePlannedPrepared.ok && window.m_guidePointMode == 8,
@@ -1415,36 +1370,32 @@ public:
             return std::array<double, 3>{motion[0] * x + motion[2] * z + motion[3], motion[4] * x + motion[6] * z + motion[7],
                                          motion[8] * x + motion[10] * z + motion[11]};
         };
-        const std::vector<std::array<double, 3>> rightHoles{{-10.0, 0.0, 20.0}, {-10.0, 0.0, 14.0},
-                                                            onSegment(-10.0, 4.0), onSegment(-10.0, -2.0)};
-        for (const auto& p : rightHoles)
-            window.onGuidePointPicked(0, p[0], p[1], p[2]);
-        require(window.m_guidePendingPlateHoles.size() == 4, "the plate holes were not collected");
+        const std::array<double, 4> pillarX{-8.0, -18.0, 8.0, 18.0};
+        for (int pillar = 0; pillar < 4; ++pillar) {
+            const double x = pillarX[static_cast<size_t>(pillar)];
+            for (const auto& p : {std::array<double, 3>{x, 0.0, 20.0}, std::array<double, 3>{x, 0.0, 14.0},
+                                  onSegment(x, 4.0), onSegment(x, -2.0)})
+                window.onGuidePointPicked(0, p[0], p[1], p[2]);
+            require(window.m_guidePendingPlateHoles.size() == 4 && window.m_guidePlateArmButton->isEnabled(),
+                    "a guided pillar did not collect its four points");
+            window.startGuidePlateArm();
+            require(window.m_guidePendingPlatePillars.size() == static_cast<size_t>(pillar + 1),
+                    "the guided plate did not advance to the next pillar");
+        }
+        require(window.m_guidePlateCreateButton->isEnabled() &&
+                    window.m_guidePlateCreateButton->text().contains(QStringLiteral("3 PSI"), Qt::CaseInsensitive),
+                "the three-PSI design was not enabled after the fourth pillar");
         window.createGuidePlate();
         settle();
-        require(window.m_guidePlan.plates.size() == 1 && window.m_guidePlateMeshes.size() == 1 &&
-                    window.m_guidePlateMeshes[0] && window.m_guidePlateMeshes[0]->GetNumberOfPolys() > 0,
-                "the right plate was not built");
-        require(window.m_guideView->meshData(kGuidePlateActorBase) != nullptr, "the plate is not shown");
-
-        // 3. An L plate on the left: the piriform arm, "next arm", the buttress arm.
-        window.m_guidePlateSideCombo->setCurrentIndex(window.m_guidePlateSideCombo->findData(static_cast<int>(PlateSide::Left)));
-        window.m_guidePlateTemplateCombo->setCurrentIndex(
-            window.m_guidePlateTemplateCombo->findData(static_cast<int>(PlateTemplate::LShape)));
-        window.m_guidePlateHolesButton->setChecked(true);
-        for (const auto& p : {std::array<double, 3>{8.0, 0.0, 20.0}, std::array<double, 3>{8.0, 0.0, 14.0},
-                              onSegment(8.0, 3.0)})
-            window.onGuidePointPicked(0, p[0], p[1], p[2]);
-        require(window.m_guidePlateArmButton->isEnabled(), "the L plate does not offer its second arm");
-        window.startGuidePlateArm();
-        for (const auto& p : {std::array<double, 3>{18.0, 0.0, 20.0}, std::array<double, 3>{18.0, 0.0, 14.0},
-                              onSegment(18.0, 3.0)})
-            window.onGuidePointPicked(0, p[0], p[1], p[2]);
-        window.createGuidePlate();
-        settle();
-        require(window.m_guidePlan.plates.size() == 2 && window.m_guidePlan.plates[1].kind == PlateTemplate::LShape &&
-                    window.m_guidePlan.plates[1].struts.size() == 3,
-                "the L plate was not built with two arms and a bar");
+        require(window.m_guidePlan.plates.size() == 3 && window.m_guidePlateMeshes.size() == 3 &&
+                    window.m_guidePlan.plates[0].holes.size() == 4 && window.m_guidePlan.plates[0].struts.size() == 1 &&
+                    window.m_guidePlan.plates[1].side == PlateSide::Bilateral &&
+                    window.m_guidePlan.plates[1].holes.size() == 8 && window.m_guidePlan.plates[1].struts.size() == 3 &&
+                    window.m_guidePlan.plates[2].holes.size() == 4 && window.m_guidePlan.plates[2].struts.size() == 1,
+                "the four pillars were not assembled as two maxillomalar PSIs and one bilateral paranasal PSI");
+        for (const auto& mesh : window.m_guidePlateMeshes)
+            require(mesh && mesh->GetNumberOfPolys() > 0, "one of the three PSI meshes is empty");
+        require(window.m_guideView->meshData(kGuidePlateActorBase) != nullptr, "the three PSI plates are not shown");
         for (const PlateDesign& plate : window.m_guidePlan.plates)
             for (const PlateHole& hole : plate.holes)
                 require(hole.bone != PlateBone::Unknown, "a plate hole was not assigned to its bone");
@@ -1459,10 +1410,9 @@ public:
                     QDir(artifactsDir).filePath(QStringLiteral("plates-planned.png"))),
                 "the plates screenshot was not written");
 
-        // 4. Predictive coordinates remain available for the plate report, but
-        // they do not get added retrospectively to the cutting guide.
+        // 3. Every definitive plate hole is carried back to the pre-operative anatomy.
         const auto predicted = window.guidePredictiveHoles();
-        require(predicted.size() == 10, "not every plate hole was predicted");
+        require(predicted.size() == 16, "not every plate hole was predicted");
         for (const PredictiveHole& hole : predicted) {
             if (hole.bone == PlateBone::Cranial)
                 require(std::hypot(std::hypot(hole.preopCenter[0] - hole.plannedCenter[0],
@@ -1473,23 +1423,40 @@ public:
                 require(std::abs(hole.preopCenter[1]) < 0.05, "a segment hole did not go back to the pre-operative face");
         }
 
-        // Return to the pre-operative view: the already-created guide remains
-        // one piece and is not rebuilt from plate holes.
+        // 4. The guide is created afterwards and contains exactly those holes, with no unrelated guide screws.
         for (auto* tab : window.findChildren<QToolButton*>(QStringLiteral("MT")))
             if (tab->text() == QStringLiteral("GUIAS"))
                 tab->click();
         settle();
-        require(window.m_guideWrapMesh && window.m_guidePrepared.ok, "the guide envelope was not built");
-        require(!window.m_guidePlateWorkspace && !window.m_guidePlannedView,
+        require(window.m_orthoStep == 8 && !window.m_guidePlateWorkspace && !window.m_guidePlannedView,
                 "the guide module did not return to the bone before the cut");
+        window.m_guideDetailSpin->setValue(0.5); // coarse: this is a wiring test
+        GuideFigure legacyFigure;
+        legacyFigure.shape = GuideFigureShape::Sphere;
+        legacyFigure.operation = GuideFigureOperation::Add;
+        legacyFigure.diameterMm = 8.0;
+        legacyFigure.matrix[3] = 80.0;
+        window.m_guidePlan.figures.push_back(legacyFigure);
+        window.m_guideGenerateButton->click();
+        settle();
+        require(window.m_guideWrapMesh && window.m_guidePrepared.ok, "the guide envelope was not built");
         require(!window.m_guidePlan.paint.empty() && window.m_guidePlan.slotPlan.size() >= 2 &&
-                    window.m_guidePlan.holes.size() == 4,
-                "the guide layout lacks its band, slit pieces or fixation screws");
-        for (const GuideFixationHole& screw : window.m_guidePlan.holes)
-            require(std::abs(screw.diameterMm - 1.5) < 1e-9, "a guide fixation screw is not 1.5 mm");
+                    window.m_guidePlan.holes.empty() && window.m_guidePlan.figures.empty(),
+                "the guide kept legacy geometry or unrelated fixation holes");
         require(window.m_guideMesh && window.m_guideMesh->GetNumberOfPolys() > 0, "the guide was not built");
-        require(window.m_guideBuiltFigures.empty(),
-                "plate sleeves were added to an already-created cutting guide");
+        const auto expectedSleeves = PlateCore::SleeveFigures(predicted, window.guideSleeveParams());
+        require(window.m_guideBuiltFigures.size() == expectedSleeves.size() &&
+                    expectedSleeves.size() == predicted.size() * 2,
+                "the guide does not contain one sleeve body and one bore per definitive plate hole");
+        for (size_t index = 0; index < expectedSleeves.size(); ++index) {
+            const GuideFigure& actual = window.m_guideBuiltFigures[index];
+            const GuideFigure& expected = expectedSleeves[index];
+            require(actual.shape == expected.shape && actual.operation == expected.operation,
+                    "a guide sleeve changed shape or boolean operation");
+            for (size_t element = 0; element < actual.matrix.size(); ++element)
+                require(std::abs(actual.matrix[element] - expected.matrix[element]) < 1e-9,
+                        "a guide sleeve does not use the plate hole center and vector");
+        }
         require(window.m_guideBuildSection->isVisibleTo(&window) &&
                     window.m_guideBuildButton->text() == QStringLiteral("Reconstruir guía"),
                 "the generated guide cannot be retouched and rebuilt");
@@ -1506,8 +1473,8 @@ public:
         require(exportDir.isValid(), "no temporary folder");
         QString exportReport;
         require(window.exportGuidePlateFiles(exportDir.path(), &exportReport), exportReport.toStdString());
-        for (const QString& name : {QStringLiteral("placa_1_derecha.stl"), QStringLiteral("placa_2_izquierda.stl"),
-                                    QStringLiteral("informe_placas.txt")})
+        for (const QString& name : {QStringLiteral("placa_1_derecha.stl"), QStringLiteral("placa_2_bilateral.stl"),
+                                    QStringLiteral("placa_3_izquierda.stl"), QStringLiteral("informe_placas.txt")})
             require(QFileInfo::exists(QDir(exportDir.path()).filePath(name)), "not exported: " + name.toStdString());
         QFile informe(QDir(exportDir.path()).filePath(QStringLiteral("informe_placas.txt")));
         require(informe.open(QIODevice::ReadOnly), "the report cannot be read");
@@ -1526,9 +1493,11 @@ public:
         reopened.show();
         settle();
         reopened.restoreGuidePlan(state);
-        require(reopened.m_guidePlan.plates.size() == 2 && reopened.m_guidePlan.plates[1].holes.size() == 6,
+        require(reopened.m_guidePlan.plates.size() == 3 && reopened.m_guidePlan.plates[1].holes.size() == 8 &&
+                    reopened.m_guidePlan.plates[1].side == PlateSide::Bilateral &&
+                    reopened.m_guidePlan.plates[1].kind == PlateTemplate::Splintless,
                 "the plates did not survive the project");
-        require(reopened.m_guidePlateList->count() == 2, "the reloaded plates are not listed");
+        require(reopened.m_guidePlateList->count() == 3, "the reloaded plates are not listed");
         // The Le Fort cut comes back once, however many slit pieces the guide cut along it.
         int leFortCuts = 0;
         for (const auto& cut : reopened.m_guideCuts)
