@@ -2,6 +2,7 @@
 // renders them. A development tool (not a CTest): real anatomy is what the synthetic tests cannot reproduce.
 //
 //   PlateProbe.exe --project proyecto.maxilloproject --out carpeta [--advance 6] [--down 3] [--detail 0.3]
+//                  [--template paranasal|splintless]
 //
 // It takes the bones before repositioning and the Le Fort landmarks from the project, moves the segment by
 // the given advancement (forward) and descent, puts a paranasal plate on each side of the aperture (two
@@ -163,6 +164,7 @@ int main(int argc, char** argv)
     QCoreApplication app(argc, argv);
     QString projectPath, outDir = QStringLiteral(".");
     double advance = 6.0, down = 3.0, detail = 0.3, closing = 3.0;
+    QString plateTemplate = QStringLiteral("paranasal");
     for (int i = 1; i + 1 < argc; ++i) {
         const QString key = QString::fromLocal8Bit(argv[i]);
         const QString value = QString::fromLocal8Bit(argv[i + 1]);
@@ -172,6 +174,7 @@ int main(int argc, char** argv)
         else if (key == QStringLiteral("--down")) down = value.toDouble(), ++i;
         else if (key == QStringLiteral("--detail")) detail = value.toDouble(), ++i;
         else if (key == QStringLiteral("--closing")) closing = value.toDouble(), ++i;
+        else if (key == QStringLiteral("--template")) plateTemplate = value, ++i;
     }
     QFile file(projectPath);
     if (!file.open(QIODevice::ReadOnly)) {
@@ -232,75 +235,66 @@ int main(int argc, char** argv)
     // Penetration is judged on the real bone: a tight wrap (0.5 mm closing), not the planning wrap that fills
     // the corner of the step at the cut. The same bones with the segment also where it was before the movement
     // close the osteotomy gap: the arms are pulled taut over that, so they ramp across the step.
-    WrapParams tightParams;
-    tightParams.gapClosingMm = 0.5;
-    tightParams.smallestDetailMm = detail;
-    const WrapResult tightWrap = WrapCore::Wrap({cranial.Get(), segmentPlanned.Get()}, tightParams);
-    const GuidePreparation tight = tightWrap.ok ? GuideDesignCore::Prepare(tightWrap.mesh, prepareParams) : GuidePreparation{};
-    const WrapResult gapWrap = WrapCore::Wrap({cranial.Get(), segmentPlanned.Get(), segmentBefore.Get()}, tightParams);
-    const GuidePreparation withGap = gapWrap.ok ? GuideDesignCore::Prepare(gapWrap.mesh, prepareParams) : GuidePreparation{};
+    // The keep-out is the same envelope the plate is laid on, plus the Le Fort segment where it was before the
+    // movement, so the union also fills the space the movement vacated. It has to be a CLOSED bone: segmented
+    // maxilla is a perforated shell around an open sinus, and a field made from the meshes themselves lets an
+    // arm pass straight through the sinus without ever reporting bone.
     PlateKeepOut keepOut;
-    if (tight.ok)
-        keepOut.bone = tight.wrapField;
+    keepOut.bone = planned.wrapField;
+    const WrapResult gapWrap = WrapCore::Wrap({cranial.Get(), segmentPlanned.Get(), segmentBefore.Get()}, wrapParams);
+    const GuidePreparation withGap = gapWrap.ok ? GuideDesignCore::Prepare(gapWrap.mesh, prepareParams) : GuidePreparation{};
     keepOut.boneAndGap = withGap.ok ? withGap.wrapField : keepOut.bone;
     std::cout << "planned bone wrapped in "
               << std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count() << " s\n";
 
-    // A paranasal plate each side: 5 mm lateral to the piriform landmark, holes 11 and 5.5 mm above the cut
-    // (on the cranial base) and 5.5 and 11 mm below it (on the segment, before the move, then moved).
+    // Where a hole lands: from `landmark`, `lateralMm` sideways and `dz` up, shot at the bone along `forward`.
+    // Holes below the cut are taken on the segment BEFORE the move and carried along the motion, which is how
+    // the surgeon clicks them on the planned bone.
     std::vector<PlateDesign> plates;
-    for (const int side : {1, 2}) {
-        const Vec3 landmark = l[static_cast<size_t>(side)];
-        const double outward = side == 1 ? -1.0 : 1.0; // x grows to the patient's left
-        PlateDesign plate;
-        plate.name = side == 1 ? QStringLiteral("Placa derecha") : QStringLiteral("Placa izquierda");
-        plate.side = side == 1 ? PlateSide::Right : PlateSide::Left;
-        for (const double dz : {11.0, 5.5, -5.5, -11.0}) {
-            const Vec3 target{landmark[0] + 5.0 * outward, landmark[1], landmark[2] + dz};
-            const Vec3 from{target[0] + 30.0 * forward[0], target[1] + 30.0 * forward[1], target[2]};
-            const Vec3 to{target[0] - 30.0 * forward[0], target[1] - 30.0 * forward[1], target[2]};
-            Vec3 at{};
-            const bool onSegment = dz < 0.0;
-            if (!hit(onSegment ? segmentBefore : cranial, from, to, at)) {
-                std::cerr << plate.name.toStdString() << ": no bone for the hole at " << dz << " mm\n";
-                continue;
-            }
-            PlateHole hole;
-            hole.center = onSegment ? PlateCore::TransformPoint(motion, at) : at;
-            hole.axis = forward;
-            plate.holes.push_back(hole);
+    const auto holeOn = [&](PlateDesign& plate, const Vec3& landmark, double lateralMm, double dz) {
+        const Vec3 target{landmark[0] + lateralMm, landmark[1], landmark[2] + dz};
+        const Vec3 from{target[0] + 30.0 * forward[0], target[1] + 30.0 * forward[1], target[2]};
+        const Vec3 to{target[0] - 30.0 * forward[0], target[1] - 30.0 * forward[1], target[2]};
+        Vec3 at{};
+        const bool onSegment = dz < 0.0;
+        if (!hit(onSegment ? segmentBefore : cranial, from, to, at)) {
+            std::cerr << plate.name.toStdString() << ": no bone for a hole at " << dz << " mm\n";
+            return false;
         }
-        plate.struts = PlateCore::TemplateStruts(PlateTemplate::Paranasal, static_cast<int>(plate.holes.size()), 0);
-        plates.push_back(plate);
-    }
-    // An L plate on the right, as the surgeon's case had: the piriform arm (three holes), the buttress arm on the
-    // zygomaticomaxillary pilar (three holes) and the bar joining their lowest holes along the segment.
-    {
+        plate.holes.push_back({onSegment ? PlateCore::TransformPoint(motion, at) : at, forward, PlateBone::Unknown});
+        return true;
+    };
+    if (plateTemplate == QStringLiteral("splintless")) {
+        // One plate over four pillars, as the surgeon builds it: nasomaxillary right, zygomaticomaxillary
+        // right, nasomaxillary left, zygomaticomaxillary left, each two holes above the cut and two below,
+        // and a bar joining the four lowest holes across the midline.
         PlateDesign plate;
-        plate.name = QStringLiteral("Placa en L derecha");
-        plate.side = PlateSide::Right;
-        plate.kind = PlateTemplate::LShape;
-        const auto addHole = [&](const Vec3& landmark, double lateralMm, double dz) {
-            const Vec3 target{landmark[0] + lateralMm, landmark[1], landmark[2] + dz};
-            const Vec3 from{target[0] + 30.0 * forward[0], target[1] + 30.0 * forward[1], target[2]};
-            const Vec3 to{target[0] - 30.0 * forward[0], target[1] - 30.0 * forward[1], target[2]};
-            Vec3 at{};
-            const bool onSegment = dz < 0.0;
-            if (!hit(onSegment ? segmentBefore : cranial, from, to, at)) {
-                std::cerr << "L plate: no bone for a hole at " << dz << " mm\n";
-                return false;
-            }
-            plate.holes.push_back({onSegment ? PlateCore::TransformPoint(motion, at) : at, forward, PlateBone::Unknown});
-            return true;
-        };
-        int first = 0;
-        for (const double dz : {11.0, 5.5, -6.0})
-            first += addHole(l[1], -4.0, dz) ? 1 : 0;
-        int second = 0;
-        for (const double dz : {9.0, 4.5, -6.0})
-            second += addHole(l[0], 2.0, dz) ? 1 : 0;
-        plate.struts = PlateCore::TemplateStruts(PlateTemplate::LShape, first, second);
+        plate.name = QStringLiteral("Placa splintless");
+        plate.kind = PlateTemplate::Splintless;
+        std::array<int, 4> pillarHoles{};
+        int pillar = 0;
+        for (const auto& [landmark, lateralMm] : {std::pair{l[1], -4.0}, std::pair{l[0], 2.0},
+                                                  std::pair{l[2], 4.0}, std::pair{l[3], -2.0}}) {
+            int placed = 0;
+            for (const double dz : {10.0, 5.0, -5.0, -10.0})
+                placed += holeOn(plate, landmark, lateralMm, dz) ? 1 : 0;
+            pillarHoles[static_cast<size_t>(pillar++)] = placed;
+        }
+        plate.struts = PlateCore::SplintlessStruts(pillarHoles);
         plates.push_back(plate);
+    } else {
+        // A paranasal plate each side: 5 mm lateral to the piriform landmark, holes 11 and 5.5 mm above the
+        // cut (on the cranial base) and 5.5 and 11 mm below it (on the segment).
+        for (const int side : {1, 2}) {
+            PlateDesign plate;
+            plate.name = side == 1 ? QStringLiteral("Placa derecha") : QStringLiteral("Placa izquierda");
+            plate.side = side == 1 ? PlateSide::Right : PlateSide::Left;
+            const double outward = side == 1 ? -5.0 : 5.0; // x grows to the patient's left
+            for (const double dz : {11.0, 5.5, -5.5, -11.0})
+                holeOn(plate, l[static_cast<size_t>(side)], outward, dz);
+            plate.struts = PlateCore::TemplateStruts(PlateTemplate::Paranasal, static_cast<int>(plate.holes.size()), 0);
+            plates.push_back(plate);
+        }
     }
     PlateCore::AssignBones(plates, cranial, segmentPlanned);
     const PlateBoneQuery boneAt = PlateCore::MakeBoneQuery(cranial, segmentPlanned, motion, path);
@@ -325,7 +319,7 @@ int main(int argc, char** argv)
         for (vtkIdType id = 0; id < result.mesh->GetNumberOfPoints(); ++id) {
             double p[3] = {};
             result.mesh->GetPoint(id, p);
-            const double d = (tight.ok ? tight.wrapField : planned.wrapField)->At({p[0], p[1], p[2]});
+            const double d = keepOut.bone->At({p[0], p[1], p[2]});
             deepest = std::min(deepest, d);
             inside += d < -0.25 ? 1 : 0;
         }
@@ -383,7 +377,8 @@ int main(int argc, char** argv)
     }
     std::cout << layout.report.toStdString() << std::endl;
     const GuideRegion region = GuideBaseCore::MakeBrushRegion(preopPrepared.wrapField, layout.paint, guideDesign.base);
-    const std::vector<GuideFigure> sleeves = PlateCore::SleeveFigures(predictive, sleeveParams);
+    std::vector<GuideFigure> sleeves = PlateCore::SleeveFigures(predictive, sleeveParams);
+    sleeves.insert(sleeves.end(), layout.figures.begin(), layout.figures.end());
     const auto guideStarted = std::chrono::steady_clock::now();
     const GuideDesignResult guide =
         GuideDesignCore::Build(preopPrepared, region, layout.slotPlan, layout.fixation, sleeves, guideDesign);

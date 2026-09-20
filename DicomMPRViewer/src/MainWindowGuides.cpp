@@ -2787,33 +2787,27 @@ bool MainWindow::prepareGuidePlannedBone()
     GuidePreparation prepared;
     if (wrap.ok)
         prepared = GuideDesignCore::Prepare(wrap.mesh, prepareParams);
-    // And the bone itself (0.5 mm closing), which no part of a plate may enter. The planning wrap fills the
-    // corner of the step at the cut, so it cannot be the one that clips the bridge.
+    // Where no plate may go: the same envelope it is laid on, and that envelope with the Le Fort segment ALSO
+    // where it was before the movement, so the union fills the space the movement vacated. An arm crossing the
+    // cut is pulled taut over the second one, so it ramps across the step instead of dropping into the
+    // osteotomy and getting in the way of the maxilla. Both have to be CLOSED bone: segmented maxilla is a
+    // perforated shell around an open sinus, and a 0.5 mm closing of it came out shredded — arms passed
+    // straight through the sinus and through the gap without the keep-out ever reporting bone.
     PlateKeepOut keepOut;
     if (prepared.ok) {
-        WrapParams tightParams = wrapParams;
-        tightParams.gapClosingMm = 0.5;
-        const WrapResult tight = WrapCore::Wrap({cranial.Get(), segment.Get()}, tightParams);
-        if (tight.ok) {
-            const GuidePreparation tightPrepared = GuideDesignCore::Prepare(tight.mesh, prepareParams);
-            if (tightPrepared.ok)
-                keepOut.bone = tightPrepared.wrapField;
-        }
-        // The same bones with the segment ALSO where it was before the movement: their union fills the gap the
-        // Le Fort opened. An arm crossing the cut is pulled taut over it, so it ramps across the step instead
-        // of dropping into the osteotomy and getting in the way of the maxilla.
+        keepOut.bone = prepared.wrapField;
+        keepOut.boneAndGap = prepared.wrapField; // not moved yet: there is no gap to ramp over
         const auto original = m_repositionOriginalMeshes.find(kLeFortSegLabel);
         if (original != m_repositionOriginalMeshes.end() && original->second &&
             original->second->GetNumberOfPolys() > 0) {
-            const WrapResult both = WrapCore::Wrap({cranial.Get(), segment.Get(), original->second.Get()}, tightParams);
+            statusBar()->showMessage(tr("Placas: midiendo el espacio que deja el movimiento…"));
+            const WrapResult both = WrapCore::Wrap({cranial.Get(), segment.Get(), original->second.Get()}, wrapParams);
             if (both.ok) {
                 const GuidePreparation bothPrepared = GuideDesignCore::Prepare(both.mesh, prepareParams);
                 if (bothPrepared.ok)
                     keepOut.boneAndGap = bothPrepared.wrapField;
             }
         }
-        if (!keepOut.boneAndGap)
-            keepOut.boneAndGap = keepOut.bone; // not moved yet: there is no gap to ramp over
     }
     QApplication::restoreOverrideCursor();
     if (!wrap.ok || !prepared.ok) {
@@ -3235,7 +3229,7 @@ void MainWindow::generateLeFortGuide()
     // may still contain legacy sleeves, imported figures or connector tubes in
     // the old coordinate frame; keeping them is what made isolated pieces
     // reappear behind the skull after the support band had been corrected.
-    m_guidePlan.figures.clear();
+    m_guidePlan.figures = layout.figures; // the lattice cells; the sleeves are added at build time
     m_guideBuiltFigures.clear();
     refreshGuideFigureList();
     m_guidePendingEnds.clear();

@@ -106,7 +106,7 @@ struct PlateParams
     double smallestDetailMm = 0.12;      // grid spacing of the plate
     int smoothingIterations = 30;
     double minCutDistanceMm = 4.0;       // warn when a hole is closer than this to the osteotomy
-    double cutEdgeMarginMm = 3.5;        // free plate edge to the osteotomy on both bones
+    double cutEdgeMarginMm = 2.0;        // free plate edge to the osteotomy on both bones
     int minScrewsPerBone = 2;            // warn when a plate holds a bone with fewer screws
 };
 
@@ -150,8 +150,10 @@ struct PlateBuildResult
     int steppedBridges = 0;   // arms that ramp across the step the movement opened at the cut
 };
 
-// Where a plate may not go. Both are tight wraps (no gap closing to speak of), so they are the bone itself and
-// not the regularised surface the plate is laid on.
+// Where a plate may not go. Both are wraps with the same gap closing as the envelope the plate is laid on:
+// they have to be CLOSED bone. Segmented maxilla is a perforated shell around an open sinus, so a field taken
+// from the meshes themselves — or a wrap closed by only half a millimetre, which comes out shredded — lets an
+// arm pass straight through the sinus and through the osteotomy without ever reporting bone.
 struct PlateKeepOut
 {
     // The two bones where the plan puts them. No part of a plate may enter this.

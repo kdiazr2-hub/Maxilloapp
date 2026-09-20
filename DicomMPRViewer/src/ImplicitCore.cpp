@@ -948,7 +948,13 @@ vtkSmartPointer<vtkImageData> ToImage(const BakedField& field)
 std::shared_ptr<const BakedField> BakeMeshField(vtkPolyData* mesh, double spacingMm, double paddingMm,
                                                 const std::atomic<bool>* cancel, QString* error)
 {
-    VoxelMask mask = RasterizeShells({mesh}, spacingMm, paddingMm, cancel, error);
+    return BakeMeshField(std::vector<vtkPolyData*>{mesh}, spacingMm, paddingMm, cancel, error);
+}
+
+std::shared_ptr<const BakedField> BakeMeshField(const std::vector<vtkPolyData*>& meshes, double spacingMm,
+                                                double paddingMm, const std::atomic<bool>* cancel, QString* error)
+{
+    VoxelMask mask = RasterizeShells(meshes, spacingMm, paddingMm, cancel, error);
     if (mask.Empty())
         return nullptr;
     FillInteriorFromOutside(mask);

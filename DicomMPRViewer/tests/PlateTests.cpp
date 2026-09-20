@@ -275,10 +275,12 @@ void testSleevesSitOnThePreoperativeHoles()
 // What the app hands PlateCore as the keep-out: the real bone where the plan puts it, and the same bones with
 // the segment also where it was before the movement, whose union fills the osteotomy gap. An arm crossing the
 // cut is pulled taut over the second one, so it ramps across the step instead of dropping into the cut.
-PlateKeepOut keepOutFor(vtkPolyData* cranial, vtkPolyData* segmentPlanned, vtkPolyData* segmentBefore, double detail)
+PlateKeepOut keepOutFor(vtkPolyData* cranial, vtkPolyData* segmentPlanned, vtkPolyData* segmentBefore, double detail,
+                        double closingMm)
 {
+    // The same closing as the envelope the plate is laid on: the keep-out has to be closed bone.
     WrapParams tightParams;
-    tightParams.gapClosingMm = 0.5;
+    tightParams.gapClosingMm = closingMm;
     tightParams.smallestDetailMm = detail;
     GuideDesignParams prepareParams;
     prepareParams.base.smallestDetailMm = detail;
@@ -321,7 +323,7 @@ PlateBuildResult buildOnPlannedBone(const std::array<double, 16>& motion)
         cranial, segmentPlanned, motion, leFortCut(), params.cutEdgeMarginMm + 0.5 * params.widthMm);
     const PlateBuildResult built =
         PlateCore::Build(planned, plates[0], params, boneAt, nullptr,
-                         keepOutFor(cranial, segmentPlanned, segmentBeforeCut(), 0.3));
+                         keepOutFor(cranial, segmentPlanned, segmentBeforeCut(), 0.3, wrapParams.gapClosingMm));
     require(built.ok, "the plate was not built: " + built.error.toStdString());
     require(built.pieces == 1, "the plate did not bridge the cut: " + std::to_string(built.pieces) + " pieces");
     const MeshCheck mesh = MeshRepairCore::Analyze(built.mesh);
@@ -459,7 +461,7 @@ void testPlateBridgesALargeAdvancementFlat()
                                                     PlateCore::MakeBoneQuery(
                                                         cranial, segmentPlanned, motion, cut,
                                                         params.cutEdgeMarginMm + 0.5 * params.widthMm),
-                                                    nullptr, keepOutFor(cranial, segmentPlanned, segmentBefore, 0.3));
+                                                    nullptr, keepOutFor(cranial, segmentPlanned, segmentBefore, 0.3, wrapParams.gapClosingMm));
     require(built.ok, "the plate was not built: " + built.error.toStdString());
     require(built.pieces == 1, "the plate came apart: " + std::to_string(built.pieces) + " pieces");
     require(built.bridgedMm > 5.0, "the arm did not bridge the advancement: " + std::to_string(built.bridgedMm) + " mm");
@@ -577,6 +579,59 @@ void testPlateFollowsACurvedRoughBone()
     }
 }
 
+// Segmented maxilla is a thin perforated wall around an open sinus. The keep-out that stops an arm entering
+// the bone has to be CLOSED bone: taken from the meshes themselves, or from a wrap closed by only half a
+// millimetre (which comes out shredded on real anatomy), an arm walks straight through the sinus and through
+// the osteotomy without the keep-out ever reporting bone. That is what put the surgeon's plates inside the cut
+// (2026-09-20), and what made "no vertex inside the bone" a measurement against nothing.
+void testTheKeepOutIsClosedBone()
+{
+    // A box shell: 1 mm walls round a 12 mm cavity, with three 2 mm perforations through the front wall.
+    std::vector<ImplicitCore::NodePtr> walls{
+        ImplicitCore::Box({0.0, -0.5, 15.0}, {20.0, 0.5, 15.0}),   // front
+        ImplicitCore::Box({0.0, -12.5, 15.0}, {20.0, 0.5, 15.0}),  // back
+        ImplicitCore::Box({-19.5, -6.5, 15.0}, {0.5, 6.5, 15.0}),  // left
+        ImplicitCore::Box({19.5, -6.5, 15.0}, {0.5, 6.5, 15.0}),   // right
+        ImplicitCore::Box({0.0, -6.5, 29.5}, {20.0, 6.5, 0.5}),    // top
+        ImplicitCore::Box({0.0, -6.5, 0.5}, {20.0, 6.5, 0.5})};    // bottom
+    std::vector<ImplicitCore::NodePtr> holes;
+    for (const auto& [x, z] : {std::pair{-8.0, 10.0}, std::pair{0.0, 18.0}, std::pair{9.0, 22.0}})
+        holes.push_back(ImplicitCore::Cylinder({x, 0.0, z}, {0.0, 1.0, 0.0}, 1.0, 10.0));
+    const double bounds[6] = {-22.0, 22.0, -15.0, 2.0, -2.0, 32.0};
+    const ImplicitCore::BuildResult shell =
+        ImplicitCore::Build(ImplicitCore::Subtract(ImplicitCore::Union(walls), ImplicitCore::Union(holes)), bounds, 0.2);
+    require(shell.ok, "the perforated wall could not be built");
+
+    WrapParams wrapParams;
+    wrapParams.gapClosingMm = 3.0; // what the app lays the plate on
+    wrapParams.smallestDetailMm = 0.3;
+    const WrapResult wrap = WrapCore::Wrap({shell.mesh}, wrapParams);
+    require(wrap.ok, "the perforated wall could not be wrapped: " + wrap.error.toStdString());
+    GuideDesignParams prepareParams;
+    prepareParams.base.smallestDetailMm = 0.3;
+    const GuidePreparation prepared = GuideDesignCore::Prepare(wrap.mesh, prepareParams);
+    require(prepared.ok, "the keep-out could not be measured");
+
+    // No part of the bone is outside the keep-out.
+    int outside = 0;
+    double worst = 0.0;
+    for (vtkIdType id = 0; id < shell.mesh->GetNumberOfPoints(); id += 37) {
+        double q[3] = {};
+        shell.mesh->GetPoint(id, q);
+        const double d = prepared.wrapField->At({q[0], q[1], q[2]});
+        worst = std::max(worst, d);
+        outside += d > 0.5 ? 1 : 0;
+    }
+    require(outside == 0, "the keep-out leaves the bone outside it: " + std::to_string(outside) +
+                              " vertices, worst " + std::to_string(worst) + " mm");
+
+    // And the cavity behind the wall is solid to it: an arm cannot pass through the sinus.
+    for (const auto& inside : {Vec3{0.0, -6.5, 15.0}, Vec3{-10.0, -4.0, 8.0}, Vec3{8.0, -9.0, 24.0}})
+        require(prepared.wrapField->At(inside) < -1.0,
+                "the keep-out is hollow at (" + std::to_string(inside[0]) + ", " + std::to_string(inside[1]) + ", " +
+                    std::to_string(inside[2]) + "): " + std::to_string(prepared.wrapField->At(inside)));
+}
+
 void testPlatesTravelWithTheProject()
 {
     PlateDesign plate = paranasalPlate(plannedMotion());
@@ -624,6 +679,7 @@ int main()
         {"the plate bends at a wide osteotomy gap", testPlateBridgesAWideGap},
         {"the plate steps across a large advancement", testPlateBridgesALargeAdvancementFlat},
         {"the plate follows a curved, rough bone", testPlateFollowsACurvedRoughBone},
+        {"the keep-out is closed bone", testTheKeepOutIsClosedBone},
         {"plates travel with the project", testPlatesTravelWithTheProject},
     };
     int failures = 0;

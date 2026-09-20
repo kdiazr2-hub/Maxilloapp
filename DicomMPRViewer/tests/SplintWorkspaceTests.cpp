@@ -1441,15 +1441,22 @@ public:
         settle();
         require(window.m_guideWrapMesh && window.m_guidePrepared.ok, "the guide envelope was not built");
         require(!window.m_guidePlan.paint.empty() && window.m_guidePlan.slotPlan.size() >= 2 &&
-                    window.m_guidePlan.holes.empty() && window.m_guidePlan.figures.empty(),
-                "the guide kept legacy geometry or unrelated fixation holes");
+                    window.m_guidePlan.holes.empty(),
+                "the guide lost its band or kept unrelated drill holes");
+        // The legacy sphere is gone; what figures remain are the lattice cells, every one of them subtracted.
+        for (const GuideFigure& figure : window.m_guidePlan.figures)
+            require(figure.operation == GuideFigureOperation::Subtract &&
+                        figure.shape == GuideFigureShape::Cylinder,
+                    "the guide kept legacy geometry");
         require(window.m_guideMesh && window.m_guideMesh->GetNumberOfPolys() > 0, "the guide was not built");
         const auto expectedSleeves = PlateCore::SleeveFigures(predicted, window.guideSleeveParams());
-        require(window.m_guideBuiltFigures.size() == expectedSleeves.size() &&
+        require(window.m_guideBuiltFigures.size() == expectedSleeves.size() + window.m_guidePlan.figures.size() &&
                     expectedSleeves.size() == predicted.size() * 2,
-                "the guide does not contain one sleeve body and one bore per definitive plate hole");
+                "the guide does not contain one sleeve body and one bore per definitive plate hole, plus its cells");
+        // The plan's own figures (the lattice) come first, then the sleeves.
+        const size_t firstSleeve = window.m_guidePlan.figures.size();
         for (size_t index = 0; index < expectedSleeves.size(); ++index) {
-            const GuideFigure& actual = window.m_guideBuiltFigures[index];
+            const GuideFigure& actual = window.m_guideBuiltFigures[firstSleeve + index];
             const GuideFigure& expected = expectedSleeves[index];
             require(actual.shape == expected.shape && actual.operation == expected.operation,
                     "a guide sleeve changed shape or boolean operation");

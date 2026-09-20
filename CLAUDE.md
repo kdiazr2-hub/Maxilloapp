@@ -85,7 +85,9 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   resamples, so input triangulation is lost and edges round at voxel scale. Its grid steps are public
   (`RasterizeShells` → `DilateMask` → `FillInteriorFromOutside` → `SignedDistanceField` → `ToImage`) so callers can
   insert their own morphology. Phase 0 of the GUIAS (surgical guides) module; the app does not call it yet.
-- `WrapCore::Wrap` is 3-matic's Wrap on those steps: closing in real millimetres (`gapClosingMm`,
+- `WrapCore::Wrap` is 3-matic's Wrap on those steps. It needs a gap closing large enough to seal the anatomy:
+  segmented maxilla is a thin perforated shell, and a closing of a few tenths leaves a shredded film of fragments
+  rather than an envelope — never use one as a distance field for "is this inside bone". See `PlateKeepOut` below. closing in real millimetres (`gapClosingMm`,
   `smallestDetailMm`), dilate → fill → contour at iso −gap, then smooth and repair. The dilation and the distance to
   its boundary are quantised to voxel centres, which left the wrap up to one voxel INSIDE the surface (0.3 mm at the
   default detail: guides and plates sank into the bone). When the meshes enclose a volume, the wrap is now the union
@@ -174,11 +176,23 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   (user's report, 2026-09-20: "las placas se meten a la osteotomía e interfieren con el lefort"). This replaced a
   hand-drawn right-angled dogleg, which showed on the patient as a zig-zag no surgeon would bend, and it removes the
   need to tell an advancement from a flat span — with nothing in the way the taut band is simply the straight line.
-  `PlateKeepOut::bone` (the same wrap without the pre-operative segment) clips the whole plate: clipping with the 3 mm
-  planning wrap removed the middle of the bridge, not clipping let it 0.5 mm into the bone. Both wraps are made
-  alongside the planning wrap in `prepareGuidePlannedBone`. The bridge's pieces are mitred (overlapping pieces showed
+  `PlateKeepOut::bone` (the planning wrap itself) clips the whole plate, which is a no-op for the seated parts and
+  removes any bridge material that would dive into the planned bone. BOTH fields have to be CLOSED bone, with the
+  same gap closing as the planning wrap. This is the whole point: segmented maxilla is a thin perforated shell
+  round an open sinus, so a field taken from the meshes themselves lets an arm walk straight through the sinus, and
+  a wrap closed by only 0.5 mm comes out SHREDDED — on the surgeon's own CT such a wrap left 63 % of the cranial
+  bone's vertices more than 1 mm outside it, so the keep-out reported no bone anywhere and every earlier
+  "0 vertices inside the bone" was a measurement against nothing (user's report, 2026-09-20: "las placas siguen
+  entrando a la osteotomía"). `PlateTests` "the keep-out is closed bone" builds a 1 mm perforated wall round a
+  12 mm cavity and fails at a 0.5 mm closing. The gap wrap is made alongside the planning wrap in
+  `prepareGuidePlannedBone`. The bridge's pieces are mitred (overlapping pieces showed
   rings) and its width axis comes from the arm's plane (the bone normal at the piriform rim faces outward too and sent
-  it on a lateral detour). `steppedBridges` now counts the arms whose band actually had to climb. Step 9 always shows the Le Fort in its planned position (it used to depend on a guide mesh
+  it on a lateral detour). `steppedBridges` now counts the arms whose band actually had to climb. The bridge is
+  filleted onto the seated part with a smooth union (the negated `SmoothIntersect`, radius half the thickness), not
+  merely unioned with it: the seated part takes the bone's shape and the bridge is flat, so where the arm leaves the
+  bone their faces diverge at once and the joint read as one plate laid over another ("cuando se hace el doblez se ve
+  montado"). `cutEdgeMarginMm` is 2.0 mm, so an arm seats to within 3.5 mm of the cut and the plate reaches the
+  superior Le Fort border as the published implants do; at 3.5 mm it lifted off 5 mm short of it. Step 9 always shows the Le Fort in its planned position (it used to depend on a guide mesh
   being in memory, so after reopening a project the advancement "disappeared"), and `guideMotionSummary` states the
   movement (advance/retreat, ascent/descent, lateral, rotation) at the top of the plate report, or warns when the Le
   Fort has not been moved. `bridgedMm` reports the
@@ -186,7 +200,9 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   `tools/PlateProbe.cpp` (target `PlateProbe`, not a CTest) builds paranasal plates and an L plate on a real
   project's pre-reposition bones with a given advancement/descent, reports pieces, bridge, fit gap and penetration,
   then lays out and builds the cutting guide those plates imply, and renders frontal/oblique/lateral PNGs of both:
-  `PlateProbe.exe --project x.maxilloproject --out dir --advance 6 --down 3`.
+  `PlateProbe.exe --project x.maxilloproject --out dir --advance 6 --down 3 [--template paranasal|splintless]`.
+  The splintless template is the four-pillar plate the surgeon actually builds, and it is the one that exposes the
+  guide's connectivity.
   Defaults (user's choice): 1.0 mm plate, 2.0 mm screws, guide fixation 1.5 mm, one-piece guide across the midline;
   sleeve bore 1.6 mm / outer 4.2 mm / height 4 mm. `Check` warns (never blocks) on < 2 screws per bone, holes < 4 mm
   from the osteotomy (measured with `OsteotomyCore::PathField` before the cut), overlapping rings and holes on the
@@ -210,7 +226,14 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   Positioning screws of 1.5 mm hold the guide while the holes are drilled and the cut is made, as both published
   protocols do (Gander 2015 "fixed with two 1.5-mm screws"; Ho 2025 "two or four monocortical positioning screws"):
   one at each lateral end, above the cut only when there are plates (the cranial side does not move), four above and
-  below without them. Band 8 mm wide and hole pads 1.8 mm past the sleeve, so the guide is a strip and not a blob. It only fills
+  below without them. The band is 16 mm wide and laid out as an OPENWORK FRAME, as the published guides are (user's
+  side-by-side, 2026-09-20): a row of `latticeCellMm` cells above and below the slit, staggered along the cut, each
+  taken at the envelope vertex nearest its place and kept clear of the slit, of every sleeve and screw, and of the
+  rim. They are subtracted `GuideFigure`s in `LeFortGuideLayout::figures`, so `GuideDesignCore::Build` carves them
+  with everything else and `KeepOutNode` stops an edit filling them in. A solid band of the same height would be a
+  slab; the frame grips more of the wall, stays light and flexes onto the bone, which is what makes a printed guide
+  seat passively. With a narrow solid band the far sleeves of a splintless plan came out as rings floating off the
+  guide (the build reported 2 pieces). It only fills
   the plan (paint, slotPlan, holes); `GuideDesignCore::Build` still carves it, and the brush and EDITAR still work.
   UI: «Generar guía de corte» in «PLACAS A MEDIDA» (`MainWindow::generateLeFortGuide`). With plates, the hand-drawn
   steps (zona, ranuras, agujeros, crear) stay hidden until the guide exists and then serve to retouch it («Reconstruir

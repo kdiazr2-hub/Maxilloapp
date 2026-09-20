@@ -7,7 +7,10 @@
 // definitive-position custom plate is transferred to the pre-operative model (Gander et al., JCMFS 2015;
 // Surg 2026; Abdelhamid et al., Cureus 2025; Benito Anguita et al., JCM 2025):
 //
-//   · one piece across the midline, bone-borne on the anterior maxillary wall;
+//   · one piece across the midline, bone-borne on the anterior maxillary wall,
+//     laid out as an openwork frame: it grips more of the wall, stays light and
+//     flexes onto the bone, which is what makes a printed guide seat passively
+//     (Gander et al. 2015), and the surgeon sees the bone through it;
 //   · a band along the planned osteotomy, where the saw slit runs exactly on the
 //     cut. Where the cut crosses the piriform aperture there is no anterior wall
 //     at that level, so the band dips onto the alveolar wall below it and the
@@ -41,8 +44,13 @@ class vtkPolyData;
 
 struct LeFortGuideParams
 {
-    double bandRadiusMm = 4.0;        // brush radius along the cut: the band covers ±4 mm around it
+    double bandRadiusMm = 8.0;        // brush radius along the cut: the band covers ±8 mm around it
     double holePadMm = 1.8;           // material round each sleeve, past its outer radius
+    // The band is an openwork frame, not a solid plate: a row of cells above and below the slit.
+    double latticeCellMm = 3.2;       // cell diameter; 0 turns the lattice off
+    double latticeSpacingMm = 5.6;    // between cell centres along the cut
+    double latticeMarginMm = 1.3;     // material left round every cell
+    double latticeSlitClearMm = 2.0;  // material left between a cell and the slit
     double lateralMarginMm = 5.0;     // the band runs this far past the outermost predictive hole
     double dabSpacingMm = 2.5;        // along the cut
     double fixationDiameterMm = 1.5;  // guide fixation screws (user's choice)
@@ -61,6 +69,7 @@ struct LeFortGuideLayout
     GuideBrushPaint paint;                 // the support region
     std::vector<GuideSlot> slotPlan;       // slit pieces between the bridges, each with its ends
     std::vector<GuideFixationHole> fixation;
+    std::vector<GuideFigure> figures;      // the lattice cells, subtracted
     std::vector<std::array<double, 3>> cutLine; // where the slit meets the anterior wall
     int dippedBins = 0;                    // bins where the band went below the aperture
 };

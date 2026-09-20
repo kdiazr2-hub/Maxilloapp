@@ -148,6 +148,11 @@ NodePtr Transformed(const NodePtr& node, vtkMatrix4x4* childToWorld);
 // only approximate.
 std::shared_ptr<const BakedField> BakeMeshField(vtkPolyData* mesh, double spacingMm, double paddingMm,
                                                 const std::atomic<bool>* cancel = nullptr, QString* error = nullptr);
+// Several meshes as one solid, on one grid covering them all. This is the honest distance to the bone itself:
+// unlike a wrap it is never contoured, so thin perforated bone cannot shred it.
+std::shared_ptr<const BakedField> BakeMeshField(const std::vector<vtkPolyData*>& meshes, double spacingMm,
+                                                double paddingMm, const std::atomic<bool>* cancel = nullptr,
+                                                QString* error = nullptr);
 NodePtr Field(const std::shared_ptr<const BakedField>& field);
 // The 2D profile swept along the frame's axis, `halfHeightMm` each way (<= 0: infinite).
 NodePtr PlanarPrism(const std::shared_ptr<const BakedPlanarField>& profile, double halfHeightMm);

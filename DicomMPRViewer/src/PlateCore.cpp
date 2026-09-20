@@ -847,7 +847,17 @@ PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate
         // The band is already taut on the outside of the bone and of the gap. Clipping it with the gap-closed
         // planning envelope would remove the middle of a ramp and leave two disconnected-looking stubs.
         const auto bridge = ImplicitCore::Field(ribbonField);
-        body = body ? ImplicitCore::Union(body, bridge) : bridge;
+        // Filleted onto the seated part, not merely unioned with it. The seated part takes the bone's shape
+        // and the bridge is flat, so where the arm leaves the bone their faces diverge at once and the plain
+        // union showed the joint as one plate laid over another (user's report, 2026-09-20: "cuando se hace
+        // el doblez se ve montado"). A smooth union is a smooth minimum: the negated smooth maximum.
+        if (body) {
+            const double blend = std::max(round, 0.5 * thickness);
+            body = ImplicitCore::Negate(ImplicitCore::SmoothIntersect(
+                {ImplicitCore::Negate(body), ImplicitCore::Negate(bridge)}, blend));
+        } else {
+            body = bridge;
+        }
     }
     if (!body) {
         result.error = QStringLiteral("La placa quedó vacía.");

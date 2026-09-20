@@ -287,6 +287,57 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
         }
     }
 
+    // The cells. A row above and a row below the slit, staggered along the cut, each taken at the envelope
+    // vertex nearest its place on the anterior wall and kept clear of the slit, of every sleeve and screw, and
+    // of the rim. They are subtracted figures, so `GuideDesignCore` carves them with everything else and the
+    // edit session cannot fill them in again.
+    const double cellRadius = 0.5 * std::max(0.0, params.latticeCellMm);
+    const double cellMargin = std::max(0.0, params.latticeMarginMm);
+    const double rowOffset = std::max(0.0, params.latticeSlitClearMm) + cellRadius + cellMargin;
+    if (cellRadius > 0.3 && rowOffset + cellRadius + cellMargin <= bandRadius) {
+        const double cellStep = std::max(2.0 * cellRadius + 1.0, params.latticeSpacingMm);
+        int row = 0;
+        for (const double wanted : {rowOffset, -rowOffset}) {
+            for (double s = lowest + 0.5 * cellStep + 0.5 * cellStep * row; s <= highest; s += cellStep) {
+                const int bin = std::clamp(static_cast<int>(std::floor((s - lowest) / spacing)), 0, bins - 1);
+                const auto found = byBin.find(bin);
+                if (found == byBin.end())
+                    continue;
+                const Candidate* pick = nullptr;
+                for (const Candidate* c : found->second)
+                    if (std::abs(c->field - wanted) < 1.0 && (!pick || c->depth > pick->depth))
+                        pick = c;
+                if (!pick)
+                    continue;
+                // Clear of everything that must stay solid.
+                bool clear = true;
+                for (const PredictiveHole& hole : holes)
+                    clear = clear && norm(sub(pick->point, hole.preopCenter)) >
+                                         0.5 * params.sleeveOuterDiameterMm + cellRadius + cellMargin;
+                for (const GuideFixationHole& screw : layout.fixation)
+                    clear = clear && norm(sub(pick->point, screw.center)) >
+                                         0.5 * screw.diameterMm + cellRadius + cellMargin + 1.5;
+                if (!clear)
+                    continue;
+                // And well inside the band: the cell has to fall within one dab, with material left round it.
+                bool inside = false;
+                for (const GuideBrushStroke& dab : layout.paint)
+                    inside = inside || (!dab.erase && norm(sub(pick->point, dab.center)) <=
+                                                          dab.radiusMm - cellRadius - cellMargin);
+                if (!inside)
+                    continue;
+                GuideFigure cell;
+                cell.shape = GuideFigureShape::Cylinder;
+                cell.operation = GuideFigureOperation::Subtract;
+                cell.diameterMm = 2.0 * cellRadius;
+                cell.lengthMm = 40.0; // through the wall either way
+                cell.matrix = GuideDesignCore::FrameAt(pick->point, GuideBaseCore::NormalAt(field, pick->point));
+                layout.figures.push_back(cell);
+            }
+            ++row;
+        }
+    }
+
     // The slit, in pieces between bridges: one at the midline (lateral 0 is the middle of the plates) and
     // every `bridgeSpacingMm` from it. The slit runs the whole length of the band, because the slab it is cut
     // with IS the planned osteotomy and `GuideDesignCore` clips it to the guide's own material: where there is
@@ -324,7 +375,8 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
                         .arg(holes.size())
                         .arg(layout.slotPlan.size())
                         .arg(layout.fixation.size())
-                        .arg(params.fixationDiameterMm, 0, 'f', 1);
+                        .arg(params.fixationDiameterMm, 0, 'f', 1) +
+                    QStringLiteral(" Celdas del entramado: %1.").arg(layout.figures.size());
     layout.ok = true;
     return layout;
 }
