@@ -108,6 +108,10 @@ Prepared preoperativeBone()
     require(out.wrap.ok, "the bone before the cut could not be wrapped");
     out.design.base.smallestDetailMm = 0.4;
     out.design.slot.smallestDetailMm = 0.4;
+    // The bone itself, so nothing built on the wrap can end up inside it. The wrap is quantised to voxel
+    // centres and stands up to a voxel inside the surface it wraps.
+    out.design.bone = ImplicitCore::BakeMeshField(meshes, 0.4, 8.0);
+    require(out.design.bone != nullptr, "the bone field could not be baked");
     out.preparation = GuideDesignCore::Prepare(out.wrap.mesh, out.design);
     require(out.preparation.ok, "the envelope could not be measured");
     return out;
@@ -221,6 +225,22 @@ void testTheGuideIsOnePieceWithAnOpenSlit()
     require(guide.ok, "the guide was not built: " + guide.error.toStdString());
     require(guide.pieces == 1, "the guide came apart: " + std::to_string(guide.pieces) + " pieces");
     require(MeshRepairCore::Analyze(guide.mesh).Valid(), "the guide is not a closed mesh");
+
+    // And none of it is inside the bone. A guide that sinks into the maxilla cannot be seated (user's report,
+    // 2026-09-21: "la guía metida dentro del lefort").
+    {
+        double deepest = 0.0;
+        int inside = 0;
+        for (vtkIdType id = 0; id < guide.mesh->GetNumberOfPoints(); ++id) {
+            double q[3] = {};
+            guide.mesh->GetPoint(id, q);
+            const double d = bone.design.bone->At({q[0], q[1], q[2]});
+            deepest = std::min(deepest, d);
+            inside += d < -0.25 ? 1 : 0;
+        }
+        require(inside == 0, "the guide reaches into the bone: " + std::to_string(inside) + " vertices, deepest " +
+                                 std::to_string(-deepest) + " mm");
+    }
 
     // The slit is open on the planned cut (z = 9), through the guide's wall, everywhere the band actually
     // reaches the cut; 3 mm above it the wall is solid. A slit piece also spans the stretches where the band

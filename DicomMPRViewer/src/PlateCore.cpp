@@ -645,6 +645,19 @@ PlateBoneQuery MakeBoneQuery(vtkPolyData* cranialPlanned, vtkPolyData* segmentPl
 }
 
 // ── Where a screw may go ──────────────────────────────────────────────────────
+std::array<double, 3> BoneNormalAt(const ImplicitCore::BakedField& bone, const Vec3& point, const Vec3& hint)
+{
+    const double h = std::max(0.5, 2.0 * bone.spacingMm); // averaged over about a millimetre
+    const Vec3 gradient{bone.At({point[0] + h, point[1], point[2]}) - bone.At({point[0] - h, point[1], point[2]}),
+                        bone.At({point[0], point[1] + h, point[2]}) - bone.At({point[0], point[1] - h, point[2]}),
+                        bone.At({point[0], point[1], point[2] + h}) - bone.At({point[0], point[1], point[2] - h})};
+    Vec3 normal = unit(gradient, unit(hint, {0.0, 0.0, 1.0}));
+    if (dot(normal, unit(hint, normal)) < 0.0)
+        normal = scale(normal, -1.0); // outward, the side the hint came from
+    return normal;
+}
+
+
 HoleSeat CheckHoleSeat(const Vec3& center, const Vec3& axis, const PlateBoneQuery& plannedBone,
                        const PlateBoneQuery& preopBone, const OsteotomyPath& path,
                        const std::array<double, 16>& segmentMotion, const PlateParams& params)

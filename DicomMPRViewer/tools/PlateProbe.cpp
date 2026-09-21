@@ -33,6 +33,7 @@
 #include <vtkCamera.h>
 #include <vtkPNGWriter.h>
 #include <vtkPolyData.h>
+#include <vtkImplicitPolyDataDistance.h>
 #include <vtkPolyDataConnectivityFilter.h>
 #include <vtkPolyDataMapper.h>
 #include <vtkProperty.h>
@@ -103,6 +104,50 @@ bool hit(vtkPolyData* mesh, const Vec3& from, const Vec3& to, Vec3& at)
     return true;
 }
 
+// How far a built part reaches into the bone, measured on the bone MESHES themselves. A wrap is no use for
+// this: closed tightly it is a shredded film, closed loosely it stands proud of every concavity, and either
+// way it answers a question about itself rather than about the bone.
+struct Penetration
+{
+    int inside = 0;
+    int total = 0;
+    double deepestMm = 0.0;
+};
+
+// The bone as its rasterised shell with whatever is enclosed filled in: "inside" means inside bone MATERIAL,
+// not inside the cranial cavity or the maxillary sinus, which a mesh's own signed distance calls inside by
+// tens of millimetres. Validated on the spot: every vertex of the bone must read about zero.
+Penetration intoBone(vtkPolyData* part, const std::shared_ptr<const ImplicitCore::BakedField>& bone)
+{
+    Penetration out;
+    if (!bone)
+        return out;
+    for (vtkIdType id = 0; id < part->GetNumberOfPoints(); ++id) {
+        double q[3] = {};
+        part->GetPoint(id, q);
+        const double d = bone->At({q[0], q[1], q[2]});
+        out.deepestMm = std::min(out.deepestMm, d);
+        out.inside += d < -0.25 ? 1 : 0;
+        ++out.total;
+    }
+    return out;
+}
+
+// Says so out loud if the instrument itself is wrong.
+void checkBoneField(const char* what, const std::shared_ptr<const ImplicitCore::BakedField>& bone,
+                    const std::vector<vtkPolyData*>& meshes)
+{
+    double worst = 0.0;
+    for (vtkPolyData* mesh : meshes)
+        for (vtkIdType id = 0; id < mesh->GetNumberOfPoints(); id += 331) {
+            double q[3] = {};
+            mesh->GetPoint(id, q);
+            worst = std::max(worst, std::abs(bone->At({q[0], q[1], q[2]})));
+        }
+    if (worst > 1.0)
+        std::cerr << "  WARNING: the " << what << " field is " << worst << " mm off its own surface" << std::endl;
+}
+
 int shells(vtkPolyData* mesh)
 {
     auto regions = vtkSmartPointer<vtkPolyDataConnectivityFilter>::New();
@@ -163,7 +208,7 @@ int main(int argc, char** argv)
 {
     QCoreApplication app(argc, argv);
     QString projectPath, outDir = QStringLiteral(".");
-    double advance = 6.0, down = 3.0, detail = 0.3, closing = 3.0;
+    double advance = 6.0, down = 3.0, detail = 0.3, closing = 3.0, guideClosing = 1.5;
     QString plateTemplate = QStringLiteral("paranasal");
     for (int i = 1; i + 1 < argc; ++i) {
         const QString key = QString::fromLocal8Bit(argv[i]);
@@ -175,6 +220,7 @@ int main(int argc, char** argv)
         else if (key == QStringLiteral("--detail")) detail = value.toDouble(), ++i;
         else if (key == QStringLiteral("--closing")) closing = value.toDouble(), ++i;
         else if (key == QStringLiteral("--template")) plateTemplate = value, ++i;
+        else if (key == QStringLiteral("--guide-closing")) guideClosing = value.toDouble(), ++i;
     }
     QFile file(projectPath);
     if (!file.open(QIODevice::ReadOnly)) {
@@ -240,7 +286,7 @@ int main(int argc, char** argv)
     // maxilla is a perforated shell around an open sinus, and a field made from the meshes themselves lets an
     // arm pass straight through the sinus without ever reporting bone.
     PlateKeepOut keepOut;
-    keepOut.bone = planned.wrapField;
+    keepOut.bone = ImplicitCore::BakeMeshField({cranial.Get(), segmentPlanned.Get()}, detail, 8.0);
     const WrapResult gapWrap = WrapCore::Wrap({cranial.Get(), segmentPlanned.Get(), segmentBefore.Get()}, wrapParams);
     const GuidePreparation withGap = gapWrap.ok ? GuideDesignCore::Prepare(gapWrap.mesh, prepareParams) : GuidePreparation{};
     keepOut.boneAndGap = withGap.ok ? withGap.wrapField : keepOut.bone;
@@ -261,7 +307,8 @@ int main(int argc, char** argv)
             std::cerr << plate.name.toStdString() << ": no bone for a hole at " << dz << " mm\n";
             return false;
         }
-        plate.holes.push_back({onSegment ? PlateCore::TransformPoint(motion, at) : at, forward, PlateBone::Unknown});
+        const Vec3 center = onSegment ? PlateCore::TransformPoint(motion, at) : at;
+        plate.holes.push_back({center, forward, PlateBone::Unknown});
         return true;
     };
     if (plateTemplate == QStringLiteral("splintless")) {
@@ -296,10 +343,16 @@ int main(int argc, char** argv)
             plates.push_back(plate);
         }
     }
+    // The screw axis is the bone's own normal, as the app takes it at the click.
+    for (PlateDesign& plate : plates)
+        for (PlateHole& hole : plate.holes)
+            hole.axis = PlateCore::BoneNormalAt(*keepOut.bone, hole.center, forward);
     PlateCore::AssignBones(plates, cranial, segmentPlanned);
     const PlateBoneQuery boneAt = PlateCore::MakeBoneQuery(cranial, segmentPlanned, motion, path);
 
     QDir().mkpath(outDir);
+    const auto& plannedSolid = keepOut.bone;
+    checkBoneField("planned bone", plannedSolid, {cranial, segmentPlanned});
     std::vector<vtkSmartPointer<vtkPolyData>> built;
     Vec3 focal{0.0, 0.0, 0.0};
     int holes = 0;
@@ -313,19 +366,10 @@ int main(int argc, char** argv)
             std::cerr << plate.name.toStdString() << ": " << result.error.toStdString() << "\n";
             continue;
         }
-        // How far into the bone the plate reaches: the planned wrap's field at its vertices.
-        double deepest = 0.0;
-        int inside = 0;
-        for (vtkIdType id = 0; id < result.mesh->GetNumberOfPoints(); ++id) {
-            double p[3] = {};
-            result.mesh->GetPoint(id, p);
-            const double d = keepOut.bone->At({p[0], p[1], p[2]});
-            deepest = std::min(deepest, d);
-            inside += d < -0.25 ? 1 : 0;
-        }
-        std::cout << result.report.toStdString() << " (" << seconds << " s)\n"
-                  << "    bridged " << result.bridgedMm << " mm, vertices inside the bone " << inside
-                  << ", deepest " << -deepest << " mm\n";
+        const Penetration deep = intoBone(result.mesh, plannedSolid);
+        std::cout << result.report.toStdString() << " (" << seconds << " s)" << std::endl
+                  << "    bridged " << result.bridgedMm << " mm, vertices inside the bone " << deep.inside << "/"
+                  << deep.total << ", deepest " << -deep.deepestMm << " mm" << std::endl;
         auto writer = vtkSmartPointer<vtkSTLWriter>::New();
         writer->SetFileName(QDir(outDir).filePath(plate.name + QStringLiteral(".stl")).toUtf8().constData());
         writer->SetInputData(result.mesh);
@@ -354,10 +398,12 @@ int main(int argc, char** argv)
     const Vec3 segmentMiddle{0.5 * (b[0] + b[1]), 0.5 * (b[2] + b[3]), 0.5 * (b[4] + b[5])};
     const std::vector<PredictiveHole> predictive = PlateCore::PredictHoles(plates, motion, path, segmentMiddle);
     WrapParams guideWrapParams;
+    guideWrapParams.gapClosingMm = guideClosing;
     guideWrapParams.smallestDetailMm = detail;
     guideWrapParams.smoothingIterations = 30;
     GuideDesignParams guideDesign;
     guideDesign.base.smallestDetailMm = detail;
+    guideDesign.bone = ImplicitCore::BakeMeshField({cranial.Get(), segmentBefore.Get()}, detail, 8.0);
     const WrapResult preopWrap = WrapCore::Wrap({cranial.Get(), segmentBefore.Get()}, guideWrapParams);
     const GuidePreparation preopPrepared =
         preopWrap.ok ? GuideDesignCore::Prepare(preopWrap.mesh, guideDesign) : GuidePreparation{};
@@ -389,6 +435,12 @@ int main(int argc, char** argv)
     std::cout << "guide: " << guide.mesh->GetNumberOfPolys() << " triangles, " << shells(guide.mesh) << " piece(s), "
               << std::chrono::duration<double>(std::chrono::steady_clock::now() - guideStarted).count() << " s"
               << std::endl;
+    {
+        checkBoneField("pre-operative bone", guideDesign.bone, {cranial, segmentBefore});
+        const Penetration deep = intoBone(guide.mesh, guideDesign.bone);
+        std::cout << "    guide vertices inside the bone " << deep.inside << "/" << deep.total << ", deepest "
+                  << -deep.deepestMm << " mm" << std::endl;
+    }
     auto guideWriter = vtkSmartPointer<vtkSTLWriter>::New();
     guideWriter->SetFileName(QDir(outDir).filePath(QStringLiteral("guia.stl")).toUtf8().constData());
     guideWriter->SetInputData(guide.mesh);

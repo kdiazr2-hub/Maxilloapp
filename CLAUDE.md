@@ -176,9 +176,12 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   (user's report, 2026-09-20: "las placas se meten a la osteotomía e interfieren con el lefort"). This replaced a
   hand-drawn right-angled dogleg, which showed on the patient as a zig-zag no surgeon would bend, and it removes the
   need to tell an advancement from a flat span — with nothing in the way the taut band is simply the straight line.
-  `PlateKeepOut::bone` (the planning wrap itself) clips the whole plate, which is a no-op for the seated parts and
-  removes any bridge material that would dive into the planned bone. BOTH fields have to be CLOSED bone, with the
-  same gap closing as the planning wrap. This is the whole point: segmented maxilla is a thin perforated shell
+  `PlateKeepOut::bone` clips the whole plate. It is `ImplicitCore::BakeMeshField` of the planned meshes THEMSELVES,
+  not a wrap: exact on the surface, and "inside" means inside the wall rather than inside the sinus. The wrap the
+  plate is laid on is quantised to voxel centres and stands up to a voxel inside the bone, which put the plate half
+  a millimetre into the maxilla; clipping against the bone's own field brings that to a tenth (user's report,
+  2026-09-21). `PlateKeepOut::boneAndGap`, the one an arm is routed over, has to be the opposite — a CLOSED
+  envelope, with the same gap closing as the planning wrap. This is the whole point: segmented maxilla is a thin perforated shell
   round an open sinus, so a field taken from the meshes themselves lets an arm walk straight through the sinus, and
   a wrap closed by only 0.5 mm comes out SHREDDED — on the surgeon's own CT such a wrap left 63 % of the cranial
   bone's vertices more than 1 mm outside it, so the keep-out reported no bone anywhere and every earlier
@@ -249,6 +252,21 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   espacios donde se perforó sin material"). `LeFortGuideTests` "every sleeve has guide under it" puts a plate
   hole far out on the lateral wall and requires the paint to come out as one patch covering it. It only fills
   the plan (paint, slotPlan, holes); `GuideDesignCore::Build` still carves it, and the brush and EDITAR still work.
+  The guide is clipped out of the bone the same way the plates are: `GuideDesignParams::bone` is
+  `ImplicitCore::BakeMeshField` of the guide's own source meshes, baked beside the envelope in `computeGuideWrap`,
+  and `Build` intersects the finished solid with the outside of it, offset by half the contour detail plus 0.1 mm.
+  Without it the guide stood half a millimetre inside the maxilla, because the wrap it is laid on does; the offset
+  is there because 70 sinc passes pull a convex surface inwards after the field is contoured. `LeFortGuideTests`
+  "the guide is one piece with an open slit" now also requires no vertex inside that field.
+  The frame no longer averages the holes' drill axes: a hole whose envelope normal came out skewed tilted the whole
+  band ("mal orientada"). The direction is the osteotomy's own sweep axis, checked against the bone; the holes only
+  give the centre. And a hole's axis — the screw, the drill's vector and the guide's sleeve — is now
+  `PlateCore::BoneNormalAt`, the gradient of the bone's own field averaged over about a millimetre, instead of the
+  envelope's normal, which swings tens of degrees on a flat wall and left sleeves visibly tilted.
+  HOW TO MEASURE any of this: never against a wrap. A tight one is a shredded film, a loose one stands proud of
+  every concavity, and a mesh's own signed distance calls the whole cranial cavity "inside" by tens of millimetres.
+  `ImplicitCore::BakeMeshField` of the meshes is the instrument, and `PlateProbe` validates it on the spot by
+  requiring every bone vertex to read within a millimetre of zero before it reports anything.
   UI: «Generar guía de corte» in «PLACAS A MEDIDA» (`MainWindow::generateLeFortGuide`). With plates, the hand-drawn
   steps (zona, ranuras, agujeros, crear) stay hidden until the guide exists and then serve to retouch it («Reconstruir
   guía»); without plates a plain Le Fort guide is still drawn by hand. `LeFortGuideTests` uses a synthetic aperture.

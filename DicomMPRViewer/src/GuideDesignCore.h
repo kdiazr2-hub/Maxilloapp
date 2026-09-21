@@ -98,6 +98,12 @@ struct GuideDesignParams
     double edgeMarginMm = 2.0;  // material left between any slot and the edge of the guide
     double holeCollarWidthMm = 1.5;  // radial stop around each fixation hole
     double holeCollarHeightMm = 1.2; // height above the outer guide surface
+    // The bone itself — `ImplicitCore::BakeMeshField` of the very meshes the wrap was made from, so "inside"
+    // means inside bone MATERIAL and not inside the sinus or the cranial cavity. No guide material may be in
+    // there. The wrap the guide is laid on stands up to a voxel inside the surface it wraps, which put the
+    // guide half a millimetre into the maxilla (user's report, 2026-09-21: "la guía metida dentro del lefort").
+    // Not persisted: it is rebuilt from the sources on every build.
+    std::shared_ptr<const ImplicitCore::BakedField> bone;
 };
 
 // The slow half: the wrap measured once.

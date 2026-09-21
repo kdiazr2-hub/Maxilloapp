@@ -1091,6 +1091,9 @@ void MainWindow::computeGuideWrap()
     }
     m_guideWrapMesh = wrap.mesh;
     m_guidePrepared = prepared;
+    // The bone itself, so nothing built on the wrap can end up inside it. Baked once with the envelope: it is
+    // the same rasterisation, just without the closing and without contouring a mesh from it.
+    m_guidePlan.design.bone = ImplicitCore::BakeMeshField(meshes, m_guidePlan.wrap.smallestDetailMm, 8.0);
     if (m_guidePlan.workflowStep == GuideWorkflowStep::Envelope) {
         // Starting the assistant is an explicit restart: legacy automatic geometry
         // must not leak into the manually painted guide.
@@ -1434,8 +1437,12 @@ void MainWindow::onGuidePointPicked(int, double x, double y, double z)
         // Picked on the bone in its planned position; the screw goes in along the surface normal there.
         PlateHole hole;
         hole.center = point;
+        // The screw's axis — and so the drill's vector and the guide's sleeve — is the bone's own normal, not
+        // the envelope's, whose gradient swings tens of degrees where the wrap is coarse.
         hole.axis = m_guidePlannedPrepared.ok ? GuideDesignCore::SurfaceNormalAt(m_guidePlannedPrepared, point)
                                               : std::array<double, 3>{0.0, 0.0, 1.0};
+        if (m_guidePlannedKeepOut.bone)
+            hole.axis = PlateCore::BoneNormalAt(*m_guidePlannedKeepOut.bone, point, hole.axis);
         // A screw needs bone all round its head and room to the osteotomy. One on a bony margin holds nothing,
         // and the guide's sleeve would stand on air there (user's rule, 2026-09-20).
         const HoleSeat seat = guidePlateHoleSeat(hole.center, hole.axis);
@@ -2806,7 +2813,8 @@ bool MainWindow::prepareGuidePlannedBone()
     // straight through the sinus and through the gap without the keep-out ever reporting bone.
     PlateKeepOut keepOut;
     if (prepared.ok) {
-        keepOut.bone = prepared.wrapField;
+        // The bone material itself: exact on the surface, so the plate never ends up inside the maxilla.
+        keepOut.bone = ImplicitCore::BakeMeshField({cranial.Get(), segment.Get()}, wrapParams.smallestDetailMm, 8.0);
         keepOut.boneAndGap = prepared.wrapField; // not moved yet: there is no gap to ramp over
         const auto original = m_repositionOriginalMeshes.find(kLeFortSegLabel);
         if (original != m_repositionOriginalMeshes.end() && original->second &&

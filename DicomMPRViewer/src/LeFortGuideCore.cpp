@@ -169,13 +169,13 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
     for (const Vec3& point : path.points)
         center = add(center, scale(point, 1.0 / path.points.size()));
     if (!holes.empty()) {
-        front = {0.0, 0.0, 0.0};
+        // Only the centre: the band is laid out around the plates. The direction stays the osteotomy's own
+        // sweep axis, checked against the bone above. Averaging the holes' drill axes tilted the whole frame
+        // whenever the envelope gave a hole a skewed normal, and the band came out leaning (user's report,
+        // 2026-09-21: "mal orientada").
         center = {0.0, 0.0, 0.0};
-        for (const PredictiveHole& hole : holes) {
-            front = add(front, unit(hole.preopAxis));
+        for (const PredictiveHole& hole : holes)
             center = add(center, scale(hole.preopCenter, 1.0 / holes.size()));
-        }
-        front = unit(front, path.depthAxis);
     }
     Vec3 up = unit(sub(path.upAxis, scale(front, dot(path.upAxis, front))), {0.0, 0.0, 1.0});
     const Vec3 lateral = unit(cross(up, front), {1.0, 0.0, 0.0});

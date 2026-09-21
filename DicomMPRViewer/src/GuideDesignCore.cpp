@@ -458,7 +458,16 @@ GuideDesignResult Build(const GuidePreparation& prepared, const GuideRegion& reg
         return result;
     }
 
-    const auto solid = cutters.empty() ? grown : ImplicitCore::Subtract(grown, ImplicitCore::Union(cutters));
+    auto solid = cutters.empty() ? grown : ImplicitCore::Subtract(grown, ImplicitCore::Union(cutters));
+    // Never inside the bone. The wrap this is laid on is quantised to voxel centres and can stand a voxel
+    // inside the surface it wraps; the bone's own field is exact where it matters.
+    if (params.bone) {
+        // A hair of clearance, not a flush fit: the guide is polygonised on its own grid and then smoothed by
+        // 70 sinc passes, and smoothing pulls a convex surface inwards. Without it a tenth of a millimetre of
+        // the printed guide still ends up inside the maxilla.
+        const double off = std::max(params.base.clearanceMm, 0.5 * detail + 0.1);
+        solid = ImplicitCore::Intersect(solid, ImplicitCore::Negate(ImplicitCore::Offset(ImplicitCore::Field(params.bone), off)));
+    }
     ImplicitCore::PolygonizeOptions options;
     options.smoothingIterations = std::max(params.base.smoothingIterations, 70);
     options.passBand = 0.02; // smoother support and rim while the implicit cutters retain slots and collars

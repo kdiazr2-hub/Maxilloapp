@@ -151,16 +151,18 @@ struct PlateBuildResult
     int steppedBridges = 0;   // arms that ramp across the step the movement opened at the cut
 };
 
-// Where a plate may not go. Both are wraps with the same gap closing as the envelope the plate is laid on:
-// they have to be CLOSED bone. Segmented maxilla is a perforated shell around an open sinus, so a field taken
-// from the meshes themselves — or a wrap closed by only half a millimetre, which comes out shredded — lets an
-// arm pass straight through the sinus and through the osteotomy without ever reporting bone.
+// Where a plate may not go. The two fields answer two different questions and are built differently.
 struct PlateKeepOut
 {
-    // The two bones where the plan puts them. No part of a plate may enter this.
+    // The bone MATERIAL, from `ImplicitCore::BakeMeshField` of the planned meshes themselves: exact on the
+    // surface, and "inside" means inside the wall rather than inside the sinus. No part of a plate may enter
+    // it. The wrap the plate is laid on is quantised to voxel centres and can stand a voxel inside the bone,
+    // which is what put the plate half a millimetre into the maxilla.
     std::shared_ptr<const ImplicitCore::BakedField> bone;
-    // The same two bones plus the Le Fort segment in its PRE-OPERATIVE position, so their union also fills the
-    // space the movement vacated: the osteotomy gap. An arm crossing the cut is pulled taut over this, which is
+    // A CLOSED envelope (a wrap with the planning gap closing) of the same two bones plus the Le Fort segment
+    // in its PRE-OPERATIVE position, so their union also fills the space the movement vacated: the osteotomy
+    // gap. It has to be closed, not the bone's own field: segmented maxilla is a perforated shell round an
+    // open sinus, and an arm routed against the bare shell walks straight through the sinus. An arm crossing the cut is pulled taut over this, which is
     // how a real patient-specific implant is shaped — it ramps across the step the advancement makes, instead
     // of falling into the cut and standing in the way of the maxilla (user's report, 2026-09-20).
     std::shared_ptr<const ImplicitCore::BakedField> boneAndGap;
@@ -223,6 +225,14 @@ PlateBoneQuery MakeBoneQuery(vtkPolyData* cranialPlanned, vtkPolyData* segmentPl
                              double cutMarginMm = 1.5);
 
 // ── Where a screw may go ─────────────────────────────────────────────────────
+// The outward normal of the bone at `point`, averaged over about a millimetre. This is the screw's axis, the
+// drill's vector and the axis of the guide's sleeve, so it has to be the bone's own normal: the envelope the
+// plate is laid on is quantised to voxel centres and its gradient swings tens of degrees on a flat wall, which
+// left sleeves visibly tilted on the guide (user's report, 2026-09-21: "mal orientada"). `bone` is
+// `ImplicitCore::BakeMeshField` of the meshes themselves.
+std::array<double, 3> BoneNormalAt(const ImplicitCore::BakedField& bone, const std::array<double, 3>& point,
+                                   const std::array<double, 3>& hint);
+
 // A screw needs bone all round its ring and a margin to the osteotomy; one at a bony margin has nothing to
 // hold it, and one at the cut sits in the few tenths of cortex the saw is about to take (user's rule,
 // 2026-09-20: "no dejes que los orificios se coloquen en la orilla").
