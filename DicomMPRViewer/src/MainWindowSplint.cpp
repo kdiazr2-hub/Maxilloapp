@@ -802,6 +802,37 @@ SplintHeightmapInputs MainWindow::splintInputsForDesign(const SplintDesign& desi
     return inputs;
 }
 
+// Fills in the guide points of every design that has none, off the teeth themselves, so the FERULA step opens
+// with a preview instead of an empty arch waiting to be clicked (user's request, 2026-09-21: "no me genera
+// automaticamente la ferula, aun tengo que hacerla yo paso a paso"). Anything the surgeon marked is left
+// alone, and the points stay draggable afterwards.
+int MainWindow::autoFillSplintGuidePoints()
+{
+    int filled = 0;
+    for (SplintDesign& design : m_splintDesigns) {
+        for (int jaw = 0; jaw < 2; ++jaw) {
+            std::vector<SplintPoint3>& points = jaw == 0 ? design.upperPoints : design.lowerPoints;
+            if (points.size() >= 3)
+                continue;
+            const auto source = splintSourceMesh(jaw == 0 ? design.upperSource : design.lowerSource);
+            if (!source || source->GetNumberOfPoints() == 0)
+                continue;
+            // Only the teeth: a composite carries its bone, and the bone has no cusps to read.
+            auto teeth = CompositeBlockCore::ExtractPart(source, CompositeBlockCore::DentalPart);
+            if (!teeth || teeth->GetNumberOfPoints() < 50)
+                teeth = source;
+            // The upper arch bites downwards, the lower one upwards.
+            const SplintPoint3 occlusal = jaw == 0 ? SplintPoint3{0.0, 0.0, -1.0} : SplintPoint3{0.0, 0.0, 1.0};
+            const auto picked = SplintDesignCore::AutoGuidePoints(teeth, occlusal);
+            if (picked.size() < 3)
+                continue;
+            points = picked;
+            ++filled;
+        }
+    }
+    return filled;
+}
+
 void MainWindow::requestSplintPreview()
 {
     if (!splintHeightmapMethodActive() || !m_splintPreview || !m_splintDesignPanel)

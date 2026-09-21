@@ -115,6 +115,105 @@ bool validIndex(const std::vector<SplintDesign>& designs, int index, QString* er
 
 namespace SplintDesignCore
 {
+namespace
+{
+double dot3(const SplintPoint3& a, const SplintPoint3& b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+SplintPoint3 sub3(const SplintPoint3& a, const SplintPoint3& b) { return {a[0] - b[0], a[1] - b[1], a[2] - b[2]}; }
+SplintPoint3 unit3(const SplintPoint3& a, const SplintPoint3& fallback)
+{
+    const double length = std::sqrt(dot3(a, a));
+    return length > 1e-9 ? SplintPoint3{a[0] / length, a[1] / length, a[2] / length} : fallback;
+}
+} // namespace
+
+std::vector<SplintPoint3> AutoGuidePoints(vtkPolyData* teeth, const SplintPoint3& occlusal, int count)
+{
+    std::vector<SplintPoint3> picked;
+    if (!teeth || teeth->GetNumberOfPoints() < 50 || count < 3)
+        return picked;
+    const SplintPoint3 towardsBite = unit3(occlusal, {0.0, 0.0, -1.0});
+
+    // The occlusal band: everything within 6 mm of the most occlusal point. That is the cusps, whatever else
+    // the source mesh carries (the composite brings its bone with it).
+    std::vector<vtkIdType> band;
+    double highest = -1e30;
+    for (vtkIdType id = 0; id < teeth->GetNumberOfPoints(); ++id) {
+        double q[3] = {};
+        teeth->GetPoint(id, q);
+        highest = std::max(highest, dot3({q[0], q[1], q[2]}, towardsBite));
+    }
+    for (vtkIdType id = 0; id < teeth->GetNumberOfPoints(); ++id) {
+        double q[3] = {};
+        teeth->GetPoint(id, q);
+        if (dot3({q[0], q[1], q[2]}, towardsBite) > highest - 6.0)
+            band.push_back(id);
+    }
+    if (band.size() < static_cast<size_t>(count) * 3)
+        return picked;
+
+    // Its widest direction across the bite: the arch runs along it, right to left.
+    SplintPoint3 centre{0.0, 0.0, 0.0};
+    for (const vtkIdType id : band) {
+        double q[3] = {};
+        teeth->GetPoint(id, q);
+        for (int a = 0; a < 3; ++a)
+            centre[static_cast<size_t>(a)] += q[a] / static_cast<double>(band.size());
+    }
+    double covariance[3][3] = {};
+    for (const vtkIdType id : band) {
+        double q[3] = {};
+        teeth->GetPoint(id, q);
+        SplintPoint3 d = sub3({q[0], q[1], q[2]}, centre);
+        const double along = dot3(d, towardsBite);
+        for (int a = 0; a < 3; ++a)
+            d[static_cast<size_t>(a)] -= along * towardsBite[static_cast<size_t>(a)]; // flattened onto the bite plane
+        for (int r = 0; r < 3; ++r)
+            for (int c = 0; c < 3; ++c)
+                covariance[r][c] += d[static_cast<size_t>(r)] * d[static_cast<size_t>(c)];
+    }
+    double* rows[3] = {covariance[0], covariance[1], covariance[2]};
+    double eigenvalues[3] = {};
+    double e0[3] = {}, e1[3] = {}, e2[3] = {};
+    double* eigenvectors[3] = {e0, e1, e2};
+    vtkMath::Jacobi(rows, eigenvalues, eigenvectors); // decreasing, vectors in columns
+    const SplintPoint3 across =
+        unit3({eigenvectors[0][0], eigenvectors[1][0], eigenvectors[2][0]}, {1.0, 0.0, 0.0});
+
+    // One point per bin across the arch: the highest cusp in it.
+    double lowestU = 1e30, highestU = -1e30;
+    for (const vtkIdType id : band) {
+        double q[3] = {};
+        teeth->GetPoint(id, q);
+        const double u = dot3(sub3({q[0], q[1], q[2]}, centre), across);
+        lowestU = std::min(lowestU, u);
+        highestU = std::max(highestU, u);
+    }
+    if (!(highestU - lowestU > 5.0))
+        return picked;
+    const double step = (highestU - lowestU) / count;
+    std::vector<vtkIdType> best(static_cast<size_t>(count), -1);
+    std::vector<double> bestHeight(static_cast<size_t>(count), -1e30);
+    for (const vtkIdType id : band) {
+        double q[3] = {};
+        teeth->GetPoint(id, q);
+        const SplintPoint3 p{q[0], q[1], q[2]};
+        const int bin = std::clamp(static_cast<int>((dot3(sub3(p, centre), across) - lowestU) / step), 0, count - 1);
+        const double height = dot3(p, towardsBite);
+        if (height > bestHeight[static_cast<size_t>(bin)]) {
+            bestHeight[static_cast<size_t>(bin)] = height;
+            best[static_cast<size_t>(bin)] = id;
+        }
+    }
+    for (const vtkIdType id : best) {
+        if (id < 0)
+            continue;
+        double q[3] = {};
+        teeth->GetPoint(id, q);
+        picked.push_back({q[0], q[1], q[2]});
+    }
+    return picked;
+}
+
 std::vector<SplintDesign> DefaultDesigns(int upperSource, int intermediateLowerSource, int finalLowerSource)
 {
     SplintDesign intermediate;

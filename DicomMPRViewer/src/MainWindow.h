@@ -1124,6 +1124,7 @@ private:
     void rebuildSplintEditablePoints();
     bool confirmSplintContourLoss();
     void discardSplintEditedContour(const QString& reason);
+    int autoFillSplintGuidePoints(); // guide points read off the teeth for every design that has none
     void requestSplintPreview();
     void requestRefinedSplintPreview();
     void onSplintPreviewReady(quint64 generation, const SplintHeightmapResult& result);

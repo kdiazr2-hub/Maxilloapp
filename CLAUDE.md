@@ -59,7 +59,14 @@ The points JSON comes from "Exportar puntos" in the splint panel.
 - `ProjectSerializer` saves/loads `.maxilloproject` files; new keys must stay optional so older projects load.
 - Splints: `SplintHeightmapGenerator` (height-map splint, Prepare/Build), `SplintDesignCore` (named designs, JSON),
   `SplintContourEditCore`, `SplintPreviewScheduler` (background preview); UI in `SplintDesignPanel` and
-  `MainWindowSplint.cpp` (MainWindow methods kept out of `MainWindow.cpp`). Only the height-map method is offered: the
+  `MainWindowSplint.cpp` (MainWindow methods kept out of `MainWindow.cpp`).
+  Entering FERULA fills in the guide points of every design that has none, off the teeth themselves
+  (`SplintDesignCore::AutoGuidePoints` via `MainWindow::autoFillSplintGuidePoints`): the occlusal band is the
+  6 mm nearest the bite, its widest direction across the bite is the arch, and the highest cusp of each of five
+  bins along it is a point. The composite's dental part is used when there is one, since bone has no cusps. The
+  step opens with a preview instead of an empty arch waiting to be clicked (user's request, 2026-09-21) and the
+  points stay draggable; anything the surgeon already marked is left alone.
+  Only the height-map method is offered: the
   classic `SplintGenerator` and its panel stay in the code but the "Método" selector is hidden (delete only if the user
   confirms). The automatic contour keeps only teeth within the arch span of the guide points (+6 mm). Built-in designs:
   Intermedia = repositioned Le Fort on the unmoved mandible, Final = on the repositioned distal / post-genioplasty mandible.
@@ -154,7 +161,16 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   voxel) and stops where the plate could not seat: a turn > 40°/step or > 60° from the hole, a hollow, no progress,
   or `PlateCore::MakeBoneQuery` saying no bone — the nearest planned bone, but nothing within 1.5 mm of the
   osteotomy or on its wrong side (points on the segment taken back through the motion first), so no arm goes round
-  the edge and down the cut face. `strutPath` joins the two walks; what is left is a bridge "taut over the bone":
+  the edge and down the cut face. `strutPath` joins the two walks; what is left is a band pressed onto the bone
+  wherever `boneAt` says there is bone within a millimetre, spanning only the rest — the osteotomy and its
+  margins. `tautBand` does both: it pushes points out of `boneAndGap` in the arm's plane, presses them onto the
+  planning wrap a quarter of a millimetre at a time (free to move sideways: it is following a surface, not
+  spanning one), and smooths. Tautness fights the pressing, so the band wraps a convex wall and still bridges a
+  notch rather than diving into it. Samples that come to rest on bone are marked seated and take the conformal
+  layer; only what crosses the cut stays flat. Without the pressing the band was only ever pushed OUT of bone,
+  so a chord already clear of it stayed straight: where a walk stopped early on a curved buttress the whole
+  remaining arm was a flat blade in the air, and only the pillar whose walk happened to succeed came out right
+  (user's report, 2026-09-21). What the bridge used to be, for the parts that still hold:
   straight, and where it would cut through bone (the corner of an advanced segment) its deepest point is lifted
   onto the surface and it bends there, recursively. The bar's normal comes from the plate's width axis (the bone
   normal × the arm), never from the bone normal squared to the bar (that degenerates when a large advancement runs
@@ -208,8 +224,8 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   guide's connectivity.
   Defaults (user's choice): 1.0 mm plate, 2.0 mm screws, guide fixation 1.5 mm, one-piece guide across the midline;
   sleeve bore 1.6 mm / outer 4.2 mm / height 4 mm. `PlateCore::CheckHoleSeat` BLOCKS a hole where a screw
-  could not hold: it needs bone all round its ring (16 samples at `ringDiameterMm`/2 + `minEdgeDistanceMm`, each
-  within 1.5 mm of bone) and `minCutDistanceMm` to the osteotomy. Both are judged on the bone BEFORE the
+  could not hold: it needs bone all round its ring (16 samples at `ringDiameterMm`/2 + `minEdgeDistanceMm`, 1.0 mm by
+  the user's choice, each within 1.5 mm of bone) and `minCutDistanceMm` to the osteotomy. Both are judged on the bone BEFORE the
   movement — that is where the drill goes, through the guide — because on the planned anatomy the osteotomy
   itself reads as a free margin and no screw could be placed near the cut at all. The ring's plane comes from
   the gradient of the bone's own distance a millimetre off the surface, not from the envelope's normal, which

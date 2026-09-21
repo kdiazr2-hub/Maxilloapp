@@ -303,9 +303,23 @@ int main(int argc, char** argv)
         const Vec3 to{target[0] - 30.0 * forward[0], target[1] - 30.0 * forward[1], target[2]};
         Vec3 at{};
         const bool onSegment = dz < 0.0;
-        if (!hit(onSegment ? segmentBefore : cranial, from, to, at)) {
-            std::cerr << plate.name.toStdString() << ": no bone for a hole at " << dz << " mm\n";
-            return false;
+        vtkPolyData* bone = onSegment ? segmentBefore.Get() : cranial.Get();
+        if (!hit(bone, from, to, at)) {
+            // The surgeon clicks on the surface he can see. When the straight shot misses — the buttress falls
+            // away laterally — take the nearest point of that bone instead, as a click would.
+            auto locator = vtkSmartPointer<vtkStaticCellLocator>::New();
+            locator->SetDataSet(bone);
+            locator->BuildLocator();
+            double closest[3] = {};
+            vtkIdType cell = 0;
+            int sub = 0;
+            double squared = 0.0;
+            locator->FindClosestPoint(const_cast<double*>(target.data()), closest, cell, sub, squared);
+            if (squared > 400.0) {
+                std::cerr << plate.name.toStdString() << ": no bone for a hole at " << dz << " mm" << std::endl;
+                return false;
+            }
+            at = {closest[0], closest[1], closest[2]};
         }
         const Vec3 center = onSegment ? PlateCore::TransformPoint(motion, at) : at;
         plate.holes.push_back({center, forward, PlateBone::Unknown});

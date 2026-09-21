@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <set>
 
 
@@ -150,7 +151,8 @@ std::vector<PathSample> walkOnBone(const ImplicitCore::BakedField& field, const 
 // the maxilla. It used to be drawn as a right-angled dogleg, which no surgeon would bend and which showed as a
 // zig-zag on the patient (user's report, 2026-09-20). The band bends along its length only: pushed out of the
 // obstacle in the arm's own plane, never sideways, so it does not wander off round a buttress.
-std::vector<Vec3> tautBand(const ImplicitCore::BakedField* obstacle, const Vec3& from, const Vec3& to,
+std::vector<Vec3> tautBand(const ImplicitCore::BakedField* obstacle, const ImplicitCore::BakedField* seat,
+                           const std::function<bool(const Vec3&)>& mayPress, const Vec3& from, const Vec3& to,
                            double clearance, const Vec3& widthAxis, double* riseMm)
 {
     const double length = norm(sub(to, from));
@@ -164,21 +166,51 @@ std::vector<Vec3> tautBand(const ImplicitCore::BakedField* obstacle, const Vec3&
     if (!obstacle)
         return band;
     const double h = std::max(0.2, obstacle->spacingMm);
+    // Outward in the arm's own plane, so the band bends along its length and never wanders sideways.
+    const auto outward = [&](const Vec3& p) {
+        Vec3 gradient{obstacle->At({p[0] + h, p[1], p[2]}) - obstacle->At({p[0] - h, p[1], p[2]}),
+                      obstacle->At({p[0], p[1] + h, p[2]}) - obstacle->At({p[0], p[1] - h, p[2]}),
+                      obstacle->At({p[0], p[1], p[2] + h}) - obstacle->At({p[0], p[1], p[2] - h})};
+        gradient = sub(gradient, scale(widthAxis, dot(gradient, widthAxis)));
+        return unit(gradient, {0.0, 0.0, 0.0});
+    };
     const auto pushOut = [&] {
         for (size_t i = 1; i + 1 < band.size(); ++i) {
-            const Vec3 p = band[i];
-            const double d = obstacle->At(p);
+            const double d = obstacle->At(band[i]);
             if (d >= clearance)
                 continue;
-            Vec3 gradient{obstacle->At({p[0] + h, p[1], p[2]}) - obstacle->At({p[0] - h, p[1], p[2]}),
-                          obstacle->At({p[0], p[1] + h, p[2]}) - obstacle->At({p[0], p[1] - h, p[2]}),
-                          obstacle->At({p[0], p[1], p[2] + h}) - obstacle->At({p[0], p[1], p[2] - h})};
-            gradient = sub(gradient, scale(widthAxis, dot(gradient, widthAxis)));
-            band[i] = add(p, scale(unit(gradient, {0.0, 0.0, 0.0}), clearance - d));
+            band[i] = add(band[i], scale(outward(band[i]), clearance - d));
+        }
+    };
+    // Pressed onto the bone wherever there IS bone under it, a quarter of a millimetre at a time, and free to
+    // move sideways while it does — it is following a surface, not spanning. Without this the band is only ever
+    // pushed OUT of the bone, so a chord that already runs clear of it stays straight: an arm round the curve
+    // of the maxilla left the bone and ended as a flat blade in the air (user's report, 2026-09-21). Tautness
+    // fights it — the smoothing pass pulls towards the chord — so the band wraps a convex wall and still
+    // bridges a notch instead of diving into it, which is what a strip of titanium does. Where `mayPress` says
+    // there is no bone (the osteotomy and its margins) nothing presses, and the band spans.
+    const auto seatNormal = [&](const Vec3& p) {
+        const double g = std::max(0.2, seat->spacingMm);
+        return unit({seat->At({p[0] + g, p[1], p[2]}) - seat->At({p[0] - g, p[1], p[2]}),
+                     seat->At({p[0], p[1] + g, p[2]}) - seat->At({p[0], p[1] - g, p[2]}),
+                     seat->At({p[0], p[1], p[2] + g}) - seat->At({p[0], p[1], p[2] - g})},
+                    {0.0, 0.0, 0.0});
+    };
+    const auto pressOn = [&] {
+        if (!seat || !mayPress)
+            return;
+        for (size_t i = 1; i + 1 < band.size(); ++i) {
+            if (!mayPress(band[i]))
+                continue;
+            const double d = seat->At(band[i]);
+            if (d <= clearance)
+                continue;
+            band[i] = sub(band[i], scale(seatNormal(band[i]), std::min(d - clearance, 0.25)));
         }
     };
     for (int iteration = 0; iteration < 80; ++iteration) {
         pushOut();
+        pressOn();
         // Taut: every point drawn back towards the middle of its neighbours. Alternated with the push, this
         // settles on the shortest band that stays outside the bone — the shape a strip of titanium takes.
         const std::vector<Vec3> previous = band;
@@ -239,9 +271,19 @@ std::vector<PathSample> strutPath(const ImplicitCore::BakedField& field, const P
         // curve — a shape a surgeon could bend, which the right-angled dogleg this replaces was not. Telling an
         // advancement from a flat span is no longer needed either: with nothing in the way, the taut band is
         // simply the straight line between the two walks.
-        double rise = 0.0;
-        const std::vector<Vec3> band = tautBand(boneAndGap, endA.point, endB.point, clearance + 0.15, widthAxis, &rise);
         const bool crossesOsteotomy = boneA != boneB && boneA != PlateBone::Unknown && boneB != PlateBone::Unknown;
+        // The band is pressed onto the bone wherever the bone query says there is bone to seat on — which is
+        // everywhere except the osteotomy and its margins — and spans the rest. A walk that stopped early on a
+        // curved buttress used to leave the whole remaining arm as a straight blade off the bone.
+        const auto onBone = [&](const Vec3& p) {
+            if (!boneAt)
+                return false;
+            double away = 0.0;
+            return boneAt(p, &away) != PlateBone::Unknown && away <= 1.0;
+        };
+        double rise = 0.0;
+        const std::vector<Vec3> band = tautBand(boneAndGap, &field, onBone, endA.point, endB.point,
+                                                clearance + 0.15, widthAxis, &rise);
         if (steppedBridge)
             *steppedBridge = crossesOsteotomy && rise > 0.75;
         // One corner per `step` of band, so its pieces are as long as the walked ones.
@@ -258,8 +300,15 @@ std::vector<PathSample> strutPath(const ImplicitCore::BakedField& field, const P
             if (dot(pieceNormal, barNormal) < 0.0)
                 pieceNormal = scale(pieceNormal, -1.0);
             const int pieces = std::max(1, static_cast<int>(std::ceil(norm(sub(to, from)) / step)));
-            for (int k = (c == 0 ? 1 : 0); k < pieces; ++k)
-                path.push_back({add(from, scale(sub(to, from), static_cast<double>(k) / pieces)), pieceNormal, true});
+            for (int k = (c == 0 ? 1 : 0); k < pieces; ++k) {
+                const Vec3 p = add(from, scale(sub(to, from), static_cast<double>(k) / pieces));
+                // A sample that came to rest on bone is plate seated on bone, bent to it; only what spans the
+                // osteotomy is a flat bar.
+                if (onBone(p))
+                    path.push_back({projectToLevel(field, p, clearance), smoothNormal(field, p, pieceNormal), false});
+                else
+                    path.push_back({p, pieceNormal, true});
+            }
         }
         if (bridgedMm)
             *bridgedMm = gap;

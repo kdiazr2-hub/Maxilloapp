@@ -4269,14 +4269,23 @@ void MainWindow::setSplintWorkspace(bool enabled)
         return;
 
     if (splintHeightmapMethodActive()) {
+        // The arch tells us where it is: the step opens with its guide points already on the cusps and a
+        // preview built, and they stay draggable if the surgeon wants them elsewhere.
+        const int filled = autoFillSplintGuidePoints();
         refreshSplintDesignPanel();
+        rebuildSplintEditablePoints();
         syncSplintView();
         if (m_splintUpperView) m_splintUpperView->setStandardView(3);
         if (m_splintLowerView) m_splintLowerView->setStandardView(4);
         if (m_splintView) m_splintView->setStandardView(0);
         updateButtonStates();
         requestSplintPreview();
-        statusBar()->showMessage(tr("Férula: elija el diseño y las fuentes, marque 3 puntos por arcada y revise la vista previa."));
+        statusBar()->showMessage(filled > 0
+                                     ? tr("Férula: puntos guía colocados automáticamente sobre las cúspides en %1 "
+                                          "arcada(s). Arrástrelos si quiere otro apoyo y pulse «Crear férula».")
+                                           .arg(filled)
+                                     : tr("Férula: elija el diseño y las fuentes, revise la vista previa y pulse "
+                                          "«Crear férula»."));
         return;
     }
 

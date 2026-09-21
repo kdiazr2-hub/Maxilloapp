@@ -106,7 +106,7 @@ struct PlateParams
     double smallestDetailMm = 0.12;      // grid spacing of the plate
     int smoothingIterations = 30;
     double minCutDistanceMm = 4.0;       // a hole may not go closer than this to the osteotomy
-    double minEdgeDistanceMm = 2.0;      // bone left all round the screw's ring, so it is not on a margin
+    double minEdgeDistanceMm = 1.0;      // bone left all round the screw's ring, so it is not on a margin
     double cutEdgeMarginMm = 2.0;        // free plate edge to the osteotomy on both bones
     int minScrewsPerBone = 2;            // warn when a plate holds a bone with fewer screws
 };

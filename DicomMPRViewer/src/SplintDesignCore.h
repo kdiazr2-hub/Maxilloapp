@@ -17,6 +17,8 @@
 
 #include <vector>
 
+class vtkPolyData;
+
 struct SplintDesign
 {
     QString id;
@@ -51,6 +53,14 @@ inline constexpr int kFirstExtraLabel = 230;
 inline constexpr int kLastExtraLabel = 299;
 
 std::vector<SplintDesign> DefaultDesigns(int upperSource, int intermediateLowerSource, int finalLowerSource);
+
+// The guide points of a full-coverage splint, picked off the teeth themselves instead of clicked one by one
+// (user's request, 2026-09-21: "aun tengo que hacerla yo paso a paso"). `occlusal` points from the jaw towards
+// the bite — down for an upper arch, up for a lower one. The band of most occlusal surface is binned across
+// the arch's width and the highest cusp of each bin is taken, so the points span the whole arch, which is what
+// the automatic contour then follows. Returns fewer than `count` points, or none, if the mesh has no arch to
+// read; the caller keeps whatever the surgeon marked in that case.
+std::vector<SplintPoint3> AutoGuidePoints(vtkPolyData* teeth, const SplintPoint3& occlusal, int count = 5);
 
 int IndexOfLabel(const std::vector<SplintDesign>& designs, int label);
 int NextFreeLabel(const std::vector<SplintDesign>& designs); // -1 when the range is full

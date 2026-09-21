@@ -813,6 +813,12 @@ public:
         window.setSplintWorkspace(true);
         settle();
         require(window.activeSplintDesign()->upperSource == kLeFortSegLabel, "Intermedia does not use the Le Fort segment");
+        // The step fills the guide points off the cusps on the way in; this test marks its own instead.
+        require(window.activeSplintDesign()->upperPoints.size() >= 3 &&
+                    window.activeSplintDesign()->lowerPoints.size() >= 3,
+                "the guide points were not placed automatically");
+        window.clearSplintDesignPoints(0);
+        window.clearSplintDesignPoints(1);
         for (const SplintPoint3& p : guidePoints(5.0))
             window.onSplintEditablePointAdded(0, p[0], p[1], p[2]);
         for (const SplintPoint3& p : guidePoints(-5.0))
