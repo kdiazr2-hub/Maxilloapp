@@ -49,3 +49,19 @@ slug: guia-lefort-por-movimiento
 - decision: spans are arc length along the cut from pilar D (plan said "lateral"); `noMotion` flag added
   to the profile so the UI can tell "no REPOSICIÓN" from a broken cut. Logged.
 - blocker: none.
+
+## T003 — 2026-10-04
+- status: complete
+- green: `build-linux-core/LeFortMotionTests` 12/12 PASS (red in T002). Full Linux suite
+  `ctest --test-dir build-linux-core` → 100% passed, 7/7 (VTK 9.5.2).
+- triangulation: added "a posterior impaction is clockwise and the left can be higher" (13/13 PASS).
+  It passed first run because the code existed, so it was mutation-checked: with the Clockwise and
+  LeftHigher branches disabled it FAILS ("a posterior impaction is not clockwise"); restored → 13/13.
+- files: src/LeFortMotionCore.cpp, tests/LeFortMotionTests.cpp.
+- decision: kind = Mixed if some point rises ≥ 0.5 mm and some drops ≥ 0.5 mm; Impaction if only rises;
+  Descent if only drops; otherwise NoPlaneChange. No-motion = cut-centre shift < 0.2 mm and angle < 0.3°
+  (same bars as `guideMotionSummary`). Pitch only for the four Le Fort points (piriform pair vs pillars).
+- review: per-task fresh-reviewer subagent not dispatched (subagents only on the user's request in this
+  session); self-review against the done-check and §0 Global Constraints. The end-of-branch `review`
+  still runs.
+- blocker: none.
