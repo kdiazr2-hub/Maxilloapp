@@ -12,6 +12,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 #include "GuideDesignCore.h"
+#include "LeFortHoleCore.h"
 #include "PlateCore.h"
 #include "WrapCore.h"
 
@@ -61,6 +62,10 @@ struct GuidePlan
     std::vector<PlateDesign> plates;
     PlateParams plate;
     SleeveParams sleeve;
+    // Le Fort only: the guide's own fixation holes, proposed by the app or moved by the surgeon, on the bone
+    // before the cut. The plate phase takes its holes from here. Their support is not saved: it is judged again
+    // whenever the guide is generated, since the movement may have changed. Optional key `lefortHoles`.
+    std::vector<LeFortProposedHole> lefortHoles;
 };
 
 namespace GuidePlanCore

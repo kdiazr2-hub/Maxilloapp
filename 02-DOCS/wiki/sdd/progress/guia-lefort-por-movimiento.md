@@ -153,3 +153,12 @@ slug: guia-lefort-por-movimiento
   New params `bandThresholdMm = 0.5`, `bandMarginAboveMm = 2.0`; `LeFortGuideLayout::upperSlitPieces`.
 - review: self-review (no subagent).
 - blocker: none.
+
+## T010 — 2026-10-04
+- status: complete
+- red: `build-linux-core/GuidePlanTests` — the 2 existing cases PASS; "Le Fort holes travel with the plan"
+  FAILS ("the guide's holes are not saved") and "an unreadable hole is skipped" FAILS. Guard green on
+  purpose: "older plans load without holes" (no key → no holes; a plan without holes writes no key).
+- files: src/GuidePlanCore.h (`std::vector<LeFortProposedHole> lefortHoles`, support not saved),
+  tests/GuidePlanTests.cpp.
+- blocker: none.

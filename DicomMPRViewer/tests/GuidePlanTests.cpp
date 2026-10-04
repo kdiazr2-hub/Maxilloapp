@@ -3,6 +3,7 @@
 #include "OsteotomyCore.h"
 #include "SplintTestGeometry.h"
 
+#include <QJsonArray>
 #include <QJsonDocument>
 
 #include <cmath>
@@ -148,6 +149,68 @@ void testEmptyAndDefaults()
             "the plan did not survive a JSON document");
     require(back.name == QStringLiteral("Guía Le Fort"), "the accented name did not survive");
 }
+// spec §Acceptance 10: the guide's holes — proposed and moved — come back where they were, with their pillar,
+// side and origin, so a reopened project shows the surgeon's own choices.
+void testLeFortHolesTravelWithThePlan()
+{
+    GuidePlan plan;
+    LeFortProposedHole proposed;
+    proposed.center = {-20.0, 0.5, 17.0};
+    proposed.axis = {0.0, 1.0, 0.0};
+    proposed.pillar = LeFortPillar::PillarRight;
+    proposed.side = LeFortCutSide::Cranial;
+    proposed.origin = LeFortHoleOrigin::Auto;
+    LeFortProposedHole moved;
+    moved.center = {11.25, -0.75, -2.5};
+    moved.axis = {0.1, 0.99, 0.0};
+    moved.pillar = LeFortPillar::PiriformLeft;
+    moved.side = LeFortCutSide::Segment;
+    moved.origin = LeFortHoleOrigin::Manual;
+    plan.lefortHoles = {proposed, moved};
+
+    const QJsonObject json = GuidePlanCore::ToJson(plan);
+    require(json.contains(QStringLiteral("lefortHoles")), "the guide's holes are not saved");
+    const QByteArray text = QJsonDocument(json).toJson();
+    require(text.contains("\"manual\"") && text.contains("\"piriformLeft\"") && text.contains("\"segment\""),
+            "the holes are not saved with readable pillar, side and origin");
+    const GuidePlan back = GuidePlanCore::FromJson(QJsonDocument::fromJson(text).object());
+    require(back.lefortHoles.size() == 2, "the guide's holes did not come back: " + std::to_string(back.lefortHoles.size()));
+    for (size_t i = 0; i < 2; ++i) {
+        const LeFortProposedHole& a = plan.lefortHoles[i];
+        const LeFortProposedHole& b = back.lefortHoles[i];
+        for (size_t k = 0; k < 3; ++k)
+            require(std::abs(a.center[k] - b.center[k]) < 1e-9 && std::abs(a.axis[k] - b.axis[k]) < 1e-9,
+                    "a hole moved on the way");
+        require(a.pillar == b.pillar && a.side == b.side && a.origin == b.origin,
+                "a hole lost its pillar, side or origin");
+    }
+}
+
+// constitution 9: a plan saved before this feature has no `lefortHoles` key and still loads, with no holes; a
+// plan without holes does not write the key, so files that never had it keep their shape.
+void testOlderPlansLoadWithoutHoles()
+{
+    const GuidePlan older = GuidePlanCore::FromJson(QJsonObject{{QStringLiteral("name"), QStringLiteral("Guía Le Fort")}});
+    require(older.lefortHoles.empty(), "an older plan came back with holes");
+    require(!GuidePlanCore::ToJson(GuidePlan{}).contains(QStringLiteral("lefortHoles")),
+            "a plan without holes writes an empty key");
+}
+
+// A hole whose pillar or side the file does not name is skipped, not guessed.
+void testAnUnreadableHoleIsSkipped()
+{
+    QJsonObject good{{QStringLiteral("center"), QJsonArray{1.0, 2.0, 3.0}},
+                     {QStringLiteral("axis"), QJsonArray{0.0, 1.0, 0.0}},
+                     {QStringLiteral("pillar"), QStringLiteral("pillarLeft")},
+                     {QStringLiteral("side"), QStringLiteral("cranial")},
+                     {QStringLiteral("origin"), QStringLiteral("auto")}};
+    QJsonObject bad = good;
+    bad[QStringLiteral("pillar")] = QStringLiteral("nose");
+    const GuidePlan plan = GuidePlanCore::FromJson(
+        QJsonObject{{QStringLiteral("lefortHoles"), QJsonArray{good, bad}}});
+    require(plan.lefortHoles.size() == 1 && plan.lefortHoles.front().pillar == LeFortPillar::PillarLeft,
+            "an unreadable hole was not skipped");
+}
 } // namespace
 
 int main()
@@ -155,6 +218,9 @@ int main()
     const std::vector<std::pair<const char*, std::function<void()>>> tests = {
         {"round trip", testRoundTrip},
         {"empty and defaults", testEmptyAndDefaults},
+        {"Le Fort holes travel with the plan", testLeFortHolesTravelWithThePlan},
+        {"older plans load without holes", testOlderPlansLoadWithoutHoles},
+        {"an unreadable hole is skipped", testAnUnreadableHoleIsSkipped},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {
