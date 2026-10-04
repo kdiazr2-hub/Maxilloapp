@@ -293,7 +293,7 @@ Comandos de los done-checks:
 
 | ID | [P] | Task | Done-check | Depends-on | Trace |
 | --- | --- | --- | --- | --- | --- |
-| T001 |  | Configure a Linux build of the core tests only (Qt 6 Core + VTK 9 from Ubuntu), without touching the Windows build | `ctest -R "LeFortGuideTests\|PlateTests\|GuidePlanTests"` green on Linux with unmodified sources; Windows configure unchanged (same targets list) | — | plan §6 paso 0, §7 riesgo 1 |
+| T001 |  | Configure a Linux build of the core tests only (Qt 6 Core + VTK 9 from Ubuntu), without touching the Windows build | `ctest -R "LeFortGuideTests\|PlateTests\|GuidePlanTests"` green on Linux with unmodified sources; the Linux build lives in its own file and `git diff DicomMPRViewer/CMakeLists.txt` is empty | — | plan §6 paso 0, §7 riesgo 1 |
 | T002 |  | Write failing `LeFortMotionTests` (registered with `add_core_test`) | test target builds and fails: `LeFortMotionCore` not found / asserts fail for uniform 3 mm, 4 D/1 I, anterior 4 mm, pure advance 5 mm, advance 5 + 3 mm, descent 3 mm, mixed crossing, 0.4 mm below threshold, identity → NoMotion | T001 | spec §Acc 1-6, 11; §Behaviour mixto |
 | T003 |  | Implement `LeFortMotionCore::Band` | `ctest -R LeFortMotionTests` green (was red in T002) | T002 | spec §Acc 1-6, 11 |
 | T004 | [P] | Write failing `LeFortHoleTests` for `Support` | fails for: 3 mm wall → Ok with thickness 3 ± 0.3; 1 mm wall → Aviso "grosor"; bony margin → Rechazo; < 4 mm from cut → Rechazo; cranial hole inside a 4 mm band or < 4 mm above it → Rechazo | T001 | spec §Acc 9; §Behaviour error; plan §3 Support |
@@ -304,13 +304,14 @@ Comandos de los done-checks:
 | T009 |  | Extend `LeFortGuideCore::Layout` with the band profile and proposed holes | `ctest -R LeFortGuideTests` green, including every pre-existing case | T008 | spec §Acc 1-6, 8, 12 |
 | T010 | [P] | Write failing `GuidePlanTests` cases for `lefortHoles` | fails for: auto/manual holes round-trip through JSON with center, axis, pillar, side, origin; a plan JSON without the key loads with no holes and no error | T007 | spec §Acc 10; constitución 9 |
 | T011 |  | Persist `lefortHoles` in `GuidePlanCore` | `ctest -R "GuidePlanTests\|ProjectSerializerTests"` green | T010 | spec §Acc 10 |
-| T012 |  | Wire «Generar guía de corte» to motion → band → holes (keep manual, re-propose auto) → layout → build, with report and no-motion message | Windows build green; manual: impaction case shows two slits and the heights in the report; project without REPOSICIÓN shows «falta el movimiento» and a single slit; project with plates shows the mismatch warning | T009, T011 | spec §Acc 1-7, 11 |
+| T012 |  | Wire «Generar guía de corte» to motion → band → holes (keep manual, re-propose auto) → layout → build, with report and no-motion message | Windows build green; manual: impaction case shows two slits and the heights in the report; project without REPOSICIÓN shows «falta el movimiento» and a single slit; project with plates shows the mismatch warning; a pillar without valid bone lists the missing holes and the reason in the report | T009, T011 | spec §Acc 1-7, 11 |
 | T013 |  | Show the band in red on the anterior wall, only inside `spans`, color from `CranioPalette` | manual on Windows: red ribbon between cut and upper cut for an impaction, none for a descent; correct in light and dark mode | T012 | spec §Behaviour (franja visible); constitución 16 |
 | T014 |  | Add the «Mover orificio» mode (pick a hole, click bone; Rechazo keeps it, Aviso moves it and marks it, Ok moves it; origin → manual; rebuild) | manual on Windows: move to a 1 mm wall → warning marker + reason in report; to a bony margin → refused with reason in status bar; save/reopen keeps the moved hole | T012 | spec §Acc 8-10 |
 | T015 |  | Confirm the guide can only be exported after it was shown (add the gate if missing) | read `exportGuideStl` flow; manual: export disabled/refused before a generated guide is displayed | T012 | spec §Acc 13; constitución 15 |
-| T016 |  | Update `CLAUDE.md` § Architecture and `02-DOCS/wiki/sdd/decisions.md` | diff shows the new cores, the band rule and the hole edit mode documented | T014, T015 | constitución 17-18 |
+| T016 |  | Update `CLAUDE.md` § Architecture (UI part) and `02-DOCS/wiki/sdd/decisions.md` | diff documents the generate flow, the red band and the hole edit mode | T014, T015 | constitución 17-18 |
 | T017 |  | Run the full Windows build + `ctest` and a real case with `PlateProbe` on the user's PC | user reports build OK, all CTest green, and the guide for a real impaction (one piece, band heights as planned) | T016 | spec §Acceptance (all); constitución 4 |
-| T018 |  | All done-checks pass → hand off to `verify` | every row above checked with its evidence linked | T001-T017 | spec §Acceptance |
+| T018 |  | All done-checks pass → hand off to `verify` | every row above checked with its evidence linked | T001-T017, T019 | spec §Acceptance |
+| T019 |  | Document `LeFortMotionCore`, `LeFortHoleCore`, the band rule and `lefortHoles` in `CLAUDE.md` § Architecture and Build & test (PR 1) | diff of `CLAUDE.md` in PR 1 names both cores, their tests and the Linux core build | T011 | constitución 18; analyze #2 |
 
 **T003 — Interfaces**
 - Consumes: `OsteotomyPath` (4 points: pilar D, piriforme D, piriforme I, pilar I; `depthAxis`, `upAxis`); motion as row-major `std::array<double,16>` pre → planned (same as `PlateCore::RigidMotion`).
@@ -342,4 +343,4 @@ Comandos de los done-checks:
 | Estimated changed lines | 1 600 – 2 300 | 2 new cores (~700) + Layout extension (~200) + plan keys (~80) + UI (~400) + tests (~700) |
 | Files / areas | ~14: `LeFortMotionCore.*`, `LeFortHoleCore.*`, `LeFortGuideCore.*`, `GuidePlanCore.*`, `MainWindowGuides.cpp`, `MainWindow.h`, `CMakeLists.txt`, 3 test files, `CLAUDE.md`, decisions | core geometry, persistence, UI, build |
 | Review risk | high | clinical output that gets printed; UI part cannot be built in the cloud |
-| Suggested delivery | ask-on-risk, **two PRs** | PR 1 = cores + tests (T001-T011, verifiable in the cloud); PR 2 = UI + docs (T012-T016, verified on the user's PC). Each under review alone. |
+| Suggested delivery | ask-on-risk, **two PRs** | PR 1 = cores + tests + their docs (T001-T011, T019), developed and checked in the cloud, **merged only after the user's Windows Release build + full `ctest`** (constitución 4); PR 2 = UI + docs (T012-T016), verified on the user's PC, same merge rule. Each under review alone. |

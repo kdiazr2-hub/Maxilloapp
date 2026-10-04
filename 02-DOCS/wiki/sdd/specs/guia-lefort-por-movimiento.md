@@ -99,7 +99,10 @@ taladrar los orificios que después ocuparán las placas.
   conservan al guardar y reabrir; los proyectos anteriores siguen abriendo.
 - **Error — orificio movido a mal sitio:** si el profesional mueve un orificio a un sitio
   con soporte insuficiente, la app lo marca, explica el motivo y respeta su decisión.
-  Los orificios sobre un borde óseo libre siguen rechazándose como hoy.
+  Los orificios sobre un borde óseo libre siguen rechazándose como hoy, y también un orificio
+  craneal dentro de la franja o a menos de 4 mm de su borde superior (ese hueso se quita).
+- **Edge — placas anteriores:** si el proyecto ya tiene placas cuyos orificios no coinciden con
+  los de la guía, el informe lo avisa.
 - **Error — sin movimiento planificado:** si el Le Fort no tiene REPOSICIÓN, la app no
   inventa movimiento: lo dice y no genera franja.
 
@@ -164,9 +167,6 @@ taladrar los orificios que después ocuparán las placas.
   manda cuando hay placas.
 - **decisión diferida** — Forma y número de placas, y reproducción del avance/retroceso
   con ellas: fase siguiente.
-- **área no formulable** — Cómo se comportan los orificios propuestos cuando el
-  profesional cambia después el movimiento en REPOSICIÓN (¿se recolocan, se conservan los
-  movidos a mano?). Sé que habrá una pregunta; aún no está clara.
 
 ## Revisions
 
@@ -177,3 +177,8 @@ taladrar los orificios que después ocuparán las placas.
     Fort y el borde superior de la franja.
   - Solo cuentan los cambios de plano (vertical, rotación
     horaria/antihoraria, inclinación lateral); el avance lo determina la placa.
+- **2026-10-04 — tras `analyze`** (decisiones del usuario):
+  - Un orificio craneal dentro de la franja o a < 4 mm de su borde superior se **rechaza**.
+  - Se **mantiene** el aviso de placas anteriores cuyos orificios no coinciden con la guía.
+  - Si cambia el movimiento, los orificios movidos a mano **se conservan** y se re-evalúan
+    (antes: área no formulable; cerrada en el plan).

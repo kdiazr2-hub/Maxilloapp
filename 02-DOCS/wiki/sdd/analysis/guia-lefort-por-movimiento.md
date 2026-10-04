@@ -13,8 +13,13 @@ slug: guia-lefort-por-movimiento
 > Constitución v1.0.0 · [Spec](../specs/guia-lefort-por-movimiento.md) (clarified, aprobada) ·
 > [Plan + tareas](../plans/guia-lefort-por-movimiento.md) (approved, T001–T018)
 
-**GATE: BLOCKED** — 2 CRITICAL · 0 HIGH · 4 MEDIUM · 2 LOW.
-Los dos CRITICAL son de **entrega** (cuándo se integra cada PR), no de diseño: no afectan a T001.
+**GATE: PASS** (re-run 2026-10-04) — 0 CRITICAL · 0 HIGH · 0 MEDIUM · 1 LOW aceptado.
+
+Primera pasada: BLOCKED (2 CRITICAL · 4 MEDIUM · 2 LOW). El usuario decidió los arreglos y se
+aplicaron en sus fases: `tasks` (#1, #2, #4, #5 → T001, T012, T016, T019 y la previsión de entrega)
+y `specify` (#3, #6, #7 → Behaviour y Revisions de la spec). Queda #8 (LOW), aceptado: las tareas de
+test no llevan bloque Interfaces porque se ejecutan con el contexto completo, no en subagentes
+aislados. La tabla de abajo es la de la primera pasada, conservada como historial.
 
 ## Coverage map
 
@@ -34,13 +39,14 @@ Los dos CRITICAL son de **entrega** (cuándo se integra cada PR), no de diseño:
 | R12 | Una pieza, material bajo cada camisa | §3 Layout | T008, T009 | covered |
 | R13 | Revisión visible antes de exportar | §5 | T015 | covered |
 | R14 | Franja visible en otro color, altura consultable | §4 paso 6 | T012 (informe), T013 | covered |
-| R15 | Sin sitio válido → propone los que caben e informa cuáles faltan | §3 Propose `missing[]` | T006, T007 · UI: — | AMBIGUOUS (ver #4) |
+| R15 | Sin sitio válido → propone los que caben e informa cuáles faltan | §3 Propose `missing[]` | T006, T007, T012 | covered (tras #4) |
 | R16 | Borde óseo libre sigue rechazándose | §0, §3 Support | T004, T005 | covered |
 | R17 | Orificios registrados para la fase de placas | §3 GuidePlanCore | T010, T011 | covered |
-| — | Rechazo de orificio craneal dentro de la franja o a < 4 mm de ella | §3 Support (NUEVO) | T004, T005 | DRIFT (ver #3) |
-| — | Aviso si hay placas cuyos orificios no coinciden con la guía | §4 migración | T012 | DRIFT (ver #6) |
+| R18 | Rechazo de orificio craneal dentro de la franja o a < 4 mm de ella | §3 Support | T004, T005 | covered (spec tras #3) |
+| R19 | Aviso si hay placas cuyos orificios no coinciden con la guía | §4 migración | T012 | covered (spec tras #6) |
+| R20 | Constitución 18: cores documentadas en el mismo PR | — | T019 | covered (tras #2) |
 
-## Findings
+## Findings (primera pasada)
 
 | # | Sev. | Tipo | Artefacto A (loc.) | Artefacto B (loc.) | Conflicto | Resolver en |
 | --- | --- | --- | --- | --- | --- | --- |
