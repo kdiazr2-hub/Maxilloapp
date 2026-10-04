@@ -63,3 +63,9 @@ Cerradas las dos abiertas: grosor medido en la segmentación ósea; los orificio
 - `CLAUDE.md` documenta las cores ya en PR 1 (T019, constitución 18).
 - Un orificio craneal dentro de la franja o a < 4 mm de ella se **rechaza** (spec ampliada).
 - Se mantiene el aviso de placas anteriores que no coinciden con la guía (spec ampliada).
+
+## 2026-10-04 — Linux core verification uses the project's exact VTK  (feature: guia-lefort-por-movimiento, task: T001)
+Context  — Ubuntu ships VTK 9.1; with it PlateTests and LeFortGuideTests fail by tenths of a millimetre.
+Options  — accept 9.1 and skip those tests / relax tolerances / build VTK 9.5.2 from source.
+Decision — build VTK 9.5.2 (no rendering modules) and require `VTK 9.5` in tools/linux-core-tests.
+Why      — the tests are right on 9.5.2; relaxing them would hide real geometry regressions.

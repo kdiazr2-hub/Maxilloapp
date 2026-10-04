@@ -2,11 +2,14 @@
 # It does not replace the Windows build: the app, the workspace tests and the merge bar
 # (constitution, principle 4) stay on DicomMPRViewer/CMakeLists.txt with MSVC, Qt 6.11 and VTK 9.5.2.
 #
-#   cmake -S DicomMPRViewer/tools/linux-core-tests -B build-linux-core
+#   cmake -S DicomMPRViewer/tools/linux-core-tests -B build-linux-core -DVTK_DIR=<vtk 9.5.2>/lib/cmake/vtk-9.5
 #   cmake --build build-linux-core --parallel
 #   ctest --test-dir build-linux-core --output-on-failure
 #
-# Ubuntu 24.04 packages: qt6-base-dev libvtk9-dev (Qt 6.4, VTK 9.1).
+# Use the project's VTK, 9.5.2, built from source (git tag v9.5.2; only the modules below, no rendering).
+# Ubuntu's libvtk9-dev is 9.1: the geometry differs by tenths of a millimetre and PlateTests and
+# LeFortGuideTests fail on it while they pass on 9.5.2. Qt can be Ubuntu's qt6-base-dev (6.4): the cores
+# only use QtCore and QtConcurrent.
 cmake_minimum_required(VERSION 3.20)
 project(MaxilloCoreTestsLinux LANGUAGES CXX)
 
@@ -16,7 +19,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_AUTOMOC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Concurrent)
-find_package(VTK REQUIRED COMPONENTS
+find_package(VTK 9.5 REQUIRED COMPONENTS
     CommonCore CommonDataModel CommonMath CommonTransforms
     FiltersCore FiltersGeneral FiltersSources FiltersModeling FiltersGeometry
     IOGeometry IOXML IOImage
