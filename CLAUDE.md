@@ -32,7 +32,7 @@ Tests (CTest):
 - `GeometryCoreTests`, `BoneCavityFillTests`, `MeshGeneratorTests` — plain C++ executables
 - `MaskToObjectTests` checks exact label extraction, committed cavity filling and immutable input.
 - `ModelWorkflowTests` checks guided MODELOS steps, paired point requirements, fine adjustment and mandatory acceptance.
-- `SplintHeightmapTests`, `SplintDesignTests`, `SplintContourEditTests`, `SplintPreviewSchedulerTests`, `ProjectSerializerTests`, `CompositeBlockTests`, `MeshRepairTests`, `OsteotomyCoreTests`, `CollisionTests`, `ImplicitCoreTests`, `WrapCoreTests`, `GuideBaseTests`, `CutSlotTests`, `GuideDesignTests`, `GuideSculptTests`, `PlateTests`, `LeFortGuideTests`, `GuidePlanTests`, `SegmentationProgressTests` — core tests declared with `add_core_test()`; synthetic arches in `tests/SplintTestGeometry.h`
+- `SplintHeightmapTests`, `SplintDesignTests`, `SplintContourEditTests`, `SplintPreviewSchedulerTests`, `ProjectSerializerTests`, `CompositeBlockTests`, `MeshRepairTests`, `OsteotomyCoreTests`, `CollisionTests`, `ImplicitCoreTests`, `WrapCoreTests`, `GuideBaseTests`, `CutSlotTests`, `GuideDesignTests`, `GuideSculptTests`, `PlateTests`, `LeFortGuideTests`, `LeFortMotionTests`, `LeFortHoleTests`, `GuidePlanTests`, `SegmentationProgressTests` — core tests declared with `add_core_test()`; synthetic arches in `tests/SplintTestGeometry.h`
 - `SplintWorkspaceTests` also covers the composite block flow and the osteotomy wizard (Le Fort I → BSSO → genioplasty)
 - `RepositionWorkspaceTests`, `SplintWorkspaceTests` — instantiate `MainWindow` (declared `friend`), render offscreen, write PNGs to `build/workspace-test-artifacts`
 - `Mesh3DViewInteractionTests` — drives `Mesh3DView` offscreen with synthetic mouse events
@@ -46,6 +46,16 @@ DicomMPRViewer/build/Release/SplintBenchmark.exe --synthetic-triangles 300000 --
 
 The points JSON comes from "Exportar puntos" in the splint panel.
 - `BoneSegmentationPythonTests` — `tests/test_bone_segmentation.py`, runs with `DENTALSEGMENTATOR_PYTHON` (conda env `dentalgpu`: numpy, scipy, SimpleITK, torch, nnunetv2)
+
+Linux core build (cloud sessions without the Windows toolchain): `DicomMPRViewer/tools/linux-core-tests/CMakeLists.txt`
+builds the guide/plate/serializer core tests only (no app, no workspace tests) and does not replace the Windows
+merge bar. It needs VTK 9.5.2 built from source (Ubuntu's 9.1 shifts the geometry by tenths of a millimetre and
+fails PlateTests and LeFortGuideTests); Qt can be Ubuntu's 6.4. `QT_NO_EMIT` keeps Qt's `emit` out of oneTBB.
+
+```bash
+cmake -S DicomMPRViewer/tools/linux-core-tests -B build-linux-core -DVTK_DIR=<vtk-9.5.2>/lib/cmake/vtk-9.5
+cmake --build build-linux-core --parallel && ctest --test-dir build-linux-core --output-on-failure
+```
 
 ## Architecture
 
@@ -291,6 +301,30 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   now saved as `executedCuts` in the osteotomy plan and restored by `restoreGuidePlan`; older projects rebuild the Le
   Fort path from `m_segmentReferences[kLeFortSegLabel].landmarks` (`recoveredLeFortPath`, points stored pilar R,
   piriform R, piriform L, pilar L). `rememberOsteotomyCut` merges cuts with the same points (slot pieces of one cut).
+- Movement-driven Le Fort guide (spec `02-DOCS/wiki/sdd/specs/guia-lefort-por-movimiento.md`, user's decisions
+  2026-10-04; the cores are done, the GUIAS UI does not call them yet). Only changes of plane shape the guide —
+  rise/drop, clockwise/counter-clockwise rotation, cant; advancement, lateral shift and yaw are the plate's.
+  `LeFortMotionCore::Band(cut, motion)` gives the band an impaction takes out: at each cut point the rise is
+  `Z·(M·p − p)` (no term in a horizontal translation or a yaw, so the advancement drops out by construction;
+  the same "Z +x impactación" REPOSICIÓN shows), linear along each piece of the cut. `spans` are the stretches
+  where it is ≥ 0.5 mm, as arc length from pilar D with exact threshold crossings (`PointAlongCut`,
+  `CutLength`); `upperCut` is the cut raised point by point; kind Impaction/Descent/Mixed/NoPlaneChange, pitch
+  (counter-clockwise = the front rises more) and cant; `noMotion` when REPOSICIÓN was not done. The band is
+  never saved: it is recomputed from the movement. `LeFortHoleCore::Support(site, axis, ctx)` judges a hole
+  on the bone BEFORE the cut: no bone within 1 mm → refused; a cranial hole inside the band or < 4 mm above
+  it → refused (that bone is taken out; judged before the ring so the reason is the band, not the margin it
+  creates); then `PlateCore::CheckHoleSeat` (site carried to the planned position for the segment); then the
+  bone along the drill on `BakeMeshField` of the meshes (entry/exit zero crossings) — < 2.0 mm is a WARNING,
+  not a refusal (the surgeon decides). `LeFortHoleCore::Propose(ctx)` puts 2 above + 2 below the cut at each
+  pillar (the cut's four points): a 1 mm grid, ±8 mm lateral, 4–12 mm from the cut or the band's upper edge,
+  each node found by walking along −`ctx.anterior` into the bone field (the cut's sweep axis has no sign),
+  kept only if `Support` is Ok, thickest first (to 0.25 mm), 6.5 mm apart; a pillar without sound bone goes
+  to `missing` with a Spanish reason, never a weaker site. `LeFortGuideCore::Layout(..., params, &band)` adds
+  the second slit along `upperCut` inside each Le Fort slit piece (same bridges), only where the rise is
+  ≥ 0.5 mm; paints a second row of dabs on the band's upper edge when the band is taller than the first row
+  covers; raises the cranial positioning screws by the rise; keeps lattice cells `rowOffset` from both slits.
+  Without a band the layout is unchanged. `GuidePlan::lefortHoles` saves the guide's holes (center, axis,
+  pillar, side, origin auto/manual) under the optional `lefortHoles` key; support is not saved.
 - `GuideSculptCore` is the EDITAR step: Freeform's clay, except the clay is the signed distance grid the guide was
   contoured from. `SculptSession::Reset` bakes the finished guide (`BakeMeshField`, detail spacing, ≥ 3 mm padding so
   material can be added outside it) and the brushes edit that grid: Suavizar `φ += w·λ·(G∗φ − φ)` with a 3×3×3
