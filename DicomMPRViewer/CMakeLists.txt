@@ -340,6 +340,9 @@ add_core_test(ModelWorkflowTests tests/ModelWorkflowTests.cpp src/ModelWorkflowC
 add_core_test(OsteotomyCoreTests tests/OsteotomyCoreTests.cpp src/OsteotomyCore.cpp src/CompositeBlockCore.cpp)
 add_core_test(LeFortMotionTests tests/LeFortMotionTests.cpp src/LeFortMotionCore.cpp src/OsteotomyCore.cpp
     src/CompositeBlockCore.cpp)
+add_core_test(LeFortHoleTests tests/LeFortHoleTests.cpp src/LeFortHoleCore.cpp src/LeFortMotionCore.cpp
+    src/PlateCore.cpp src/GuideDesignCore.cpp src/GuideBaseCore.cpp src/CutSlotCore.cpp src/WrapCore.cpp
+    src/OsteotomyCore.cpp src/ImplicitCore.cpp src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)
 target_link_libraries(ProjectSerializerTests PRIVATE Qt6::Gui)
 
 # Splint generator timing with real or synthetic STL (not a CTest by default).

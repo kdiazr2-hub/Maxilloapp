@@ -55,4 +55,6 @@ add_core_test(PlateTests tests/PlateTests.cpp src/PlateCore.cpp ${GUIDE_CORE})
 add_core_test(LeFortGuideTests tests/LeFortGuideTests.cpp src/LeFortGuideCore.cpp src/PlateCore.cpp ${GUIDE_CORE})
 add_core_test(LeFortMotionTests tests/LeFortMotionTests.cpp src/LeFortMotionCore.cpp src/OsteotomyCore.cpp
     src/CompositeBlockCore.cpp)
+add_core_test(LeFortHoleTests tests/LeFortHoleTests.cpp src/LeFortHoleCore.cpp src/LeFortMotionCore.cpp
+    src/PlateCore.cpp ${GUIDE_CORE})
 add_core_test(GuidePlanTests tests/GuidePlanTests.cpp src/GuidePlanCore.cpp src/PlateCore.cpp ${GUIDE_CORE})
