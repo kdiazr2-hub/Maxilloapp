@@ -162,3 +162,14 @@ slug: guia-lefort-por-movimiento
 - files: src/GuidePlanCore.h (`std::vector<LeFortProposedHole> lefortHoles`, support not saved),
   tests/GuidePlanTests.cpp.
 - blocker: none.
+
+## T011 — 2026-10-04
+- status: complete
+- green: `build-linux-core/GuidePlanTests` 5/5 PASS (2 were red in T010). `ProjectSerializerTests` added to
+  the Linux build (with Qt6::Gui) and PASSES 4/4, including "guides plan round trip" and "legacy project
+  without designs". Full Linux suite → 100% passed, 9/9.
+- files: src/GuidePlanCore.cpp (optional `lefortHoles`: center, axis, pillar key, side, origin; written only
+  when there are holes; on load a hole with an unknown pillar/side or no centre is skipped),
+  tools/linux-core-tests/CMakeLists.txt.
+- review: self-review (no subagent).
+- blocker: none.
