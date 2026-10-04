@@ -18,7 +18,7 @@ tags: [index]
 
 | Spec | Status | Where |
 |------|--------|-------|
-| Guía de corte Le Fort I generada a partir del movimiento | draft | `sdd/specs/guia-lefort-por-movimiento.md` |
+| Guía de corte Le Fort I generada a partir del movimiento | clarified (aprobada) | `sdd/specs/guia-lefort-por-movimiento.md` |
 
 ## harness
 

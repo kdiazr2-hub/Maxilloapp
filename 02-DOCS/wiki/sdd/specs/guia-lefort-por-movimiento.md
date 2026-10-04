@@ -6,12 +6,12 @@ tags: [sdd, spec, guias, lefort]
 timestamp: 2026-10-04T00:00:00Z
 topic: sdd
 slug: guia-lefort-por-movimiento
-status: draft
+status: clarified
 ---
 
 # Spec — Guía de corte Le Fort I generada a partir del movimiento
 
-> Slug: `guia-lefort-por-movimiento` · Status: draft · Created: 2026-10-04
+> Slug: `guia-lefort-por-movimiento` · Status: clarified · Created: 2026-10-04 · Aprobada por el usuario: 2026-10-04 ("Sí, la apruebo")
 > Inherits: [constitution](../constitution.md) v1.0.0
 
 ## Problem & why
