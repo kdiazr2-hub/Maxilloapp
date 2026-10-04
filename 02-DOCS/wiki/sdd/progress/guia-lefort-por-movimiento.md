@@ -121,3 +121,18 @@ slug: guia-lefort-por-movimiento
   6.5 mm spacing across all holes; shortfalls go to `missing` with a Spanish reason.
 - review: self-review (no subagent).
 - blocker: none.
+
+## T008 — 2026-10-04
+- status: complete
+- red: `build-linux-core/LeFortGuideTests` — the 6 existing cases PASS; 4 new cases FAIL on assertions
+  against a `Layout` that ignores the band: upper slit only where the segment rises (rolled band, right
+  side to x = −5) + report mentions "franja"; upper pieces split by the same bridges (each inside a Le
+  Fort piece, none across the midline); 3 mm band → one piece with the upper slit open at z = 12;
+  7 mm band → paint reaches 2 mm above the band at x = ±15, positioning screws ≥ 4 mm above it, no
+  lattice cell within slit clearance of either slit.
+- guards (green before the implementation, on purpose): an empty band leaves the layout identical; a
+  moved hole takes its pad with it (spec §Acceptance 8, core part).
+- files: src/LeFortGuideCore.h/.cpp (optional `const LeFortBandProfile* band` after params, ignored for
+  now), tests/LeFortGuideTests.cpp, CMakeLists (LeFortMotionCore in LeFortGuideTests, the app, PlateProbe;
+  LeFortHoleCore in the app), tools/linux-core-tests.
+- blocker: none.
