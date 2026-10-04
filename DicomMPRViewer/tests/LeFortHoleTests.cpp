@@ -194,15 +194,15 @@ void testASiteOffTheBoneIsRefused()
 
 // A maxilla with a piriform aperture and four pillars, face towards +Y. The cranial wall is 3 mm deep with the
 // sinus behind it; the aperture is |x| < 6 from the cut up to z = 20. With `thinLeftPillar` the wall lateral to
-// x = 12 on the left is only 1 mm deep. The cut is level at z = 9 through the pillars (x = ±20) and the
-// piriform rims (x = ±10).
+// x = 11 on the left is only 1 mm deep, so the left pillar's whole window (x = 12..28) is thin. The cut is
+// level at z = 9 through the pillars (x = ±20) and the piriform rims (x = ±10).
 std::vector<vtkSmartPointer<vtkPolyData>> maxillaWithAperture(bool thinLeftPillar)
 {
     std::vector<vtkSmartPointer<vtkPolyData>> pieces{boxMesh({-25.0, -6.0, -3.0, 0.0, 10.0, 30.0}, false, false),
                                                      boxMesh({-6.0, 6.0, -3.0, 0.0, 20.0, 30.0}, false, false)};
     if (thinLeftPillar) {
-        pieces.push_back(boxMesh({6.0, 12.0, -3.0, 0.0, 10.0, 30.0}, false, false));
-        pieces.push_back(boxMesh({12.0, 25.0, -1.0, 0.0, 10.0, 30.0}, false, false));
+        pieces.push_back(boxMesh({6.0, 11.0, -3.0, 0.0, 10.0, 30.0}, false, false));
+        pieces.push_back(boxMesh({11.0, 25.0, -1.0, 0.0, 10.0, 30.0}, false, false));
     } else {
         pieces.push_back(boxMesh({6.0, 25.0, -3.0, 0.0, 10.0, 30.0}, false, false));
     }

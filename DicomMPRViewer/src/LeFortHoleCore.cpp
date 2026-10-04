@@ -144,18 +144,144 @@ LeFortHoleSupport Support(const std::array<double, 3>& site, const std::array<do
     return support;
 }
 
-LeFortProposal Propose(const LeFortHoleContext&)
+LeFortProposal Propose(const LeFortHoleContext& context)
 {
+    LeFortProposal proposal;
+    const LeFortHoleParams& params = context.params;
+    if (!context.bone || !context.preopBone || context.cut.points.size() != 4)
+        return proposal;
+
+    const Vec3 up = unit(context.cut.upAxis, {0.0, 0.0, 1.0});
+    const Vec3 front = unit(sub(context.anterior, scale(up, dot(context.anterior, up))), {0.0, -1.0, 0.0});
+    const Vec3 lateral = unit(Vec3{up[1] * front[2] - up[2] * front[1], up[2] * front[0] - up[0] * front[2],
+                                   up[0] * front[1] - up[1] * front[0]},
+                              {1.0, 0.0, 0.0});
+    const bool hasBand = !context.band.spans.empty();
+    const std::vector<double> noRise(context.cut.points.size(), 0.0);
+    const std::vector<double>& rises = hasBand ? context.band.heights : noRise;
+    // The band's height under a site, where there is a band at all.
+    const auto bandUnder = [&](const OverCut& over) {
+        return hasBand && over.heightMm >= params.bandThresholdMm ? over.heightMm : 0.0;
+    };
+
+    // A site found on the anterior wall: start in front of the face and walk back into the bone.
+    const auto onWall = [&](const Vec3& start, Vec3& site) {
+        constexpr double kReachMm = 30.0;
+        const double step = std::clamp(0.5 * context.bone->spacingMm, 0.02, 0.1);
+        double previous = context.bone->At(start);
+        for (double t = step; t <= kReachMm; t += step) {
+            const Vec3 p = add(start, scale(front, -t));
+            const double value = context.bone->At(p);
+            if (previous >= 0.0 && value < 0.0) {
+                const double back = step * value / (value - previous); // to the zero crossing
+                site = add(p, scale(front, back));
+                return true;
+            }
+            previous = value;
+        }
+        return false;
+    };
+
+    struct Candidate
+    {
+        LeFortProposedHole hole;
+        double rankThickness = 0.0; // to a quarter of a millimetre: real bone is never exactly flat
+        double lateralOffset = 0.0;
+        double fromWindow = 0.0;
+    };
+    const double reach = std::max(0.0, params.lateralReachMm);
+    const double step = std::max(0.25, params.sampleStepMm);
+    static const LeFortPillar kPillars[] = {LeFortPillar::PillarRight, LeFortPillar::PiriformRight,
+                                            LeFortPillar::PiriformLeft, LeFortPillar::PillarLeft};
+    std::vector<Vec3> chosen;
+    for (size_t index = 0; index < 4; ++index) {
+        const Vec3& anchor = context.cut.points[index];
+        for (const LeFortCutSide side : {LeFortCutSide::Cranial, LeFortCutSide::Segment}) {
+            const bool cranial = side == LeFortCutSide::Cranial;
+            std::vector<Candidate> candidates;
+            for (double u = -reach; u <= reach + 1e-9; u += step) {
+                const Vec3 column = add(anchor, scale(lateral, u));
+                // Where the window starts in this column: the cut, or the band's upper edge above it.
+                const double base = cranial ? bandUnder(overCut(column, context.cut, rises, up)) : 0.0;
+                for (double v = params.windowNearMm; v <= params.windowFarMm + 1e-9; v += step) {
+                    const double height = cranial ? base + v : -v;
+                    Vec3 site;
+                    if (!onWall(add(add(column, scale(up, height)), scale(front, 15.0)), site))
+                        continue;
+                    // The window is checked again where the site actually landed.
+                    const OverCut over = overCut(site, context.cut, rises, up);
+                    const double fromCut = cranial ? over.aboveCutMm - bandUnder(over) : -over.aboveCutMm;
+                    if (fromCut < params.windowNearMm - 1e-6 || fromCut > params.windowFarMm + 1e-6)
+                        continue;
+                    double distance = 0.0;
+                    const PlateBone bone = context.preopBone(site, &distance);
+                    if (bone != (cranial ? PlateBone::Cranial : PlateBone::Segment))
+                        continue;
+                    LeFortProposedHole hole;
+                    hole.center = site;
+                    hole.axis = PlateCore::BoneNormalAt(*context.bone, site, front);
+                    hole.pillar = kPillars[index];
+                    hole.side = side;
+                    hole.origin = LeFortHoleOrigin::Auto;
+                    hole.support = Support(hole.center, hole.axis, context);
+                    if (hole.support.verdict != LeFortSupportVerdict::Ok)
+                        continue;
+                    candidates.push_back({hole, std::round(4.0 * hole.support.thicknessMm) / 4.0, std::abs(u),
+                                          fromCut});
+                }
+            }
+            // Thickest bone first; among equals the one nearest the pillar's own line, then nearest the cut.
+            std::stable_sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
+                if (a.rankThickness != b.rankThickness)
+                    return a.rankThickness > b.rankThickness;
+                if (std::abs(a.lateralOffset - b.lateralOffset) > 1e-9)
+                    return a.lateralOffset < b.lateralOffset;
+                return a.fromWindow < b.fromWindow;
+            });
+            int placed = 0;
+            for (const Candidate& candidate : candidates) {
+                if (placed >= params.holesPerSide)
+                    break;
+                bool apart = true;
+                for (const Vec3& other : chosen)
+                    apart = apart && norm(sub(candidate.hole.center, other)) >= params.pairSpacingMm;
+                if (!apart)
+                    continue;
+                chosen.push_back(candidate.hole.center);
+                proposal.holes.push_back(candidate.hole);
+                ++placed;
+            }
+            if (placed < params.holesPerSide) {
+                LeFortMissingHoles gap;
+                gap.pillar = kPillars[index];
+                gap.side = side;
+                gap.missing = params.holesPerSide - placed;
+                gap.reason = QStringLiteral("Faltan %1 orificio(s) en %2, %3: no hay hueso de al menos %4 mm lejos "
+                                            "del borde, del corte%5.")
+                                 .arg(gap.missing)
+                                 .arg(PillarName(gap.pillar), SideName(gap.side))
+                                 .arg(params.minThicknessMm, 0, 'f', 1)
+                                 .arg(cranial && hasBand ? QStringLiteral(" y de la franja") : QString());
+                proposal.missing.push_back(gap);
+            }
+        }
+    }
+    return proposal;
+}
+
+QString PillarName(LeFortPillar pillar)
+{
+    switch (pillar) {
+    case LeFortPillar::PillarRight: return QStringLiteral("pilar cigomático derecho");
+    case LeFortPillar::PiriformRight: return QStringLiteral("reborde piriforme derecho");
+    case LeFortPillar::PiriformLeft: return QStringLiteral("reborde piriforme izquierdo");
+    case LeFortPillar::PillarLeft: return QStringLiteral("pilar cigomático izquierdo");
+    }
     return {};
 }
 
-QString PillarName(LeFortPillar)
+QString SideName(LeFortCutSide side)
 {
-    return {};
-}
-
-QString SideName(LeFortCutSide)
-{
-    return {};
+    return side == LeFortCutSide::Cranial ? QStringLiteral("encima del corte") : QStringLiteral("debajo del corte");
 }
 }

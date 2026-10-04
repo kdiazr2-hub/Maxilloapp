@@ -104,3 +104,20 @@ slug: guia-lefort-por-movimiento
 - decisions: `Propose(context)` seeks sites with the bone field instead of the envelope's vertices; the
   context carries `anterior`. Logged.
 - blocker: none.
+
+## T007 — 2026-10-04
+- status: complete
+- green: `build-linux-core/LeFortHoleTests` 11/11 PASS (the 4 Propose cases were red in T006), ~3 s.
+  Full Linux suite → 100% passed, 8/8.
+- evidence of layout (synthetic maxilla, 4 mm impaction): each pillar gets a vertical pair above the band
+  (z = 17, 24; band edge at 13) and a pair on the segment (z = 5, −2), on its own line (x = ±10, ±20).
+- test change (separate step, before the implementation): in the thin-pillar geometry the 3 mm / 1 mm
+  boundary moved from x = 12 to x = 11, so it no longer sits exactly on the left pillar's window edge
+  (20 − 8); the window stays entirely thin, the assertion is unchanged.
+- how: per pillar and side, 1 mm grid in u ∈ ±8 mm and v ∈ [4, 12] mm from the cut / band edge; each node
+  found on the wall by walking along −anterior into the bone field; window re-checked at the landed site;
+  side checked with the pre-op bone query; axis `PlateCore::BoneNormalAt`; kept only if `Support` = Ok;
+  ranked by thickness (to 0.25 mm), then nearest the pillar's line, then nearest the cut; greedy with
+  6.5 mm spacing across all holes; shortfalls go to `missing` with a Spanish reason.
+- review: self-review (no subagent).
+- blocker: none.
