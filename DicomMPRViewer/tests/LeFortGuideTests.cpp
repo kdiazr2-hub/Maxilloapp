@@ -476,6 +476,15 @@ void testATallBandIsCoveredAndKeptClear()
     for (const GuideFixationHole& screw : layout.fixation)
         require(screw.center[2] >= 16.0 + 4.0 - 1e-6, "a positioning screw sits in or next to the band: z = " +
                                                          std::to_string(screw.center[2]));
+    // And built, it is still one piece: the strip between the two slits hangs on the shared bridges.
+    {
+        const auto holes = predictiveHoles();
+        const GuideRegion region =
+            GuideBaseCore::MakeBrushRegion(bone.preparation.wrapField, layout.paint, bone.design.base);
+        const GuideDesignResult guide = GuideDesignCore::Build(bone.preparation, region, layout.slotPlan,
+                                                               layout.fixation, PlateCore::SleeveFigures(holes), bone.design);
+        require(guide.ok && guide.pieces == 1, "the guide with a 7 mm band came apart: " + std::to_string(guide.pieces));
+    }
     const double clear = params.latticeSlitClearMm + 0.5 * params.latticeCellMm - 0.25;
     for (const GuideFigure& cell : layout.figures) {
         const double z = cell.matrix[11];

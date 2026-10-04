@@ -60,6 +60,10 @@ struct LeFortGuideParams
     double bridgeSpacingMm = 15.0;    // a bridge across the slit every so often, one at the midline
     double bridgeWidthMm = 3.0;
     double sleeveOuterDiameterMm = 4.2;
+    // With an impaction band: no band where the rise is under this (as LeFortBandParams), and the guide is
+    // painted this far past the band's upper edge so the upper slit has material on both sides.
+    double bandThresholdMm = 0.5;
+    double bandMarginAboveMm = 2.0;
 };
 
 struct LeFortGuideLayout
@@ -73,6 +77,7 @@ struct LeFortGuideLayout
     std::vector<GuideFigure> figures;      // the lattice cells, subtracted
     std::vector<std::array<double, 3>> cutLine; // where the slit meets the anterior wall
     int dippedBins = 0;                    // bins where the band went below the aperture
+    int upperSlitPieces = 0;               // slit pieces along the band's upper edge (impaction)
 };
 
 namespace LeFortGuideCore

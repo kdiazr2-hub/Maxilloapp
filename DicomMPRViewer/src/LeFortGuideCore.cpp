@@ -120,7 +120,7 @@ namespace LeFortGuideCore
 {
 LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, const OsteotomyPath& path,
                          const std::vector<PredictiveHole>& holes, const LeFortGuideParams& params,
-                         const LeFortBandProfile* /*band*/)
+                         const LeFortBandProfile* impaction)
 {
     LeFortGuideLayout layout;
     if (!preop.ok || !preop.wrapField || !wrapMesh || wrapMesh->GetNumberOfPoints() == 0) {
@@ -181,6 +181,38 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
     Vec3 up = unit(sub(path.upAxis, scale(front, dot(path.upAxis, front))), {0.0, 0.0, 1.0});
     const Vec3 lateral = unit(cross(up, front), {1.0, 0.0, 0.0});
     const auto lateralOf = [&](const Vec3& p) { return dot(sub(p, center), lateral); };
+
+    // The bone an impaction takes out: the band's height along the guide, sampled along the cut every quarter
+    // millimetre (it is linear on each piece of the cut) and looked up by lateral position.
+    struct BandSample
+    {
+        double lateral = 0.0;
+        double height = 0.0;
+    };
+    std::vector<BandSample> bandSamples;
+    if (impaction && !impaction->spans.empty() && impaction->heights.size() == path.points.size() &&
+        impaction->upperCut.points.size() == path.points.size()) {
+        for (size_t i = 1; i < path.points.size(); ++i) {
+            const double length = norm(sub(path.points[i], path.points[i - 1]));
+            const int steps = std::max(1, static_cast<int>(std::ceil(length / 0.25)));
+            for (int k = (i == 1 ? 0 : 1); k <= steps; ++k) {
+                const double t = static_cast<double>(k) / steps;
+                const Vec3 p = add(path.points[i - 1], scale(sub(path.points[i], path.points[i - 1]), t));
+                bandSamples.push_back({lateralOf(p), impaction->heights[i - 1] +
+                                                         t * (impaction->heights[i] - impaction->heights[i - 1])});
+            }
+        }
+    }
+    const auto bandAt = [&](double s) {
+        const BandSample* nearest = nullptr;
+        for (const BandSample& sample : bandSamples)
+            if (!nearest || std::abs(sample.lateral - s) < std::abs(nearest->lateral - s))
+                nearest = &sample;
+        return nearest && nearest->height >= params.bandThresholdMm ? nearest->height : 0.0;
+    };
+    double tallestBand = 0.0;
+    for (const BandSample& sample : bandSamples)
+        tallestBand = std::max(tallestBand, sample.height);
     double pathDepthMin = 1e30, pathDepthMax = -1e30;
     for (const Vec3& point : path.points) {
         const double depth = dot(sub(point, center), front);
@@ -204,7 +236,7 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
     highest += params.lateralMarginMm;
 
     // The anterior surface near the cut: envelope vertices facing forward, within the band's reach.
-    const double reach = std::max(12.0, params.fixationOffsetMm + 2.0);
+    const double reach = std::max(12.0, tallestBand + std::max(params.fixationOffsetMm, params.bandRadiusMm) + 2.0);
     std::vector<Candidate> candidates;
     for (vtkIdType id = 0; id < wrapMesh->GetNumberOfPoints(); ++id) {
         double raw[3] = {};
@@ -280,6 +312,25 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
         // became a slab over the nose; a strap is enough to hold the two halves together.
         layout.paint.push_back({b.point, b.onCut ? bandRadius : 0.75 * bandRadius, false});
     }
+    // Over an impaction band the guide also has to hold the upper slit, with material past it: a second row of
+    // dabs centred on the band's upper edge, where the band runs on the wall.
+    if (!bandSamples.empty()) {
+        for (const BandPoint& b : band) {
+            const double rise = bandAt(b.lateral);
+            if (!b.onCut || rise <= 0.0 || rise + params.bandMarginAboveMm <= bandRadius - 1.5)
+                continue;
+            const int bin = std::clamp(static_cast<int>(std::floor((b.lateral - lowest) / spacing)), 0, bins - 1);
+            const auto found = byBin.find(bin);
+            if (found == byBin.end())
+                continue;
+            const Candidate* pick = nullptr;
+            for (const Candidate* c : found->second)
+                if (std::abs(c->field - rise) < 1.0 && (!pick || c->depth > pick->depth))
+                    pick = c;
+            if (pick)
+                layout.paint.push_back({pick->point, bandRadius, false});
+        }
+    }
 
     // A pad round each predictive hole, and a stem joining it to the band if it is further than the two reach.
     const double pad = 0.5 * params.sleeveOuterDiameterMm + params.holePadMm;
@@ -324,11 +375,13 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
         const std::vector<double> sides = holes.empty() ? std::vector<double>{1.0, -1.0} : std::vector<double>{1.0};
         for (const int endSide : {-1, 1}) {
             for (const double sign : sides) {
-                const double wanted = sign * params.fixationOffsetMm;
                 bool placed = false;
                 // From the end inwards, a bin at a time, until a spot clear of the holes turns up.
                 for (int step = 0; step < bins && !placed; ++step) {
                     const int bin = endSide < 0 ? step : bins - 1 - step;
+                    // Above an impaction band the cranial screws go above it: that bone is taken out.
+                    const double wanted = sign * params.fixationOffsetMm +
+                                          (sign > 0.0 ? bandAt(lowest + (bin + 0.5) * spacing) : 0.0);
                     const auto found = byBin.find(bin);
                     if (found == byBin.end())
                         continue;
@@ -386,6 +439,10 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
                                          0.5 * screw.diameterMm + cellRadius + cellMargin + 1.5;
                 if (!clear)
                     continue;
+                // And as clear of the band's upper slit as of the Le Fort slit.
+                const double rise = bandAt(s);
+                if (rise > 0.0 && std::abs(pick->field - rise) < rowOffset)
+                    continue;
                 // And well inside the band: the cell has to fall within one dab, with material left round it.
                 bool inside = false;
                 for (const GuideBrushStroke& dab : layout.paint)
@@ -428,6 +485,37 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
             slot.end = atLateral(pieceEnd);
             slot.hasExtent = true;
             layout.slotPlan.push_back(slot);
+            // The band's upper edge, inside the same piece (so it shares its bridges) and only where the band
+            // reaches the threshold, to a quarter of a millimetre.
+            if (!bandSamples.empty()) {
+                const double sampleStep = 0.25;
+                double runStart = 0.0;
+                bool inRun = false;
+                for (double u = pieceStart; u <= pieceEnd + 1e-9; u += sampleStep) {
+                    const double at = std::min(u, pieceEnd);
+                    const bool in = bandAt(at) > 0.0;
+                    if (in && !inRun) {
+                        runStart = at;
+                        inRun = true;
+                    }
+                    const bool last = at >= pieceEnd - 1e-9;
+                    if (inRun && (!in || last)) {
+                        const double runEnd = in ? at : at - sampleStep;
+                        if (runEnd - runStart >= 3.0) {
+                            GuideSlot upper;
+                            upper.path = impaction->upperCut;
+                            upper.start = atLateral(runStart);
+                            upper.end = atLateral(runEnd);
+                            upper.hasExtent = true;
+                            layout.slotPlan.push_back(upper);
+                            ++layout.upperSlitPieces;
+                        }
+                        inRun = false;
+                    }
+                    if (last)
+                        break;
+                }
+            }
         }
         pieceStart = std::max(pieceStart, bridgeAt + halfBridge);
         if (pieceStart >= highest)
@@ -447,6 +535,12 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
     if (connectors > 0)
         layout.report += QStringLiteral(" Se añadieron %1 trazo(s) de unión para que ninguna camisa quede suelta.")
                              .arg(connectors);
+    if (impaction && impaction->ok)
+        layout.report += QStringLiteral(" ") + impaction->report +
+                         (layout.upperSlitPieces > 0
+                              ? QStringLiteral(" Segunda ranura por el borde superior de la franja: %1 tramo(s).")
+                                    .arg(layout.upperSlitPieces)
+                              : QString());
     layout.ok = true;
     return layout;
 }
