@@ -6,13 +6,13 @@ tags: [sdd, plan, guias, lefort]
 timestamp: 2026-10-04T00:00:00Z
 topic: sdd
 slug: guia-lefort-por-movimiento
-status: draft
+status: approved
 ---
 
 # Plan — Guía de corte Le Fort I generada a partir del movimiento
 
 > Spec: [../specs/guia-lefort-por-movimiento.md](../specs/guia-lefort-por-movimiento.md) ·
-> Constitution: [../constitution.md](../constitution.md) v1.0.0 · Status: draft
+> Constitution: [../constitution.md](../constitution.md) v1.0.0 · Status: approved (usuario, 2026-10-04)
 > Last updated: 2026-10-04
 
 ## 0. Global Constraints
@@ -272,11 +272,13 @@ Todo en CTest con geometría sintética (`tests/SplintTestGeometry.h`, la apertu
 | Proyectos con placas: sus orificios ya no van a la guía | proyecto antiguo con placas | guía y placas no coinciden hasta la fase de placas | aviso explícito en el informe; la fase de placas usará `lefortHoles` |
 | Cambia el movimiento después de mover orificios a mano | REPOSICIÓN editada | manuales en sitios ahora inválidos | se re-evalúan al generar: aviso/rechazo visibles (spec, área no formulable; aquí se toma la opción conservadora) |
 
+**Decisiones cerradas** (usuario, 2026-10-04)
+
+1. **El grosor se mide en la segmentación ósea** (que sale de la TC), con el mismo campo que el resto
+   del módulo, no en HU.
+2. **Los orificios manuales se conservan** si cambia el movimiento y se re-evalúan (aviso/rechazo
+   visibles); no se recolocan.
+
 **Open decisions**
 
-1. **Dónde se mide el grosor "en la TC":** recomendado medirlo en la **segmentación ósea** (que sale
-   de la TC) con el mismo instrumento que el resto del módulo, porque los HU de un CBCT no están
-   calibrados y un umbral fijo de HU no es fiable entre equipos. Alternativa: perfil de HU de la TC a
-   lo largo del eje de broca. Se cierra con la respuesta del usuario antes de `tasks`.
-2. **Qué pasa con los orificios manuales si cambia el movimiento:** este plan los conserva y los
-   re-evalúa. Se cierra si el usuario prefiere recolocarlos.
+- Ninguna.

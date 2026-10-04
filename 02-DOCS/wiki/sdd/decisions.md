@@ -52,3 +52,7 @@ Aprobada explícitamente por el usuario tras incorporar sus respuestas (solo cam
 - **Spike previo:** compilar los tests core en Linux para poder verificar en la nube.
 - Abiertas: medir el grosor en la segmentación (recomendado) o en HU de la TC; conservar o
   recolocar los orificios manuales si cambia el movimiento.
+
+## 2026-10-04 — Plan `guia-lefort-por-movimiento` aprobado
+
+Cerradas las dos abiertas: grosor medido en la segmentación ósea; los orificios manuales se conservan y se re-evalúan si cambia el movimiento.
