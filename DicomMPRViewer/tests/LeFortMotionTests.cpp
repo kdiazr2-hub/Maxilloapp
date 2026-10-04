@@ -151,6 +151,19 @@ void testAnAnteriorImpactionIsHigherAtTheFront()
                 std::to_string(profile.spans.front().first) + " .. " + std::to_string(profile.spans.front().second));
 }
 
+// The mirror cases: the back goes up more than the front (clockwise), and the left more than the right.
+void testAPosteriorImpactionIsClockwiseAndTheLeftCanBeHigher()
+{
+    const Matrix back = motion({1.0, 0.0, 0.0}, -std::asin(0.4), {0.0, 5.0, 9.0}, {0.0, 0.0, 0.0});
+    const LeFortBandProfile clockwise = band(back);
+    require(clockwise.heights[0] > clockwise.heights[1] && clockwise.heights[3] > clockwise.heights[2],
+            "the pillars should rise more than the piriform points: " + heightsText(clockwise));
+    require(clockwise.pitch == LeFortPitch::Clockwise, "a posterior impaction is not clockwise");
+    const LeFortBandProfile left = band(motion({0.0, 1.0, 0.0}, -std::asin(0.1), {0.0, 0.0, 9.0}, {0.0, 0.0, 2.5}));
+    require(left.cant == LeFortCant::LeftHigher, "the left side going up more is not reported");
+    require(left.report.contains(QStringLiteral("izquierdo")), "the report does not name the higher side");
+}
+
 // spec §Acceptance 4: a pure 5 mm advancement changes no plane — no band.
 void testAPureAdvancementGivesNoBand()
 {
@@ -256,6 +269,8 @@ int main()
         {"a uniform impaction is a band of its height above the cut", testAUniformImpactionIsABandOfItsHeightAboveTheCut},
         {"an asymmetric impaction gives each side its height", testAnAsymmetricImpactionGivesEachSideItsHeight},
         {"an anterior impaction is higher at the front", testAnAnteriorImpactionIsHigherAtTheFront},
+        {"a posterior impaction is clockwise and the left can be higher",
+         testAPosteriorImpactionIsClockwiseAndTheLeftCanBeHigher},
         {"a pure advancement gives no band", testAPureAdvancementGivesNoBand},
         {"advancing does not change the impaction band", testAdvancingDoesNotChangeTheImpactionBand},
         {"lateral shift and yaw do not change the band", testLateralShiftAndYawDoNotChangeTheBand},
