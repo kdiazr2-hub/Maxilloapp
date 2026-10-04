@@ -69,3 +69,11 @@ Context  — Ubuntu ships VTK 9.1; with it PlateTests and LeFortGuideTests fail 
 Options  — accept 9.1 and skip those tests / relax tolerances / build VTK 9.5.2 from source.
 Decision — build VTK 9.5.2 (no rendering modules) and require `VTK 9.5` in tools/linux-core-tests.
 Why      — the tests are right on 9.5.2; relaxing them would hide real geometry regressions.
+
+## 2026-10-04 — Band spans as arc length along the cut  (feature: guia-lefort-por-movimiento, task: T002)
+Context  — the plan's interface said spans are "lateral" positions, but the Le Fort cut runs obliquely back
+           to the pillars, so a lateral coordinate is ambiguous there and depends on the guide's own frame.
+Options  — lateral coordinate in the guide frame / arc length along the cut / 3D end points.
+Decision — arc length from pilar D, with `PointAlongCut` and `CutLength` to turn it into points.
+Why      — it is intrinsic to the cut, exact where the height is linear, and Layout can map it to its frame.
+           Also a `noMotion` flag, so "no REPOSICIÓN" is not confused with an invalid cut.

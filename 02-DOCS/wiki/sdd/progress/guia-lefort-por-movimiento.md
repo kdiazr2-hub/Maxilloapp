@@ -37,3 +37,15 @@ slug: guia-lefort-por-movimiento
 - decision: logged (Linux core verification needs the project's exact VTK).
 - blocker: none for T002–T011. Merge still needs the Windows build (constitution 4); the user is
   installing the toolchain on a new PC (Intel x64, VS 2022 Build Tools, generator "Visual Studio 17 2022").
+
+## T002 — 2026-10-04
+- status: complete
+- red: `build-linux-core/LeFortMotionTests` builds and all 12 cases FAIL on their assertions (stub
+  `LeFortMotionCore` returns an empty profile): uniform 3 mm, 4 D / 1 I, anterior 4 mm, pure advance 5 mm,
+  advance 5 + 3 mm, lateral shift + yaw, descent 3 mm, mixed, 0.4 mm threshold, no motion, invalid cut,
+  points along the cut.
+- files: src/LeFortMotionCore.h (contract of T003), src/LeFortMotionCore.cpp (stub), tests/LeFortMotionTests.cpp,
+  DicomMPRViewer/CMakeLists.txt (`add_core_test(LeFortMotionTests …)`), tools/linux-core-tests/CMakeLists.txt.
+- decision: spans are arc length along the cut from pilar D (plan said "lateral"); `noMotion` flag added
+  to the profile so the UI can tell "no REPOSICIÓN" from a broken cut. Logged.
+- blocker: none.
