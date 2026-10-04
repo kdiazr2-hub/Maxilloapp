@@ -65,3 +65,16 @@ slug: guia-lefort-por-movimiento
   session); self-review against the done-check and §0 Global Constraints. The end-of-branch `review`
   still runs.
 - blocker: none.
+
+## T004 — 2026-10-04
+- status: complete
+- red: `build-linux-core/LeFortHoleTests` builds; 7/7 FAIL on assertions against a stub `Support` that
+  accepts everything with 0 mm: 3 mm wall → Ok 3 ± 0.3; 1 mm wall → Warning "grosor … 2.0"; lateral
+  margin → Rejected "orilla"; 3 mm from an imaginary mid-wall cut → Rejected "osteotom"; cranial holes
+  inside a 4 mm band and 2 mm above it → Rejected "franja", 6 mm above → Ok; segment hole under an
+  impaction → Ok with ≥ 9.5 mm; site in the air → Rejected.
+- files: src/LeFortHoleCore.h (contract of T005), src/LeFortHoleCore.cpp (stub), tests/LeFortHoleTests.cpp
+  (own synthetic wall: 3 mm right, 1 mm left, sinus behind), both CMakeLists.
+- decision: for a cranial hole the band rule is judged before the ring/cut rules, so a hole inside the
+  band is refused for the band (the more useful reason) and not for the margin the band's edge creates.
+- blocker: none.
