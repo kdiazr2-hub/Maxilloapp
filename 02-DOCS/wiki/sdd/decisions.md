@@ -77,3 +77,13 @@ Options  — lateral coordinate in the guide frame / arc length along the cut / 
 Decision — arc length from pilar D, with `PointAlongCut` and `CutLength` to turn it into points.
 Why      — it is intrinsic to the cut, exact where the height is linear, and Layout can map it to its frame.
            Also a `noMotion` flag, so "no REPOSICIÓN" is not confused with an invalid cut.
+
+## 2026-10-04 — Hole proposal samples the bone field, and the caller gives the anterior  (feature: guia-lefort-por-movimiento, task: T006)
+Context  — the plan had `Propose(surface, ctx)` picking among the envelope's vertices. Envelope vertices are
+           irregular (a synthetic box has 8), and the cut's sweep axis has no sign of its own.
+Options  — envelope vertices / a regular grid per pillar projected onto the segmented bone / both.
+Decision — `Propose(ctx)`: per pillar and side, a 1 mm grid in the window, each node found on the anterior
+           wall by marching along −anterior into the bone field; `LeFortHoleContext::anterior` is given by
+           the caller (LeFortGuideCore already works it out for the guide's frame).
+Why      — regular, deterministic coverage measured on the bone itself (constitution 8), and no guessing of
+           which way is the face.
