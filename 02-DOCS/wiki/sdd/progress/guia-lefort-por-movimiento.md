@@ -173,3 +173,14 @@ slug: guia-lefort-por-movimiento
   tools/linux-core-tests/CMakeLists.txt.
 - review: self-review (no subagent).
 - blocker: none.
+
+## T019 — 2026-10-04
+- status: complete
+- evidence: `git diff CLAUDE.md` adds `LeFortMotionTests` and `LeFortHoleTests` to the CTest list, the Linux
+  core build (VTK 9.5.2 requirement, commands) under Build & test, and one Architecture entry naming
+  `LeFortMotionCore`, `LeFortHoleCore`, the band rules, `Layout(..., &band)` and `GuidePlan::lefortHoles`
+  (constitution 18). Nothing else in CLAUDE.md was touched.
+- note: CLAUDE.md is now 401 lines; rsc flags it over its ~200-line budget. Moving sections to
+  `02-DOCS/wiki/` is a separate change for the user to decide, not part of this feature.
+- PR 1 scope (T001–T011, T019) complete. Merge waits on the user's Windows Release build + full ctest
+  (constitution 4).
