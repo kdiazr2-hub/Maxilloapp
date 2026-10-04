@@ -36,3 +36,7 @@ Respuestas del usuario: la franja de impactación va **encima del corte** y su a
 movimiento pre/post punto a punto (puede ser asimétrica); orificios por defecto **piriforme +
 pilar, 2 + 2 por lado**; soporte óseo = **grosor medido en la TC**; un orificio movido a un
 sitio sin soporte **se avisa y se respeta**.
+
+## 2026-10-04 — Spec `guia-lefort-por-movimiento` aprobada
+
+Aprobada explícitamente por el usuario tras incorporar sus respuestas (solo cambios de plano; 2.0 mm; 0.5 mm; dos ranuras). Flujo por fases, sin autopiloto.
