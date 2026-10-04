@@ -40,3 +40,15 @@ sitio sin soporte **se avisa y se respeta**.
 ## 2026-10-04 — Spec `guia-lefort-por-movimiento` aprobada
 
 Aprobada explícitamente por el usuario tras incorporar sus respuestas (solo cambios de plano; 2.0 mm; 0.5 mm; dos ranuras). Flujo por fases, sin autopiloto.
+
+## 2026-10-04 — Plan `guia-lefort-por-movimiento` (draft)
+
+- **Altura de la franja = componente vertical del desplazamiento rígido completo en cada punto del
+  corte** (`Z·(M·p − p)`). Opciones: esa / descomponer en Euler y filtrar el avance. Por qué: exacta,
+  sin convención de ejes ni pivote, ya ignora avance, lateral y giro horizontal, y coincide con lo
+  que REPOSICIÓN muestra.
+- **Dos clases core nuevas** (`LeFortMotionCore`, `LeFortHoleCore`) y `LeFortGuideCore::Layout`
+  extendido con un perfil de franja opcional, para no tocar el comportamiento actual (constitución 5).
+- **Spike previo:** compilar los tests core en Linux para poder verificar en la nube.
+- Abiertas: medir el grosor en la segmentación (recomendado) o en HU de la TC; conservar o
+  recolocar los orificios manuales si cambia el movimiento.

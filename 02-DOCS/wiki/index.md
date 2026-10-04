@@ -20,6 +20,12 @@ tags: [index]
 |------|--------|-------|
 | Guía de corte Le Fort I generada a partir del movimiento | clarified (aprobada) | `sdd/specs/guia-lefort-por-movimiento.md` |
 
+## sdd/plans
+
+| Plan | Status | Where |
+|------|--------|-------|
+| Guía de corte Le Fort I generada a partir del movimiento | draft | `sdd/plans/guia-lefort-por-movimiento.md` |
+
 ## harness
 
 | What | Where |
