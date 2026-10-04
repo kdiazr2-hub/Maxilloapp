@@ -338,6 +338,8 @@ add_core_test(MaskToObjectTests tests/MaskToObjectTests.cpp src/MaskToObjectCore
     src/MeshGenerator.cpp src/BoneCavityFill.cpp)
 add_core_test(ModelWorkflowTests tests/ModelWorkflowTests.cpp src/ModelWorkflowCore.cpp)
 add_core_test(OsteotomyCoreTests tests/OsteotomyCoreTests.cpp src/OsteotomyCore.cpp src/CompositeBlockCore.cpp)
+add_core_test(LeFortMotionTests tests/LeFortMotionTests.cpp src/LeFortMotionCore.cpp src/OsteotomyCore.cpp
+    src/CompositeBlockCore.cpp)
 target_link_libraries(ProjectSerializerTests PRIVATE Qt6::Gui)
 
 # Splint generator timing with real or synthetic STL (not a CTest by default).
