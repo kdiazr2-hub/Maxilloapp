@@ -47,6 +47,7 @@ struct LeFortHoleParams
 {
     double minThicknessMm = 2.0;  // under this, a warning (user's choice, 2026-10-04)
     double bandClearanceMm = 4.0; // a cranial hole stays this far above the band's upper edge
+    double bandThresholdMm = 0.5; // where the rise is under this there is no band (LeFortBandParams)
     double maxProbeMm = 15.0;     // thickness is not measured past this
     PlateParams seat;             // ring, edge and cut-distance rules shared with the plates
 };

@@ -78,3 +78,16 @@ slug: guia-lefort-por-movimiento
 - decision: for a cranial hole the band rule is judged before the ring/cut rules, so a hole inside the
   band is refused for the band (the more useful reason) and not for the margin the band's edge creates.
 - blocker: none.
+
+## T005 — 2026-10-04
+- status: complete
+- green: `build-linux-core/LeFortHoleTests` 7/7 PASS (red in T004). Full Linux suite → 100% passed, 8/8.
+- files: src/LeFortHoleCore.cpp, src/LeFortHoleCore.h (`bandThresholdMm = 0.5` added to the params).
+- how: preop bone query decides the side (no bone within 1 mm → Rejected); for a cranial site with a band,
+  the band height under it comes from the nearest piece of the cut seen along the band's vertical, linear
+  along the piece; inside or < 4 mm above → Rejected "franja"; then `PlateCore::CheckHoleSeat` with the
+  site carried to the planned position for the segment; then thickness along −axis on the baked bone
+  field (entry and exit zero crossings interpolated, step ≤ ¼ of the field spacing, max 15 mm);
+  < 2.0 mm → Warning "grosor mínimo de 2.0 mm".
+- review: self-review (no subagent, as in T003).
+- blocker: none.
