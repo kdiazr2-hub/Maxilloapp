@@ -26,3 +26,13 @@ Ratificada tal cual por el usuario. Tres conflictos entre las reglas de rsc y la
 
 Además, el principio 16 (colores con `CranioPalette`) se limitó al código nuevo o tocado porque
 `MainWindow.cpp` ya tiene unos 56 `QColor` fijos.
+
+## 2026-10-04 — Spec `guia-lefort-por-movimiento` (draft)
+
+El pedido inicial mezclaba guía de corte y placas a medida. **Elegido:** acotar este ciclo a
+la guía de corte Le Fort I generada a partir del movimiento; las placas y la reproducción del
+avance/retroceso pasan a una fase siguiente (decisión del usuario, con imágenes de referencia).
+Respuestas del usuario: la franja de impactación va **encima del corte** y su altura sale del
+movimiento pre/post punto a punto (puede ser asimétrica); orificios por defecto **piriforme +
+pilar, 2 + 2 por lado**; soporte óseo = **grosor medido en la TC**; un orificio movido a un
+sitio sin soporte **se avisa y se respeta**.

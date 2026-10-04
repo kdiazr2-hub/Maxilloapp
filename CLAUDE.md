@@ -364,3 +364,4 @@ The points JSON comes from "Exportar puntos" in the splint panel.
 | What | Where |
 |------|-------|
 | Project constitution (SDD non-negotiables) | `02-DOCS/wiki/sdd/constitution.md` |
+| Full knowledge map (specs, decisions) | `02-DOCS/wiki/index.md` |
