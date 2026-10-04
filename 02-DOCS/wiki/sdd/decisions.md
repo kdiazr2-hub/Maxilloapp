@@ -56,3 +56,10 @@ Aprobada explícitamente por el usuario tras incorporar sus respuestas (solo cam
 ## 2026-10-04 — Plan `guia-lefort-por-movimiento` aprobado
 
 Cerradas las dos abiertas: grosor medido en la segmentación ósea; los orificios manuales se conservan y se re-evalúan si cambia el movimiento.
+
+## 2026-10-04 — Arreglos tras `analyze` (decisiones del usuario)
+
+- PR 1 (cores) se integra solo tras el build Release + `ctest` completo en Windows (constitución 4).
+- `CLAUDE.md` documenta las cores ya en PR 1 (T019, constitución 18).
+- Un orificio craneal dentro de la franja o a < 4 mm de ella se **rechaza** (spec ampliada).
+- Se mantiene el aviso de placas anteriores que no coinciden con la guía (spec ampliada).
