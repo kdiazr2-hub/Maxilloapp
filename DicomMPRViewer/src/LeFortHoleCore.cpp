@@ -143,4 +143,19 @@ LeFortHoleSupport Support(const std::array<double, 3>& site, const std::array<do
     support.verdict = LeFortSupportVerdict::Ok;
     return support;
 }
+
+LeFortProposal Propose(const LeFortHoleContext&)
+{
+    return {};
+}
+
+QString PillarName(LeFortPillar)
+{
+    return {};
+}
+
+QString SideName(LeFortCutSide)
+{
+    return {};
+}
 }

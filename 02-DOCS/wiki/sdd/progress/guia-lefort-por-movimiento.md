@@ -91,3 +91,16 @@ slug: guia-lefort-por-movimiento
   < 2.0 mm → Warning "grosor mínimo de 2.0 mm".
 - review: self-review (no subagent, as in T003).
 - blocker: none.
+
+## T006 — 2026-10-04
+- status: complete
+- red: `build-linux-core/LeFortHoleTests` — the 7 Support cases still PASS; the 4 new Propose cases FAIL on
+  assertions against a stub that proposes nothing: 16 holes (2+2 per pillar) on sound bone, Ok, ≥ 2 mm,
+  ≥ 6.5 mm apart, within 8 mm of their pillar, cranial 4–12 mm above the band's upper edge, segment 4–12 mm
+  below the cut, each re-accepted by `Support`; without a band the cranial holes start 4 mm above the cut;
+  a 1 mm left pillar gets no cranial hole and is listed in `missing` (2, with a reason); deterministic.
+- files: src/LeFortHoleCore.h (Propose contract, pillar/side/origin types, window params, `anterior`),
+  src/LeFortHoleCore.cpp (stub), tests/LeFortHoleTests.cpp (maxilla with aperture, thick/thin variants).
+- decisions: `Propose(context)` seeks sites with the bone field instead of the envelope's vertices; the
+  context carries `anterior`. Logged.
+- blocker: none.

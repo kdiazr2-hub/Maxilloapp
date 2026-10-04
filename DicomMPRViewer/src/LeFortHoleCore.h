@@ -28,6 +28,7 @@
 #include <QString>
 
 #include <array>
+#include <vector>
 
 enum class LeFortSupportVerdict
 {
@@ -50,6 +51,15 @@ struct LeFortHoleParams
     double bandThresholdMm = 0.5; // where the rise is under this there is no band (LeFortBandParams)
     double maxProbeMm = 15.0;     // thickness is not measured past this
     PlateParams seat;             // ring, edge and cut-distance rules shared with the plates
+
+    // Where Propose looks: per pillar and side of the cut, between `windowNearMm` and `windowFarMm` from the
+    // cut (segment) or from the band's upper edge (cranial), within `lateralReachMm` of the pillar's point.
+    int holesPerSide = 2;         // 2 above + 2 below at each pillar (user's choice, 2026-10-04)
+    double windowNearMm = 4.0;
+    double windowFarMm = 12.0;
+    double lateralReachMm = 8.0;
+    double pairSpacingMm = 6.5;   // between any two holes: 5.6 mm rings that do not overlap
+    double sampleStepMm = 1.0;    // grid the sites are sought on
 };
 
 struct LeFortHoleContext
@@ -64,7 +74,55 @@ struct LeFortHoleContext
     OsteotomyPath cut;                // the planned Le Fort cut, pre-operative coordinates
     std::array<double, 16> motion{};  // the segment's motion, pre-operative → planned, row-major
     LeFortBandProfile band;           // empty (no spans) when there is nothing to take out
+    // The patient's anterior, out of the face. The cut's sweep axis has no sign of its own, so the caller
+    // gives it (LeFortGuideCore works it out the same way for the guide's frame).
+    std::array<double, 3> anterior{0.0, -1.0, 0.0}; // DICOM LPS: anterior is −Y
     LeFortHoleParams params;
+};
+
+enum class LeFortPillar
+{
+    PillarRight,   // zygomaticomaxillary buttress, right (the cut's first point)
+    PiriformRight, // piriform rim, right
+    PiriformLeft,
+    PillarLeft
+};
+
+enum class LeFortCutSide
+{
+    Cranial, // above the cut: does not move
+    Segment  // the Le Fort segment: moves with the plan
+};
+
+enum class LeFortHoleOrigin
+{
+    Auto,  // proposed by the app
+    Manual // placed or moved by the surgeon
+};
+
+struct LeFortProposedHole
+{
+    std::array<double, 3> center{0.0, 0.0, 0.0}; // on the bone before the cut
+    std::array<double, 3> axis{0.0, 0.0, 1.0};   // out of the bone; the drill goes along −axis
+    LeFortPillar pillar = LeFortPillar::PiriformRight;
+    LeFortCutSide side = LeFortCutSide::Cranial;
+    LeFortHoleOrigin origin = LeFortHoleOrigin::Auto;
+    LeFortHoleSupport support;
+};
+
+// A pillar and side of the cut that did not get all its holes, and why.
+struct LeFortMissingHoles
+{
+    LeFortPillar pillar = LeFortPillar::PiriformRight;
+    LeFortCutSide side = LeFortCutSide::Cranial;
+    int missing = 0;
+    QString reason; // in Spanish
+};
+
+struct LeFortProposal
+{
+    std::vector<LeFortProposedHole> holes;
+    std::vector<LeFortMissingHoles> missing;
 };
 
 namespace LeFortHoleCore
@@ -73,4 +131,13 @@ namespace LeFortHoleCore
 // the bone).
 LeFortHoleSupport Support(const std::array<double, 3>& site, const std::array<double, 3>& axis,
                           const LeFortHoleContext& context);
+
+// The holes the guide proposes by itself: `holesPerSide` above and below the cut at each of the four pillars
+// (the cut's points), on bone that `Support` calls Ok, the thickest first, every pair at least `pairSpacingMm`
+// apart. What a pillar cannot take is listed in `missing`, never filled with a weaker site. Deterministic.
+LeFortProposal Propose(const LeFortHoleContext& context);
+
+// Spanish names, for reports.
+QString PillarName(LeFortPillar pillar);
+QString SideName(LeFortCutSide side);
 }
