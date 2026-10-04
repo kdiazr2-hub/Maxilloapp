@@ -70,10 +70,16 @@ taladrar los orificios que después ocuparán las placas.
 
 ## Behaviour
 
+- **Qué movimiento cuenta:** la guía solo tiene en cuenta los cambios de plano del Le Fort:
+  la subida o bajada vertical, la rotación horaria/antihoraria (sube o baja más adelante
+  que atrás) y la inclinación de un lado respecto al otro. El avance o retroceso, el
+  desplazamiento lateral y el giro en el plano horizontal no cambian la guía: los
+  determinará la placa (decisión del usuario, 2026-10-04).
 - **Main path — impactación:** al generar la guía, la app compara la posición del
-  segmento Le Fort antes y después del movimiento a lo largo de toda la línea de corte que
-  cubre la guía. Donde el segmento sube, la guía muestra la franja a quitar por encima del
-  corte, con la altura que corresponde a ese punto, y guía los dos cortes que la limitan.
+  segmento Le Fort antes y después de ese movimiento a lo largo de toda la línea de corte
+  que cubre la guía. Donde el segmento sube, la guía muestra la franja a quitar por encima
+  del corte, con la altura que corresponde a ese punto, y lleva dos ranuras: una por el
+  corte Le Fort y otra por el borde superior de la franja.
   La franja se ve en un color distinto en la vista 3D y su altura se puede consultar.
 - **Main path — descenso:** donde el segmento baja, no hay franja: la guía lleva un solo
   corte, como hoy.
@@ -85,7 +91,7 @@ taladrar los orificios que después ocuparán las placas.
   orificios.
 - **Edge — movimiento mixto:** si una parte del corte sube y otra baja (o un lado sube más
   que el otro), la franja existe solo donde sube y su altura varía con el movimiento real.
-  Una impactación por debajo de un umbral mínimo se trata como ausencia de franja.
+  Donde la subida es menor de 0.5 mm (el ancho de un corte de sierra) no hay franja.
 - **Edge — sin sitio válido:** si en un pilar no hay hueso con soporte suficiente para
   todos los orificios propuestos, la app propone los que sí caben e informa de cuáles
   faltan y por qué.
@@ -107,11 +113,15 @@ taladrar los orificios que después ocuparán las placas.
 - Given una impactación anterior de 4 mm sin movimiento vertical posterior, When se genera
   la guía, Then la franja es más alta en el extremo anterior que en el posterior de cada
   lado.
+- Given un avance de 5 mm sin ningún cambio vertical ni de plano, When se genera la guía,
+  Then la guía tiene un solo corte y ninguna franja.
+- Given un avance de 5 mm combinado con una impactación uniforme de 3 mm, When se genera la
+  guía, Then la franja mide 3 mm (±0.5) en toda la guía, igual que sin el avance.
 - Given un descenso de 3 mm, When se genera la guía, Then la guía tiene un solo corte y
   ninguna franja.
 - Given un movimiento planificado y hueso suficiente, When se genera la guía, Then cada
   lado tiene 4 orificios en el reborde piriforme y 4 en el pilar cigomático (2 encima y 2
-  debajo del corte en cada uno), todos con soporte óseo mínimo, y una camisa de broca en
+  debajo del corte en cada uno), todos con al menos 2.0 mm de hueso bajo el tornillo, y una camisa de broca en
   cada uno.
 - Given una guía generada, When el profesional mueve un orificio a un sitio válido, Then
   la guía se regenera con la camisa en el nuevo sitio y el resto de orificios y la franja
@@ -129,13 +139,13 @@ taladrar los orificios que después ocuparán las placas.
 
 ## Points to clarify
 
-- **pregunta abierta** — ¿Cuál es el grosor mínimo de hueso bajo un tornillo para aceptar
-  un sitio? *Recomendación:* que el hueso cubra al menos la profundidad de un tornillo
-  monocortical (por ejemplo 2.0 mm para el tornillo de 2.0 mm por defecto).
-- **pregunta abierta** — ¿Por debajo de cuántos mm de impactación se ignora la franja?
-  *Recomendación:* 0.5 mm, el ancho de un corte de sierra.
-- **pregunta abierta** — ¿La guía debe guiar los dos cortes de la franja (dos ranuras), o
-  una ranura y la otra línea solo marcada como referencia?
+- **suposición tomada** — "Rotación antihoraria" es la que sube la parte anterior respecto a
+  la posterior (impactación anterior) y "horaria" la que la baja, vistas desde la derecha
+  del paciente, como en la convención ortognática. *Base:* tu imagen 1 (impactación
+  anterior). *Riesgo:* solo cambia las etiquetas del informe, no la franja.
+- **suposición tomada** — La inclinación de un lado respecto al otro (cant) cuenta como
+  cambio de plano. *Base:* pediste que la franja refleje la impactación asimétrica entre
+  lados. *Riesgo:* si no debe contar, la franja sería igual en ambos lados.
 - **suposición tomada** — La franja se mide en la dirección vertical del plano de
   orientación del paciente (Frankfurt). *Base:* el informe de movimiento ya separa
   ascenso/descenso con esa referencia. *Riesgo:* con una rotación grande del plano oclusal
@@ -157,3 +167,13 @@ taladrar los orificios que después ocuparán las placas.
 - **área no formulable** — Cómo se comportan los orificios propuestos cuando el
   profesional cambia después el movimiento en REPOSICIÓN (¿se recolocan, se conservan los
   movidos a mano?). Sé que habrá una pregunta; aún no está clara.
+
+## Revisions
+
+- **2026-10-04 — respuestas del usuario a los puntos abiertos** (incorporadas arriba):
+  - Grosor mínimo de hueso bajo un tornillo: **2.0 mm**.
+  - Por debajo de **0.5 mm** de subida no hay franja.
+  - La guía lleva **dos ranuras** en la impactación: el corte Le
+    Fort y el borde superior de la franja.
+  - Solo cuentan los cambios de plano (vertical, rotación
+    horaria/antihoraria, inclinación lateral); el avance lo determina la placa.
