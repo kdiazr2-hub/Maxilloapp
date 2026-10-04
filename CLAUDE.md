@@ -358,3 +358,9 @@ The points JSON comes from "Exportar puntos" in the splint panel.
   restriction, pre-op ghost, impaction per cut-path point (oriented frame, Z+ superior).
 
 `README.md` documents the load pipeline and cache but its build section is outdated.
+
+## Knowledge map
+
+| What | Where |
+|------|-------|
+| Project constitution (SDD non-negotiables) | `02-DOCS/wiki/sdd/constitution.md` |

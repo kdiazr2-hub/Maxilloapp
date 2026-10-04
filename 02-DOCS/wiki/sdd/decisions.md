@@ -1,0 +1,28 @@
+---
+type: decisions
+title: MaxilloApp — SDD decisions
+description: Append-only log of significant decisions (date, options, why).
+tags: [sdd, decisions]
+topic: sdd
+---
+
+# Decisiones (solo se añade)
+
+## 2026-10-04 — Constitución v1.0.0 ratificada
+
+Ratificada tal cual por el usuario. Tres conflictos entre las reglas de rsc y la práctica previa del repo:
+
+- **A. Formato de commits.** Opciones: gitmoji + frase descriptiva en inglés / frase sin emoji
+  (desactivar `gitmoji-guard`) / gitmoji + Conventional Commits.
+  **Elegido:** gitmoji + frase descriptiva (principio 10). Por qué: conserva el estilo del
+  historial y es compatible con el guard instalado.
+- **B. Flujo de ramas.** Opciones: rama + PR siempre / rama + PR solo para cambios grandes /
+  directo a `main` (práctica previa).
+  **Elegido:** rama + PR siempre (principio 11). Por qué: app clínica; cada cambio queda revisable.
+- **C. Autoría.** Opciones: solo humano, sin coautor IA (regla fija de rsc) / humano + línea
+  `Co-Authored-By` de la IA.
+  **Elegido:** humano + coautor IA (principio 12). Por qué: trazabilidad de qué cambios escribió
+  la IA. Sustituye la regla fija de rsc; la fase `ship` debe respetar esta enmienda.
+
+Además, el principio 16 (colores con `CranioPalette`) se limitó al código nuevo o tocado porque
+`MainWindow.cpp` ya tiene unos 56 `QColor` fijos.

@@ -10,7 +10,7 @@ version: v1.0.0
 
 # MaxilloApp — Constitución
 
-> Versión: v1.0.0 · Ratificada: PENDIENTE · Última enmienda: —
+> Versión: v1.0.0 · Ratificada: 2026-10-04 · Última enmienda: 2026-10-04
 > Principios no negociables que obedece cada fase rsc-sdd. La mecánica concreta
 > (build, tests, arquitectura, geometría) vive en el `CLAUDE.md` de la raíz; este archivo
 > ratifica el principio y apunta al detalle.
@@ -87,4 +87,4 @@ Un cambio se integra solo si se cumple TODO:
 
 | Fecha | Versión | Cambio | Porqué |
 |-------|---------|--------|--------|
-| PENDIENTE | v1.0.0 | Constitución inicial ratificada. | Instalación del harness rsc. |
+| 2026-10-04 | v1.0.0 | Constitución inicial ratificada. | Instalación del harness rsc. |
