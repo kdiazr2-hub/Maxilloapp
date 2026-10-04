@@ -26,6 +26,12 @@ tags: [index]
 |------|--------|-------|
 | Guía de corte Le Fort I generada a partir del movimiento | approved | `sdd/plans/guia-lefort-por-movimiento.md` |
 
+## sdd/analysis
+
+| Analysis | Gate | Where |
+|------|--------|-------|
+| Guía de corte Le Fort I generada a partir del movimiento | BLOCKED (2 CRITICAL de entrega) | `sdd/analysis/guia-lefort-por-movimiento.md` |
+
 ## harness
 
 | What | Where |
