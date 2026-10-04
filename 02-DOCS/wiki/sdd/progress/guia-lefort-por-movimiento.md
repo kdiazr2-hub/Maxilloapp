@@ -25,3 +25,15 @@ slug: guia-lefort-por-movimiento
 - skill resolution: used [implement]; missing [config.yaml — sdd-init pending, test commands depend on
   this task; stack testing skill for C++/CTest not in the catalog]; fallback [commands from the plan's
   Tasks header].
+
+## T001 — 2026-10-04 (cierre)
+- status: complete
+- evidence: VTK 9.5.2 built from source (tag v9.5.2, 17 non-rendering modules) in the session scratchpad;
+  `ctest --test-dir build-linux-core` → 100% tests passed, 0 failed out of 6 (ImplicitCoreTests,
+  OsteotomyCoreTests, GuideDesignTests, PlateTests, LeFortGuideTests, GuidePlanTests).
+  `git diff DicomMPRViewer/CMakeLists.txt` empty.
+- finding: the two failures above were VTK 9.1 (Ubuntu), not the code — both pass on 9.5.2.
+  `tools/linux-core-tests` now requires `VTK 9.5`.
+- decision: logged (Linux core verification needs the project's exact VTK).
+- blocker: none for T002–T011. Merge still needs the Windows build (constitution 4); the user is
+  installing the toolchain on a new PC (Intel x64, VS 2022 Build Tools, generator "Visual Studio 17 2022").
