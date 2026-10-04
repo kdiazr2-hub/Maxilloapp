@@ -28,6 +28,11 @@ cmake -S DicomMPRViewer -B DicomMPRViewer/build -G "Visual Studio 18 2026" -A x6
 
 Qt, VTK and GDCM DLLs are already deployed in `build/Release`. Scripts in `scripts/` are copied next to the exe post-build.
 
+Second PC (laptop, `C:\MaxilloApp`): VS 2022 Build Tools, so configure with `-G "Visual Studio 17 2022"` and the same
+paths. It has hybrid graphics (Intel UHD + RTX 3050): `RepositionWorkspaceTests` fails on the Intel GPU ("Foreground
+opacity was not blended", on `main` too) and passes once Windows → Pantalla → Gráficos sets its exe to «Alto
+rendimiento». Run the render tests on the discrete GPU.
+
 Tests (CTest):
 - `GeometryCoreTests`, `BoneCavityFillTests`, `MeshGeneratorTests` — plain C++ executables
 - `MaskToObjectTests` checks exact label extraction, committed cavity filling and immutable input.
