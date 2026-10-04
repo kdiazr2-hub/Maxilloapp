@@ -57,3 +57,6 @@ workspace-test-artifacts/
 .claude/commands/learn.md
 .claude/commands/resume-session.md
 .claude/commands/save-session.md
+
+# Linux core-test build (tools/linux-core-tests)
+/build-linux-core/
