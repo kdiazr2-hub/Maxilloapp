@@ -40,6 +40,27 @@ GuideFigureShape shapeFromName(const QString& name)
         return GuideFigureShape::CurvedTube;
     return GuideFigureShape::Cylinder;
 }
+// The Le Fort guide's holes: readable names in the file, and nothing guessed when a name is unknown.
+QString pillarKey(LeFortPillar pillar)
+{
+    switch (pillar) {
+    case LeFortPillar::PillarRight: return QStringLiteral("pillarRight");
+    case LeFortPillar::PiriformRight: return QStringLiteral("piriformRight");
+    case LeFortPillar::PiriformLeft: return QStringLiteral("piriformLeft");
+    case LeFortPillar::PillarLeft: return QStringLiteral("pillarLeft");
+    }
+    return {};
+}
+bool pillarFromKey(const QString& key, LeFortPillar& pillar)
+{
+    for (const LeFortPillar candidate : {LeFortPillar::PillarRight, LeFortPillar::PiriformRight,
+                                         LeFortPillar::PiriformLeft, LeFortPillar::PillarLeft})
+        if (key == pillarKey(candidate)) {
+            pillar = candidate;
+            return true;
+        }
+    return false;
+}
 } // namespace
 
 namespace GuidePlanCore
@@ -132,6 +153,17 @@ QJsonObject ToJson(const GuidePlan& plan)
         for (const PlateDesign& plate : plan.plates)
             plates.append(PlateCore::ToJson(plate));
         out[QStringLiteral("plates")] = plates;
+    }
+    if (!plan.lefortHoles.empty()) {
+        QJsonArray holes;
+        for (const LeFortProposedHole& hole : plan.lefortHoles)
+            holes.append(QJsonObject{
+                {QStringLiteral("center"), pointJson(hole.center)},
+                {QStringLiteral("axis"), pointJson(hole.axis)},
+                {QStringLiteral("pillar"), pillarKey(hole.pillar)},
+                {QStringLiteral("side"), hole.side == LeFortCutSide::Cranial ? QStringLiteral("cranial") : QStringLiteral("segment")},
+                {QStringLiteral("origin"), hole.origin == LeFortHoleOrigin::Manual ? QStringLiteral("manual") : QStringLiteral("auto")}});
+        out[QStringLiteral("lefortHoles")] = holes;
     }
     out[QStringLiteral("plate")] = PlateCore::ParamsToJson(plan.plate);
     out[QStringLiteral("sleeve")] = QJsonObject{{QStringLiteral("boreDiameterMm"), plan.sleeve.boreDiameterMm},
@@ -232,6 +264,21 @@ GuidePlan FromJson(const QJsonObject& object)
     }
     for (const QJsonValue& value : object.value(QStringLiteral("plates")).toArray())
         plan.plates.push_back(PlateCore::FromJson(value.toObject()));
+    for (const QJsonValue& value : object.value(QStringLiteral("lefortHoles")).toArray()) {
+        const QJsonObject o = value.toObject();
+        const QString side = o.value(QStringLiteral("side")).toString();
+        const QJsonArray center = o.value(QStringLiteral("center")).toArray();
+        LeFortProposedHole hole;
+        if (!pillarFromKey(o.value(QStringLiteral("pillar")).toString(), hole.pillar) ||
+            (side != QStringLiteral("cranial") && side != QStringLiteral("segment")) || center.size() != 3)
+            continue; // a hole the file does not describe is left out, not guessed
+        hole.side = side == QStringLiteral("cranial") ? LeFortCutSide::Cranial : LeFortCutSide::Segment;
+        hole.center = pointFromJson(center, {0.0, 0.0, 0.0});
+        hole.axis = pointFromJson(o.value(QStringLiteral("axis")).toArray(), {0.0, 0.0, 1.0});
+        hole.origin = o.value(QStringLiteral("origin")).toString() == QStringLiteral("manual") ? LeFortHoleOrigin::Manual
+                                                                                              : LeFortHoleOrigin::Auto;
+        plan.lefortHoles.push_back(hole);
+    }
     plan.plate = PlateCore::ParamsFromJson(object.value(QStringLiteral("plate")).toObject());
     const QJsonObject sleeve = object.value(QStringLiteral("sleeve")).toObject();
     plan.sleeve.boreDiameterMm = sleeve.value(QStringLiteral("boreDiameterMm")).toDouble(plan.sleeve.boreDiameterMm);
