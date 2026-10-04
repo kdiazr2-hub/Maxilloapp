@@ -136,3 +136,20 @@ slug: guia-lefort-por-movimiento
   now), tests/LeFortGuideTests.cpp, CMakeLists (LeFortMotionCore in LeFortGuideTests, the app, PlateProbe;
   LeFortHoleCore in the app), tools/linux-core-tests.
 - blocker: none.
+
+## T009 — 2026-10-04
+- status: complete
+- green: `build-linux-core/LeFortGuideTests` 12/12 PASS (the 4 band cases were red in T008; the 6 old cases
+  and the 2 guards stay green). Full Linux suite → 100% passed, 8/8.
+- guard added after green: the 7 mm band guide built with `GuideDesignCore::Build` is one piece (it was,
+  checked first with a temporary print: ok=1 pieces=1, 2 upper pieces) — now asserted in "a tall band is
+  covered and kept clear".
+- how (`LeFortGuideCore::Layout`, param renamed `impaction` — the function already has a local `band`):
+  the band's rise is sampled along the cut every 0.25 mm and looked up by the guide's lateral coordinate;
+  a second row of 8 mm dabs on the band's upper edge where it runs on the wall and the band is taller
+  than the first row covers; cranial positioning screws wanted at offset + rise; lattice cells skipped
+  within `rowOffset` of the upper slit; upper slit pieces inside each Le Fort piece (same bridges) where
+  the rise ≥ 0.5 mm, ≥ 3 mm long, path = `upperCut`; report appends the band report and the piece count.
+  New params `bandThresholdMm = 0.5`, `bandMarginAboveMm = 2.0`; `LeFortGuideLayout::upperSlitPieces`.
+- review: self-review (no subagent).
+- blocker: none.
