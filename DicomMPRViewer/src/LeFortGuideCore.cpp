@@ -119,7 +119,8 @@ int connectPaint(const ImplicitCore::BakedField& field, GuideBrushPaint& paint)
 namespace LeFortGuideCore
 {
 LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, const OsteotomyPath& path,
-                         const std::vector<PredictiveHole>& holes, const LeFortGuideParams& params)
+                         const std::vector<PredictiveHole>& holes, const LeFortGuideParams& params,
+                         const LeFortBandProfile* /*band*/)
 {
     LeFortGuideLayout layout;
     if (!preop.ok || !preop.wrapField || !wrapMesh || wrapMesh->GetNumberOfPoints() == 0) {

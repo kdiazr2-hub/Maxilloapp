@@ -32,6 +32,7 @@
 
 #include "GuideBaseCore.h"
 #include "GuideDesignCore.h"
+#include "LeFortMotionCore.h"
 #include "OsteotomyCore.h"
 #include "PlateCore.h"
 
@@ -77,7 +78,11 @@ struct LeFortGuideLayout
 namespace LeFortGuideCore
 {
 // `preop` is the wrap of the bone before the cut (its field), `wrapMesh` its surface and `path` the planned
-// Le Fort cut. `holes` are the definitive plate holes carried back to the pre-operative anatomy.
+// Le Fort cut. `holes` are the holes the guide drills, on the pre-operative anatomy (the proposed or moved
+// holes, or the plates' predictive holes). `band`, when it has spans, is the bone an impaction takes out
+// (`LeFortMotionCore::Band`): the guide then also carries a slit along its upper edge, inside the spans, with
+// the same bridges, and reaches high enough to hold it. Without a band the layout is exactly the plain one.
 LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, const OsteotomyPath& path,
-                         const std::vector<PredictiveHole>& holes, const LeFortGuideParams& params = {});
+                         const std::vector<PredictiveHole>& holes, const LeFortGuideParams& params = {},
+                         const LeFortBandProfile* band = nullptr);
 }

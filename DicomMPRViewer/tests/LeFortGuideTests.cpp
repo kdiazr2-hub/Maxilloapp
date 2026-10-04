@@ -1,4 +1,5 @@
 #include "LeFortGuideCore.h"
+#include "LeFortMotionCore.h"
 
 #include "GuideDesignCore.h"
 #include "MeshRepairCore.h"
@@ -332,6 +333,194 @@ void testTheGuideIgnoresADistantSkullSurfaceInSavedProjects()
     for (const GuideBrushStroke& dab : layout.paint)
         require(dab.center[1] < 20.0, "the guide jumped from the osteotomy to a distant skull surface");
 }
+// ── The band an impaction takes out ─────────────────────────────────────────
+
+// A rise of the whole segment, or a roll about the antero-posterior axis at cut height (the rise is −0.1·x:
+// the right side goes up, the left down).
+LeFortBandProfile bandFor(double riseMm)
+{
+    const std::array<double, 16> m{1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, riseMm, 0.0, 0.0, 0.0, 1.0};
+    const LeFortBandProfile band = LeFortMotionCore::Band(leFortCut(), m);
+    require(band.ok && !band.spans.empty(), "the band could not be computed for the test");
+    return band;
+}
+LeFortBandProfile rolledBand()
+{
+    const double s = 0.1, c = std::sqrt(1.0 - s * s);
+    // Rotation about +Y through (0, 0, 9): z' = −s·x + c·(z − 9) + 9, x' = c·x + s·(z − 9).
+    const std::array<double, 16> m{c, 0.0, s, -9.0 * s, 0.0, 1.0, 0.0, 0.0, -s, 0.0, c, 9.0 - 9.0 * c, 0.0, 0.0, 0.0, 1.0};
+    const LeFortBandProfile band = LeFortMotionCore::Band(leFortCut(), m);
+    require(band.ok && !band.spans.empty(), "the rolled band could not be computed for the test");
+    return band;
+}
+
+bool isUpper(const GuideSlot& slot, const LeFortBandProfile& band)
+{
+    return !slot.path.points.empty() && !band.upperCut.points.empty() &&
+           std::abs(slot.path.points.front()[2] - band.upperCut.points.front()[2]) < 1e-6 &&
+           std::abs(slot.path.points.back()[2] - band.upperCut.points.back()[2]) < 1e-6;
+}
+std::vector<GuideSlot> upperSlots(const LeFortGuideLayout& layout, const LeFortBandProfile& band)
+{
+    std::vector<GuideSlot> out;
+    for (const GuideSlot& slot : layout.slotPlan)
+        if (isUpper(slot, band))
+            out.push_back(slot);
+    return out;
+}
+
+// spec §Behaviour (mixed) and §Acceptance 2: the second slit follows the band's upper edge and exists only where
+// the segment rises — here the right side up to x = −5.
+void testABandAddsAnUpperSlitOnlyWhereTheSegmentRises()
+{
+    const Prepared bone = preoperativeBone();
+    const LeFortBandProfile band = rolledBand();
+    const LeFortGuideLayout layout =
+        LeFortGuideCore::Layout(bone.preparation, bone.wrap.mesh, leFortCut(), predictiveHoles(), {}, &band);
+    require(layout.ok, layout.error.toStdString());
+    const std::vector<GuideSlot> upper = upperSlots(layout, band);
+    require(!upper.empty(), "there is no slit along the band's upper edge");
+    for (const GuideSlot& slot : upper)
+        require(slot.hasExtent && std::max(slot.start[0], slot.end[0]) <= -5.0 + 0.5,
+                "the upper slit runs where the segment does not rise: up to x = " +
+                    std::to_string(std::max(slot.start[0], slot.end[0])));
+    // The Le Fort slit is still there, both sides.
+    bool right = false, left = false;
+    for (const GuideSlot& slot : layout.slotPlan) {
+        if (isUpper(slot, band))
+            continue;
+        right = right || std::min(slot.start[0], slot.end[0]) < -5.0;
+        left = left || std::max(slot.start[0], slot.end[0]) > 5.0;
+    }
+    require(right && left, "the Le Fort slit lost a side");
+    require(layout.report.contains(QStringLiteral("franja")), "the report does not mention the band");
+}
+
+// The upper slit is broken by the same bridges as the Le Fort slit, so the strip between them stays held.
+void testTheUpperSlitSharesTheBridges()
+{
+    const Prepared bone = preoperativeBone();
+    const LeFortBandProfile band = bandFor(3.0);
+    const LeFortGuideLayout layout =
+        LeFortGuideCore::Layout(bone.preparation, bone.wrap.mesh, leFortCut(), predictiveHoles(), {}, &band);
+    require(layout.ok, layout.error.toStdString());
+    const std::vector<GuideSlot> upper = upperSlots(layout, band);
+    require(upper.size() >= 2, "the upper slit was not split by bridges");
+    for (const GuideSlot& top : upper) {
+        const double from = std::min(top.start[0], top.end[0]), to = std::max(top.start[0], top.end[0]);
+        require(from > 0.0 || to < 0.0, "an upper slit piece runs across the midline");
+        bool underALowerPiece = false;
+        for (const GuideSlot& low : layout.slotPlan) {
+            if (isUpper(low, band))
+                continue;
+            const double a = std::min(low.start[0], low.end[0]), b = std::max(low.start[0], low.end[0]);
+            underALowerPiece = underALowerPiece || (from >= a - 0.01 && to <= b + 0.01);
+        }
+        require(underALowerPiece, "an upper slit piece crosses a bridge of the Le Fort slit");
+    }
+}
+
+// spec §Acceptance 12: with the band the guide is still one piece, both slits open, the strip between them held.
+void testTheGuideWithABandIsOnePieceWithBothSlitsOpen()
+{
+    const auto holes = predictiveHoles();
+    const Prepared bone = preoperativeBone();
+    const LeFortBandProfile band = bandFor(3.0); // upper edge at z = 12
+    const LeFortGuideLayout layout =
+        LeFortGuideCore::Layout(bone.preparation, bone.wrap.mesh, leFortCut(), holes, {}, &band);
+    require(layout.ok, layout.error.toStdString());
+    const GuideRegion region =
+        GuideBaseCore::MakeBrushRegion(bone.preparation.wrapField, layout.paint, bone.design.base);
+    require(region.valid, "the laid-out region is not valid: " + region.error.toStdString());
+    const GuideDesignResult guide = GuideDesignCore::Build(bone.preparation, region, layout.slotPlan, layout.fixation,
+                                                           PlateCore::SleeveFigures(holes), bone.design);
+    require(guide.ok, "the guide was not built: " + guide.error.toStdString());
+    require(guide.pieces == 1, "the guide with a band came apart: " + std::to_string(guide.pieces) + " pieces");
+
+    auto distance = vtkSmartPointer<vtkImplicitPolyDataDistance>::New();
+    distance->SetInput(guide.mesh);
+    int probed = 0;
+    for (const GuideSlot& slot : upperSlots(layout, band)) {
+        const double from = std::min(slot.start[0], slot.end[0]) + 1.0;
+        const double to = std::max(slot.start[0], slot.end[0]) - 1.0;
+        for (double x = from; x <= to; x += 1.0) {
+            if (distance->EvaluateFunction(x, 1.0, 14.0) >= 0.0)
+                continue; // no guide wall above the band here
+            require(distance->EvaluateFunction(x, 1.0, 12.0) > 0.0,
+                    "the upper slit is closed at x = " + std::to_string(x));
+            ++probed;
+        }
+    }
+    require(probed >= 5, "the upper slit was hardly opened anywhere: " + std::to_string(probed) + " points");
+}
+
+// The band is held on both sides: the paint reaches 2 mm past its upper edge where it runs on the wall, the
+// positioning screws sit above it, and no lattice cell opens next to either slit.
+void testATallBandIsCoveredAndKeptClear()
+{
+    const Prepared bone = preoperativeBone();
+    const LeFortBandProfile band = bandFor(7.0); // upper edge at z = 16
+    LeFortGuideParams params;
+    const LeFortGuideLayout layout =
+        LeFortGuideCore::Layout(bone.preparation, bone.wrap.mesh, leFortCut(), predictiveHoles(), params, &band);
+    require(layout.ok, layout.error.toStdString());
+    for (const double x : {-15.0, 15.0}) {
+        const Vec3 above{x, 0.0, 18.0};
+        bool covered = false;
+        for (const GuideBrushStroke& dab : layout.paint)
+            covered = covered || std::hypot(std::hypot(dab.center[0] - above[0], dab.center[1] - above[1]),
+                                            dab.center[2] - above[2]) <= dab.radiusMm - 1.0;
+        require(covered, "the guide does not reach above the band at x = " + std::to_string(x));
+    }
+    require(!layout.fixation.empty(), "the guide lost its positioning screws");
+    for (const GuideFixationHole& screw : layout.fixation)
+        require(screw.center[2] >= 16.0 + 4.0 - 1e-6, "a positioning screw sits in or next to the band: z = " +
+                                                         std::to_string(screw.center[2]));
+    const double clear = params.latticeSlitClearMm + 0.5 * params.latticeCellMm - 0.25;
+    for (const GuideFigure& cell : layout.figures) {
+        const double z = cell.matrix[11];
+        require(std::abs(z - 9.0) >= clear && std::abs(z - 16.0) >= clear,
+                "a lattice cell opens next to a slit at z = " + std::to_string(z));
+    }
+}
+
+// Without a band (or an empty one) the layout is exactly the plain one.
+void testAnEmptyBandLeavesTheLayoutAsItWas()
+{
+    const Prepared bone = preoperativeBone();
+    const auto holes = predictiveHoles();
+    const LeFortGuideLayout plain = LeFortGuideCore::Layout(bone.preparation, bone.wrap.mesh, leFortCut(), holes);
+    LeFortBandProfile empty;
+    const LeFortGuideLayout withEmpty =
+        LeFortGuideCore::Layout(bone.preparation, bone.wrap.mesh, leFortCut(), holes, {}, &empty);
+    require(plain.ok && withEmpty.ok, "a plain layout failed");
+    require(plain.paint.size() == withEmpty.paint.size() && plain.slotPlan.size() == withEmpty.slotPlan.size() &&
+                plain.figures.size() == withEmpty.figures.size() && plain.fixation.size() == withEmpty.fixation.size(),
+            "an empty band changed the layout");
+    for (size_t i = 0; i < plain.paint.size(); ++i)
+        require(plain.paint[i].center == withEmpty.paint[i].center && plain.paint[i].radiusMm == withEmpty.paint[i].radiusMm,
+                "an empty band moved the paint");
+}
+
+// spec §Acceptance 8 (core part): a hole the surgeon moves takes its pad with it. This already holds — the layout
+// is a function of the holes — and is kept as a guard for the band work.
+void testAMovedHoleTakesItsPadWithIt()
+{
+    const Prepared bone = preoperativeBone();
+    const LeFortBandProfile band = bandFor(3.0);
+    std::vector<PredictiveHole> holes = predictiveHoles();
+    const Vec3 before = holes.front().preopCenter;
+    holes.front().preopCenter = {before[0] - 4.0, before[1], before[2] + 2.0};
+    const LeFortGuideLayout layout =
+        LeFortGuideCore::Layout(bone.preparation, bone.wrap.mesh, leFortCut(), holes, {}, &band);
+    require(layout.ok, layout.error.toStdString());
+    bool atNew = false, atOld = false;
+    for (const GuideBrushStroke& dab : layout.paint) {
+        atNew = atNew || dab.center == holes.front().preopCenter;
+        atOld = atOld || dab.center == before;
+    }
+    require(atNew && !atOld, "the moved hole's pad did not move with it");
+}
 } // namespace
 
 int main()
@@ -345,6 +534,12 @@ int main()
          testTheGuideFindsTheAnteriorWallWhenTheSweepAxisIsReversed},
         {"the guide ignores a distant skull surface in saved projects",
          testTheGuideIgnoresADistantSkullSurfaceInSavedProjects},
+        {"a band adds an upper slit only where the segment rises", testABandAddsAnUpperSlitOnlyWhereTheSegmentRises},
+        {"the upper slit shares the bridges", testTheUpperSlitSharesTheBridges},
+        {"the guide with a band is one piece with both slits open", testTheGuideWithABandIsOnePieceWithBothSlitsOpen},
+        {"a tall band is covered and kept clear", testATallBandIsCoveredAndKeptClear},
+        {"an empty band leaves the layout as it was", testAnEmptyBandLeavesTheLayoutAsItWas},
+        {"a moved hole takes its pad with it", testAMovedHoleTakesItsPadWithIt},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {
