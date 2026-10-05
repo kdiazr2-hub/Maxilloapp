@@ -398,6 +398,10 @@ private:
     QLineEdit* m_guideCaseEdit = nullptr;
     RootAnalysis m_guideRootAnalysis;
     vtkSmartPointer<vtkPolyData> m_guideBandMesh;          // the band drawn red on the wall
+    // The upper teeth as a distance field, so a proposed screw keeps clear of the roots; rebaked when the mesh changes.
+    mutable std::shared_ptr<const ImplicitCore::BakedField> m_guideTeethField;
+    mutable vtkPolyData* m_guideTeethFieldSource = nullptr;
+    mutable vtkMTimeType m_guideTeethFieldTime = 0;
     std::array<std::vector<size_t>, 3> m_guideHoleGroups;  // marker index → hole, per support verdict
     std::array<double, 3> m_guideHoleDragTarget{0.0, 0.0, 0.0};
     QStringList m_guideLeFortMissing;                       // holes the proposal could not place, and why

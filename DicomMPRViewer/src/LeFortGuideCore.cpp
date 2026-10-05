@@ -247,6 +247,45 @@ vtkSmartPointer<vtkPolyData> BandOnBone(vtkPolyData* bone, const OsteotomyPath& 
         clipBy("BandHeight", [&](const Vec3& p) {
             return OsteotomyCore::FieldAt(*lower, p) - OsteotomyCore::FieldAt(*upper, p) - thresholdMm;
         });
+    // Only by the cut: on each side's wall from the pillar to the piriform rim, within `reachMm` across the
+    // vertical. The slabs extend past the cut and through the whole skull, so without this the band covered
+    // whatever bone lay between them (user's case, 2026-10-05: red over the palate, the posterior maxilla and
+    // up by the orbits). With the four Le Fort points the piece across the aperture is left out, and nothing
+    // is drawn medial to a piriform rim.
+    if (current->GetNumberOfPolys() > 0 && cut.points.size() >= 2) {
+        const Vec3 up = unit({cut.upAxis[0], cut.upAxis[1], cut.upAxis[2]});
+        const auto flat = [&](const Vec3& v) { return sub(v, scale(up, dot(v, up))); };
+        struct Piece { Vec3 a, b; bool medialEndB; };
+        std::vector<Piece> pieces;
+        const auto at = [&](size_t i) { return Vec3{cut.points[i][0], cut.points[i][1], cut.points[i][2]}; };
+        if (cut.points.size() == 4) {
+            pieces.push_back({at(0), at(1), true});
+            pieces.push_back({at(3), at(2), true});
+        } else {
+            for (size_t i = 0; i + 1 < cut.points.size(); ++i)
+                pieces.push_back({at(i), at(i + 1), false});
+        }
+        constexpr double reachMm = 6.0;
+        constexpr double medialSlackMm = 0.5;
+        clipBy("NearCut", [&](const Vec3& p) {
+            double best = -1e9;
+            for (const Piece& piece : pieces) {
+                const Vec3 a = flat(piece.a), b = flat(piece.b), q = flat(p);
+                const Vec3 ab = sub(b, a);
+                const double len = std::sqrt(dot(ab, ab));
+                if (len < 1e-9)
+                    continue;
+                const double along = dot(sub(q, a), ab) / len; // mm from a towards b
+                if (piece.medialEndB && along > len + medialSlackMm)
+                    continue; // medial to the piriform rim: the aperture
+                const double t = std::clamp(along / len, 0.0, 1.0);
+                const Vec3 closest = add(a, scale(ab, t));
+                const Vec3 d = sub(q, closest);
+                best = std::max(best, reachMm - std::sqrt(dot(d, d)));
+            }
+            return best;
+        });
+    }
     current->GetPointData()->SetScalars(nullptr);
     return current;
 }

@@ -435,6 +435,68 @@ void testAMovedHoleLandsOnTheBoneAndIsJudgedThere()
     require(below.side == LeFortCutSide::Segment, "a hole moved below the cut is not on the segment");
 }
 
+// The piriform pillars look for bone outward from the rim, never towards the midline: below the aperture lie
+// the incisor roots and the spine (user's case, 2026-10-05: holes proposed under the nose, by the incisors).
+void testPiriformHolesStayLateralOfTheRim()
+{
+    const Scene s = scene(pillarCut(), rise(4.0), maxillaWithAperture(false));
+    const LeFortProposal proposal = LeFortHoleCore::Propose(s.context);
+    require(!proposal.holes.empty(), "nothing was proposed");
+    for (const LeFortProposedHole& hole : proposal.holes) {
+        if (hole.pillar == LeFortPillar::PiriformRight)
+            require(hole.center[0] <= -10.0 + 0.5, "a right piriform hole went towards the midline: " + where(hole));
+        if (hole.pillar == LeFortPillar::PiriformLeft)
+            require(hole.center[0] >= 10.0 - 0.5, "a left piriform hole went towards the midline: " + where(hole));
+    }
+}
+
+// A wall that faces sideways — the zygoma beyond the buttress — is no place for a guide's sleeve: the guide
+// sits on the anterior wall (user's case, 2026-10-05: holes on the lateral zygoma).
+void testAWallFacingSidewaysIsNotProposed()
+{
+    std::vector<vtkSmartPointer<vtkPolyData>> pieces{boxMesh({-25.0, -6.0, -3.0, 0.0, 10.0, 30.0}, false, false),
+                                                     boxMesh({-6.0, 6.0, -3.0, 0.0, 20.0, 30.0}, false, false),
+                                                     boxMesh({6.0, 14.0, -3.0, 0.0, 10.0, 30.0}, false, false)};
+    // Beyond x = 14 on the left the wall turns to face 70° sideways.
+    auto turn = vtkSmartPointer<vtkTransform>::New();
+    turn->Translate(14.0, 0.0, 0.0);
+    turn->RotateZ(-70.0);
+    auto filter = vtkSmartPointer<vtkTransformPolyDataFilter>::New();
+    filter->SetInputData(boxMesh({0.0, 16.0, -3.0, 0.0, 10.0, 30.0}, false, false));
+    filter->SetTransform(turn);
+    filter->Update();
+    auto side = vtkSmartPointer<vtkPolyData>::New();
+    side->DeepCopy(filter->GetOutput());
+    pieces.push_back(side);
+    const Scene s = scene(pillarCut(), rise(4.0), pieces);
+    const LeFortProposal proposal = LeFortHoleCore::Propose(s.context);
+    for (const LeFortProposedHole& hole : proposal.holes)
+        require(hole.axis[1] >= 0.5, "a hole was proposed on a wall facing sideways: " + where(hole) + " axis (" +
+                                         std::to_string(hole.axis[0]) + ", " + std::to_string(hole.axis[1]) + ")");
+}
+
+// A screw must not reach a root: the drill path, to the screw's depth, keeps a millimetre from the upper teeth
+// (user's reference case measures the roots before placing anything).
+void testADrillNearARootIsRefused()
+{
+    Scene s = scene(cutAt(9.0), rise(0.0001));
+    auto root = boxMesh({-13.0, -11.0, -5.0, -3.0, -10.0, 6.0}, false, false); // a canine root, 3 mm behind the wall
+    std::vector<vtkPolyData*> teethMeshes{root};
+    const auto teeth = ImplicitCore::BakeMeshField(teethMeshes, 0.2, 4.0);
+    require(teeth != nullptr, "the teeth field could not be baked");
+    s.context.teeth = teeth.get();
+    const LeFortHoleSupport onRoot = LeFortHoleCore::Support({-12.0, 0.0, 2.0}, kFacing, s.context);
+    require(onRoot.verdict == LeFortSupportVerdict::Rejected && onRoot.reason.contains(QStringLiteral("raíz")),
+            "a screw into a root was not refused: " + describe(onRoot));
+    const LeFortHoleSupport clear = LeFortHoleCore::Support({-20.0, 0.0, 2.0}, kFacing, s.context);
+    require(clear.verdict == LeFortSupportVerdict::Ok, "a screw 7 mm from the root was refused: " + describe(clear));
+    const LeFortProposal proposal = LeFortHoleCore::Propose(s.context);
+    for (const LeFortProposedHole& hole : proposal.holes)
+        require(hole.center[0] <= -14.0 + 1e-6 || hole.center[0] >= -10.0 - 1e-6 || hole.side == LeFortCutSide::Cranial ||
+                    hole.center[2] > 7.0,
+                "a hole was proposed over the root: " + where(hole));
+}
+
 } // namespace
 
 int main()
@@ -457,6 +519,9 @@ int main()
         {"holes become the guide's drill sites", testHolesBecomeTheGuidesDrillSites},
         {"plate holes without a guide hole are counted", testPlateHolesWithoutAGuideHoleAreCounted},
         {"a moved hole lands on the bone and is judged there", testAMovedHoleLandsOnTheBoneAndIsJudgedThere},
+        {"piriform holes stay lateral of the rim", testPiriformHolesStayLateralOfTheRim},
+        {"a wall facing sideways is not proposed", testAWallFacingSidewaysIsNotProposed},
+        {"a drill near a root is refused", testADrillNearARootIsRefused},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {

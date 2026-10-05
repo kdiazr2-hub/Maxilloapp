@@ -355,6 +355,11 @@ cmake --build build-linux-core --parallel && ctest --test-dir build-linux-core -
   nearest the pillar point; every apex < 5 mm is flagged. The teeth come from a SIDECAR the segmentation script
   writes (`<output>_dientes_superiores.nrrd`, DentalSegmentator label 3) and `importUpperTeethSidecar` loads
   hidden — the labelmap still maps 3 → 5, so the maxilla and the Le Fort segment keep their teeth.
+  Real case (2026-10-05): `BandOnBone` only draws within 6 mm (across the vertical) of the pillar–piriform pieces
+  of the cut, never medial to a rim — the two cut surfaces cross the whole skull (palate, orbits). `Propose` only
+  searches outward of a piriform rim and drops sites whose drill axis is > 60° off the anterior (lateral zygoma);
+  `Support` refuses a drill path that comes within 1 mm of `LeFortHoleContext::teeth` (BakeMeshField of label 3)
+  to 6 mm deep. The band spinboxes are synced whenever the band is recomputed.
   2 · `LeFortMotionCore::BandFromHeights` builds the band from the surgeon's four heights (`GuidePlan::bandHeights`,
   optional key; `guideLeFortBand` prefers them; «Restablecer» clears them). 3 · holes as before. 4 · two guides:
   `LeFortGuideParams::separateSides` (the UI always sets it) — no bridge, `connectPaint` per side, a second

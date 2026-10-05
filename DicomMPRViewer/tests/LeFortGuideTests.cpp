@@ -587,6 +587,25 @@ void testTheBandIsTheBoneBetweenTheTwoCuts()
         require(p[2] <= 9.0 - 0.1 * p[0] + 0.1, "the band is taller than the rise there: z = " + std::to_string(p[2]));
     }
 
+    // Only by the cut, on each side's wall from the piriform rim to the pillar: bone the slab also crosses far
+    // behind (the posterior maxilla, the pterygoids) or across the aperture is not drawn (user's case,
+    // 2026-10-05: red over the palate and up by the orbits).
+    {
+        auto withFar = vtkSmartPointer<vtkAppendPolyData>::New();
+        withFar->AddInputData(cranial);
+        withFar->AddInputData(boxMesh({-30.0, 30.0, -45.0, -38.0, 8.0, 16.0}, false, false)); // far behind
+        withFar->AddInputData(boxMesh({-3.0, 3.0, -20.0, -2.0, 8.0, 16.0}, false, false));    // a septum
+        withFar->Update();
+        const auto drawn = LeFortGuideCore::BandOnBone(withFar->GetOutput(), leFortCut(), bandFor(4.0));
+        require(drawn && drawn->GetNumberOfPolys() > 0, "the band vanished");
+        for (vtkIdType i = 0; i < drawn->GetNumberOfPoints(); ++i) {
+            double p[3];
+            drawn->GetPoint(i, p);
+            require(p[1] > -16.0, "the band was drawn far behind the cut: y = " + std::to_string(p[1]));
+            require(std::abs(p[0]) >= 6.0 - 1e-6, "the band was drawn across the aperture: x = " + std::to_string(p[0]));
+        }
+    }
+
     const std::array<double, 16> descent{1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, -3.0, 0.0, 0.0, 0.0, 1.0};
     const auto none = LeFortGuideCore::BandOnBone(cranial, leFortCut(), LeFortMotionCore::Band(leFortCut(), descent));
     require(!none || none->GetNumberOfPolys() == 0, "a descent drew a band");

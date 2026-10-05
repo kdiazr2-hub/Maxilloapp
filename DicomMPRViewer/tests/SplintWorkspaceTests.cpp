@@ -1389,6 +1389,12 @@ public:
         require(window.m_guideRootsLabel->text().contains(QStringLiteral("canino")),
                 "the roots are not reported: " + window.m_guideRootsLabel->text().toStdString());
 
+        // The band is known once the envelope is: its heights are shown before anything is proposed (they read
+        // 0.0 on the user's case).
+        require(std::abs(window.m_guideBandSpins[0]->value() - 4.0) < 0.05,
+                "the band's heights are not shown before the proposal: " +
+                    std::to_string(window.m_guideBandSpins[0]->value()));
+
         // The case number for the engraving.
         window.m_guideCaseEdit->setText(QStringLiteral("20406"));
         emit window.m_guideCaseEdit->editingFinished();
@@ -1403,8 +1409,19 @@ public:
         require(window.m_guideReportLabel->text().contains(QStringLiteral("Impactación")) &&
                     window.m_guideReportLabel->text().contains(QStringLiteral("4.0 mm")),
                 "the report does not state the impaction: " + window.m_guideReportLabel->text().toStdString());
-        require(window.m_guidePlan.lefortHoles.size() == 16, "16 drill sites were expected, got " +
+        // 16 sites, less the four below the cut that only had root under them: no screw goes into a tooth.
+        require(window.m_guidePlan.lefortHoles.size() == 12, "12 drill sites were expected, got " +
                                                                   std::to_string(window.m_guidePlan.lefortHoles.size()));
+        for (const LeFortProposedHole& hole : window.m_guidePlan.lefortHoles)
+            for (const auto& [rootX, apex] : {std::pair{3.0, 0.0}, {11.0, 4.0}, {16.0, 1.0}, {22.0, -3.0}}) {
+                // From the site to the root column (1.5 mm round its axis, up to its apex), within the
+                // half-millimetre voxels the teeth were segmented on.
+                const double across = std::max(0.0, std::abs(std::abs(hole.center[0]) - rootX) - 1.5);
+                const double above = std::max(0.0, hole.center[2] - apex);
+                require(std::hypot(across, above) >= 1.0 - 0.6,
+                        "a site was proposed over a root at x " + std::to_string(hole.center[0]) + ", z " +
+                            std::to_string(hole.center[2]));
+            }
         require(!window.m_guideMesh || window.m_guideMesh->GetNumberOfPolys() == 0,
                 "the proposed holes went into a guide before they were accepted");
         require(window.m_guideAcceptHolesButton->isVisibleTo(&window) && window.m_guideMoveHoleButton->isChecked() &&
@@ -1461,7 +1478,7 @@ public:
                 "the guide does not carve both the cut and the band's upper edge");
         require(!window.m_guideShowFiguresCheck->isChecked(),
                 "the lattice cells' preview cylinders still cover the generated guide");
-        require(window.m_guideBuiltFigures.size() == window.m_guidePlan.figures.size() + 2 * 16,
+        require(window.m_guideBuiltFigures.size() == window.m_guidePlan.figures.size() + 2 * window.m_guidePlan.lefortHoles.size(),
                 "the guide does not carry one sleeve per drill site");
         const auto sleeves = PlateCore::SleeveFigures(LeFortHoleCore::DrillSites({moved}), window.guideSleeveParams());
         require(std::any_of(window.m_guideBuiltFigures.begin(), window.m_guideBuiltFigures.end(),
@@ -1496,7 +1513,7 @@ public:
         reopened.show();
         settle();
         reopened.restoreGuidePlan(state);
-        require(reopened.m_guidePlan.lefortHoles.size() == 16, "the drill sites did not survive the project");
+        require(reopened.m_guidePlan.lefortHoles.size() == window.m_guidePlan.lefortHoles.size(), "the drill sites did not survive the project");
         require(reopened.m_guidePlan.bandHeights == window.m_guidePlan.bandHeights &&
                     reopened.m_guidePlan.caseLabel == QStringLiteral("20406"),
                 "the band heights or the case number did not survive the project");

@@ -60,6 +60,12 @@ struct LeFortHoleParams
     double lateralReachMm = 8.0;
     double pairSpacingMm = 6.5;   // between any two holes: 5.6 mm rings that do not overlap
     double sampleStepMm = 1.0;    // grid the sites are sought on
+    // Proposed sites only: the drill axis within 60° of the anterior. Past that the wall faces sideways
+    // (the zygoma beyond the buttress) and the guide does not sit there (user's case, 2026-10-05).
+    double minAnteriorFacing = 0.5;
+    // Roots: the drill path, to the screw's depth, keeps this far from the upper teeth.
+    double rootClearanceMm = 1.0;
+    double screwDepthMm = 6.0;
 };
 
 struct LeFortHoleContext
@@ -74,6 +80,9 @@ struct LeFortHoleContext
     OsteotomyPath cut;                // the planned Le Fort cut, pre-operative coordinates
     std::array<double, 16> motion{};  // the segment's motion, pre-operative → planned, row-major
     LeFortBandProfile band;           // empty (no spans) when there is nothing to take out
+    // The upper teeth (`ImplicitCore::BakeMeshField` of «Dientes superiores»), when segmented: a drill path
+    // that reaches a root is refused. Null skips the check.
+    const ImplicitCore::BakedField* teeth = nullptr;
     // The patient's anterior, out of the face. The cut's sweep axis has no sign of its own, so the caller
     // gives it (LeFortGuideCore works it out the same way for the guide's frame).
     std::array<double, 3> anterior{0.0, -1.0, 0.0}; // DICOM LPS: anterior is −Y

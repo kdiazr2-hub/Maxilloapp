@@ -131,6 +131,22 @@ LeFortHoleSupport Support(const std::array<double, 3>& site, const std::array<do
         return support;
     }
 
+    // Clear of the roots: the drill path, to the screw's depth, a millimetre from the upper teeth.
+    if (context.teeth) {
+        const Vec3 inward = scale(unit(axis, {0.0, 0.0, 1.0}), -1.0);
+        double nearest = 1e30;
+        for (double t = 0.0; t <= params.screwDepthMm + 1e-9; t += 0.25)
+            nearest = std::min(nearest, context.teeth->At(add(site, scale(inward, t))));
+        if (nearest < params.rootClearanceMm) {
+            support.reason = nearest <= 0.0
+                                 ? QStringLiteral("El tornillo entraría en una raíz dental: muévalo lejos de los ápices.")
+                                 : QStringLiteral("El tornillo pasaría a %1 mm de una raíz dental: deje al menos %2 mm.")
+                                       .arg(nearest, 0, 'f', 1)
+                                       .arg(params.rootClearanceMm, 0, 'f', 1);
+            return support;
+        }
+    }
+
     // And enough bone under the screw.
     support.thicknessMm = thicknessAlong(*context.bone, site, axis, params.maxProbeMm);
     if (support.thicknessMm < params.minThicknessMm) {
@@ -211,7 +227,14 @@ LeFortProposal Propose(const LeFortHoleContext& context, const std::vector<LeFor
         for (const LeFortCutSide side : {LeFortCutSide::Cranial, LeFortCutSide::Segment}) {
             const bool cranial = side == LeFortCutSide::Cranial;
             std::vector<Candidate> candidates;
+            // At a piriform rim only outward, away from the midline: below the aperture are the incisor roots
+            // and the spine, and above it the nose (user's case, 2026-10-05).
+            const bool piriform = index == 1 || index == 2;
+            const Vec3 middle = scale(add(context.cut.points[1], context.cut.points[2]), 0.5);
+            const double outward = dot(sub(anchor, middle), lateral) >= 0.0 ? 1.0 : -1.0;
             for (double u = -reach; u <= reach + 1e-9; u += step) {
+                if (piriform && u * outward < -1e-9)
+                    continue;
                 const Vec3 column = add(anchor, scale(lateral, u));
                 // Where the window starts in this column: the cut, or the band's upper edge above it.
                 const double base = cranial ? bandUnder(overCut(column, context.cut, rises, up)) : 0.0;
@@ -232,6 +255,8 @@ LeFortProposal Propose(const LeFortHoleContext& context, const std::vector<LeFor
                     LeFortProposedHole hole;
                     hole.center = site;
                     hole.axis = PlateCore::BoneNormalAt(*context.bone, site, front);
+                    if (dot(hole.axis, front) < params.minAnteriorFacing)
+                        continue; // the wall faces sideways here: not the anterior wall the guide sits on
                     hole.pillar = kPillars[index];
                     hole.side = side;
                     hole.origin = LeFortHoleOrigin::Auto;

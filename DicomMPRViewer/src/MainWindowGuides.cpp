@@ -3544,6 +3544,19 @@ bool MainWindow::guideLeFortHoleContext(LeFortHoleContext& context, QString* err
         context.band = band;
     context.anterior = LeFortGuideCore::AnteriorDirection(*m_guidePrepared.wrapField, context.cut);
     context.params.seat = guidePlateParams();
+    // The roots, when the segmentation separated the upper teeth: no screw is proposed or accepted into one
+    // (user's case, 2026-10-05: holes proposed by the incisor roots).
+    const vtkSmartPointer<vtkPolyData> teeth =
+        m_mesh3DView ? m_mesh3DView->meshData(objectActorKey(kUpperTeethLabel)) : nullptr;
+    if (!teeth || teeth->GetNumberOfPoints() == 0) {
+        m_guideTeethField.reset();
+        m_guideTeethFieldSource = nullptr;
+    } else if (teeth.Get() != m_guideTeethFieldSource || teeth->GetMTime() != m_guideTeethFieldTime || !m_guideTeethField) {
+        m_guideTeethField = ImplicitCore::BakeMeshField(teeth, 0.3, 4.0);
+        m_guideTeethFieldSource = teeth;
+        m_guideTeethFieldTime = teeth->GetMTime();
+    }
+    context.teeth = m_guideTeethField.get();
     return true;
 }
 
@@ -3583,6 +3596,9 @@ QString MainWindow::guideLeFortHoleReport() const
 void MainWindow::refreshGuideBand()
 {
     m_guideBandMesh = nullptr;
+    // The heights shown are always the band drawn: the spins read 0.0 until «Proponer» before (user's case,
+    // 2026-10-05), though the envelope had already given the band.
+    syncGuideBandSpins();
     if (m_guidePlan.type != GuideType::LeFort)
         return;
     const LeFortBandProfile band = guideLeFortBand();
