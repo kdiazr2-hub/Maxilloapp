@@ -216,3 +216,12 @@ slug: guia-lefort-por-movimiento
 
 ## T016 — 2026-10-05
 - status: complete. CLAUDE.md § Architecture documents the UI; decisions.md has both T012 decisions.
+
+## T012 follow-up — 2026-10-05 (full app build on Linux)
+- The whole app (DicomMPRViewer + every test, workspace tests included) now builds on Linux against VTK 9.5.2
+  with rendering + GUISupportQt and Qt 6.4, USE_GDCM=OFF, and runs under Xvfb/Mesa.
+- red: `SplintWorkspaceTests` "the guide cannot be generated from the movement once the envelope exists" — an
+  old `m_guideGenerateButton->hide()` later in `updateGuideUi` overrode the new visibility (the reason the user
+  never saw automatic generation). Removed.
+- green: `ctest` 29/29 on Linux, including `RepositionWorkspaceTests` and the new impaction flow; the test now
+  writes `impaction-guide.png`. The Windows build + ctest remains the merge bar (constitution 4).

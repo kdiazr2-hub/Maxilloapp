@@ -1306,7 +1306,7 @@ public:
     // GUÍA Le Fort from the movement, without plates: a 4 mm impaction gives the band (drawn red), the second slit
     // along its upper edge and 16 proposed drill sites with a sleeve each; a site dragged elsewhere stays there,
     // the guide is rebuilt round it, and the project keeps it.
-    static void runImpactionGuideWorkflow()
+    static void runImpactionGuideWorkflow(const QString& artifactsDir)
     {
         MainWindow window;
         window.setAttribute(Qt::WA_DontShowOnScreen);
@@ -1370,6 +1370,15 @@ public:
         require(window.m_guideMesh && window.m_guideMesh->GetNumberOfPolys() > 0, "the guide was not built");
         require(window.m_guideBuiltFigures.size() == window.m_guidePlan.figures.size() + 2 * 16,
                 "the guide does not carry one sleeve per drill site");
+
+        // This synthetic face looks towards +y (a CT's anterior is -y), so the camera looks back along -y.
+        QDir().mkpath(artifactsDir);
+        window.m_guideView->setViewAlongDirection({0.0, 0.0, 12.0}, {0.0, -1.0, 0.0}, {0.0, 0.0, 1.0}, 30.0);
+        window.m_guideView->render();
+        settle();
+        require(window.m_guideView->findChild<QVTKOpenGLNativeWidget*>()->grabFramebuffer().save(
+                    QDir(artifactsDir).filePath(QStringLiteral("impaction-guide.png"))),
+                "the impaction guide screenshot was not written");
 
         // «Mover orificio»: drag one site 1.5 mm towards the midline, onto the bone.
         window.m_guideMoveHoleButton->setChecked(true);
@@ -1911,7 +1920,7 @@ int main(int argc, char** argv)
         SplintWorkspaceTests::runInspectorTabs();
         SplintWorkspaceTests::runGuidesWorkflow(artifacts);
         SplintWorkspaceTests::runPlateWorkflow(artifacts);
-        SplintWorkspaceTests::runImpactionGuideWorkflow();
+        SplintWorkspaceTests::runImpactionGuideWorkflow(artifacts);
         if (!unexpectedDialogs.isEmpty()) {
             std::cerr << "FAIL unexpected dialogs: " << unexpectedDialogs.join(QStringLiteral(" | ")).toStdString() << '\n';
             return 1;

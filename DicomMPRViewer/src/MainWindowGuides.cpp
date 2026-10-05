@@ -2151,7 +2151,6 @@ void MainWindow::updateGuideUi()
                                              pendingPlateHoles == 0);
     }
     if (m_guidePlateExportButton) m_guidePlateExportButton->setEnabled(hasPlates);
-    if (m_guideGenerateButton) m_guideGenerateButton->hide();
     showSection(m_guideLayersSection, !m_guidePlateWorkspace && hasWrap && !m_guidePlannedView);
     const bool paintStep = workflow == GuideWorkflowStep::PaintRight ||
                            workflow == GuideWorkflowStep::PaintLeft ||
