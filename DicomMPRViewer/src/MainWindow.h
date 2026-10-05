@@ -280,6 +280,7 @@ private:
     void removeGuidePlate();
     void refreshGuidePlates();
     void exportGuidePlates();
+    void importUpperTeethSidecar(const QString& outputSegmentationPath); // hidden «Dientes superiores» object
     void generateLeFortGuide(); // the band and the proposed drill sites, from the Le Fort's movement
     void acceptLeFortHoles();   // puts the sites in the guide and builds it
     // Lays the guide out with these drill sites and the band, builds it and shows the report.

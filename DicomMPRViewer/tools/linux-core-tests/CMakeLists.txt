@@ -23,7 +23,7 @@ find_package(VTK 9.5 REQUIRED COMPONENTS
     CommonCore CommonDataModel CommonMath CommonTransforms
     FiltersCore FiltersGeneral FiltersSources FiltersModeling FiltersGeometry
     IOGeometry IOXML IOImage
-    ImagingCore ImagingGeneral ImagingMath ImagingMorphological ImagingStencil)
+    ImagingCore ImagingGeneral ImagingMath ImagingMorphological ImagingStencil RenderingFreeType)
 
 set(APP ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 
@@ -52,7 +52,7 @@ add_core_test(ImplicitCoreTests tests/ImplicitCoreTests.cpp src/ImplicitCore.cpp
 add_core_test(OsteotomyCoreTests tests/OsteotomyCoreTests.cpp src/OsteotomyCore.cpp src/CompositeBlockCore.cpp)
 add_core_test(GuideDesignTests tests/GuideDesignTests.cpp ${GUIDE_CORE})
 add_core_test(PlateTests tests/PlateTests.cpp src/PlateCore.cpp ${GUIDE_CORE})
-add_core_test(LeFortGuideTests tests/LeFortGuideTests.cpp src/LeFortGuideCore.cpp src/LeFortMotionCore.cpp src/PlateCore.cpp ${GUIDE_CORE})
+add_core_test(LeFortGuideTests tests/LeFortGuideTests.cpp src/LeFortGuideCore.cpp src/GuideEngraveCore.cpp src/LeFortMotionCore.cpp src/PlateCore.cpp ${GUIDE_CORE})
 add_core_test(LeFortMotionTests tests/LeFortMotionTests.cpp src/LeFortMotionCore.cpp src/OsteotomyCore.cpp
     src/CompositeBlockCore.cpp)
 add_core_test(RootAnalysisTests tests/RootAnalysisTests.cpp src/RootAnalysisCore.cpp src/OsteotomyCore.cpp

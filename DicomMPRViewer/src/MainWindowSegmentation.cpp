@@ -1,13 +1,18 @@
 #include "MainWindow.h"
 #include "MaskToObjectCore.h"
+#include "MeshGenerator.h"
+#include "SegmentationImporter.h"
 #include "Mesh3DView.h"
 #include "ObjectLabels.h"
+#include <QDir>
+#include <QFileInfo>
 #include <QMessageBox>
 #include <QStatusBar>
 #include <QTableWidget>
 #include <vtkPolyData.h>
 
 QString meshLabelName(int label);
+QColor meshLabelColor(int label);
 
 void MainWindow::calculateObjectFromMask(int label, bool smooth)
 {
@@ -49,4 +54,40 @@ void MainWindow::calculateObjectFromMask(int label, bool smooth)
     statusBar()->showMessage(smooth
         ? tr("Objeto liso creado desde la máscara: %1. Relleno conservado; la máscara no cambia.").arg(name)
         : tr("Objeto exacto (vóxeles) creado desde la máscara: %1. Relleno conservado; la máscara no cambia.").arg(name));
+}
+
+void MainWindow::importUpperTeethSidecar(const QString& outputSegmentationPath)
+{
+    // The segmentation writes the upper teeth on their own next to the labelmap (they stay in the maxilla
+    // there, so the Le Fort segment carries them). They become a hidden object for the guide's root analysis.
+    const QFileInfo info(outputSegmentationPath);
+    QString name = info.fileName();
+    for (const QString& ext : {QStringLiteral(".nrrd"), QStringLiteral(".nii.gz"), QStringLiteral(".mha")})
+        if (name.endsWith(ext)) {
+            name = name.left(name.size() - ext.size()) + QStringLiteral("_dientes_superiores") + ext;
+            break;
+        }
+    const QString path = info.dir().filePath(name);
+    if (!QFileInfo::exists(path))
+        return;
+    QString error;
+    const auto teeth = SegmentationImporter::importLabelmap(path, &error);
+    if (!teeth) {
+        statusBar()->showMessage(tr("Dientes superiores: %1").arg(error), 8000);
+        return;
+    }
+    const auto mesh = MeshGenerator::generateMesh(teeth, 1, true, 10, &error);
+    if (!mesh || mesh->GetNumberOfPolys() == 0) {
+        statusBar()->showMessage(tr("Dientes superiores: %1").arg(error), 8000);
+        return;
+    }
+    const QString objectName = meshLabelName(kUpperTeethLabel);
+    addObjectEntry(objectName, meshLabelColor(kUpperTeethLabel), kUpperTeethLabel);
+    if (m_mesh3DView) {
+        const int key = objectActorKey(kUpperTeethLabel);
+        m_mesh3DView->addMesh(key, mesh, objectName);
+        m_mesh3DView->setMeshColor(key, objectColorForLabel(kUpperTeethLabel));
+    }
+    setObjectEntryVisible(kUpperTeethLabel, false);
+    m_appState.setProjectDirty(true);
 }

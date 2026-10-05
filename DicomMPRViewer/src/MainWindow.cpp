@@ -8249,6 +8249,7 @@ void MainWindow::onSegmentationFinished(const QString& outputSegmentationPath)
         QStringLiteral("bone/tissue"),
         outputSegmentationPath,
         true);
+    importUpperTeethSidecar(outputSegmentationPath); // the upper teeth apart, for the guide's root analysis
 
     // ── Decide which labels to (re)generate meshes for ────────────────────
     const int pendingLabel = m_pendingAutoMeshLabel;

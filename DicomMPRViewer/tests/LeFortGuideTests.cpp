@@ -1,4 +1,5 @@
 #include "LeFortGuideCore.h"
+#include "GuideEngraveCore.h"
 #include "LeFortMotionCore.h"
 
 #include "GuideDesignCore.h"
@@ -686,6 +687,78 @@ void testTwoGuidesOneEachSide()
                                                  " pieces");
 }
 
+// The engraving is a solid of the text: as wide as `TextWidth` says, standing `reliefMm` proud of its base.
+void testTextIsASolidOfItsMeasuredWidth()
+{
+    const auto solid = GuideEngraveCore::TextSolid(QStringLiteral("20406"), 3.0, 0.6);
+    require(solid && solid->GetNumberOfPolys() > 0, "the text gave no solid");
+    double b[6];
+    solid->GetBounds(b);
+    const double width = GuideEngraveCore::TextWidth(QStringLiteral("20406"), 3.0);
+    require(std::abs((b[1] - b[0]) - width) < 0.6, "the text is " + std::to_string(b[1] - b[0]) + " mm wide, not " +
+                                                       std::to_string(width));
+    require(std::abs(b[0] + b[1]) < 0.2 && std::abs(b[2] + b[3]) < 0.2, "the text is not centred on its origin");
+    require(b[5] > 0.55 && b[5] < 0.65 && b[4] < -0.3, "the text does not stand 0.6 mm proud of its sunk base");
+    require(MeshRepairCore::Analyze(solid).Valid(), "the text is not a closed solid");
+}
+
+// spec asistente-guia-lefort §Acceptance 5: each guide carries the case number and its side, on its own
+// material and clear of its screws, and the two stay two.
+void testEachGuideIsEngravedWithTheCaseAndItsSide()
+{
+    const Prepared bone = preoperativeBone(true);
+    LeFortGuideParams params;
+    params.separateSides = true;
+    params.caseLabel = QStringLiteral("20406");
+    const LeFortGuideLayout layout = LeFortGuideCore::Layout(bone.preparation, bone.wrap.mesh, leFortCut(), {}, params);
+    require(layout.ok, layout.error.toStdString());
+    require(layout.labels.size() == 4, "two labels per guide were expected, got " + std::to_string(layout.labels.size()));
+    for (const LeFortGuideLabel& label : layout.labels) {
+        const bool right = label.center[0] < 0.0;
+        require(label.text == QStringLiteral("20406") || label.text == (right ? QStringLiteral("DER") : QStringLiteral("IZQ")),
+                "a label says " + label.text.toStdString() + " on the " + (right ? "right" : "left"));
+        // Its centre and both ends lie on the guide's material.
+        for (const double along : {-0.5, 0.0, 0.5}) {
+            const Vec3 p{label.center[0] + along * label.widthMm * label.reading[0],
+                         label.center[1] + along * label.widthMm * label.reading[1],
+                         label.center[2] + along * label.widthMm * label.reading[2]};
+            bool onGuide = false;
+            for (const GuideBrushStroke& dab : layout.paint)
+                onGuide = onGuide || std::hypot(std::hypot(dab.center[0] - p[0], dab.center[1] - p[1]), dab.center[2] - p[2]) <=
+                                         dab.radiusMm - 0.5;
+            require(onGuide, "the label " + label.text.toStdString() + " runs off its guide");
+        }
+        // No screw hole within the text's footprint, with a millimetre to spare.
+        for (const GuideFixationHole& screw : layout.fixation) {
+            const Vec3 d{screw.center[0] - label.center[0], screw.center[1] - label.center[1], screw.center[2] - label.center[2]};
+            const double t = std::clamp(d[0] * label.reading[0] + d[1] * label.reading[1] + d[2] * label.reading[2],
+                                        -0.5 * label.widthMm, 0.5 * label.widthMm);
+            const double off = std::hypot(std::hypot(d[0] - t * label.reading[0], d[1] - t * label.reading[1]),
+                                          d[2] - t * label.reading[2]);
+            require(off >= 0.5 * 3.0 + 0.5 * screw.diameterMm + 1.0, "the label " + label.text.toStdString() + " sits on a screw");
+        }
+    }
+    int added = 0;
+    for (const GuideFigure& figure : layout.figures)
+        added += figure.operation == GuideFigureOperation::Add && figure.shape == GuideFigureShape::Mesh ? 1 : 0;
+    require(added == 4, "the labels are not added figures of the guide");
+    const GuideRegion region = GuideBaseCore::MakeBrushRegion(bone.preparation.wrapField, layout.paint, bone.design.base);
+    const GuideDesignResult guides =
+        GuideDesignCore::Build(bone.preparation, region, layout.slotPlan, layout.fixation, layout.figures, bone.design);
+    require(guides.ok && guides.pieces == 2, "the engraved guides came out in " + std::to_string(guides.pieces) + " pieces");
+    // And they come apart into the right guide and the left one, for two STL files.
+    const LeFortGuidePair pair = LeFortGuideCore::SplitBySide(guides.mesh, leFortCut());
+    require(pair.right && pair.left && pair.right->GetNumberOfPolys() > 0 && pair.left->GetNumberOfPolys() > 0,
+            "the guides did not split into right and left");
+    double r[6], l[6];
+    pair.right->GetBounds(r);
+    pair.left->GetBounds(l);
+    const bool rightIsNegative = leFortCut().points.front()[0] < 0.0;
+    require(rightIsNegative ? (r[1] < 0.0 && l[0] > 0.0) : (r[0] > 0.0 && l[1] < 0.0), "the right and left guides are swapped");
+    require(MeshRepairCore::Analyze(pair.right).Valid() && MeshRepairCore::Analyze(pair.left).Valid(),
+            "a split guide is not a closed mesh");
+}
+
 } // namespace
 
 int main()
@@ -711,6 +784,8 @@ int main()
         {"the guide covers the whole cut with a single hole", testTheGuideCoversTheWholeCutWithASingleHole},
         {"the guide stays out of the nose and clear of the spine", testTheGuideStaysOutOfTheNoseAndClearOfTheSpine},
         {"two guides, one each side", testTwoGuidesOneEachSide},
+        {"text is a solid of its measured width", testTextIsASolidOfItsMeasuredWidth},
+        {"each guide is engraved with the case and its side", testEachGuideIsEngravedWithTheCaseAndItsSide},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {

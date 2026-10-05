@@ -133,6 +133,7 @@ set(SOURCES
     src/LeFortMotionCore.cpp
     src/LeFortHoleCore.cpp
     src/RootAnalysisCore.cpp
+    src/GuideEngraveCore.cpp
     src/GuidePlanCore.cpp
     src/CollisionCore.cpp
     src/SurfaceContourOverlay.cpp
@@ -327,7 +328,7 @@ add_core_test(GuideSculptTests tests/GuideSculptTests.cpp src/GuideSculptCore.cp
 add_core_test(PlateTests tests/PlateTests.cpp src/PlateCore.cpp src/GuideDesignCore.cpp src/GuideBaseCore.cpp
     src/CutSlotCore.cpp src/WrapCore.cpp src/OsteotomyCore.cpp src/ImplicitCore.cpp src/MeshRepairCore.cpp
     src/CompositeBlockCore.cpp)
-add_core_test(LeFortGuideTests tests/LeFortGuideTests.cpp src/LeFortGuideCore.cpp src/LeFortMotionCore.cpp src/PlateCore.cpp
+add_core_test(LeFortGuideTests tests/LeFortGuideTests.cpp src/LeFortGuideCore.cpp src/GuideEngraveCore.cpp src/LeFortMotionCore.cpp src/PlateCore.cpp
     src/GuideDesignCore.cpp src/GuideBaseCore.cpp src/CutSlotCore.cpp src/WrapCore.cpp src/OsteotomyCore.cpp
     src/ImplicitCore.cpp src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)
 add_core_test(GuidePlanTests tests/GuidePlanTests.cpp src/GuidePlanCore.cpp src/PlateCore.cpp src/GuideDesignCore.cpp
@@ -364,7 +365,7 @@ endif()
 vtk_module_autoinit(TARGETS SplintBenchmark MODULES ${VTK_LIBRARIES})
 
 # Custom Le Fort plates on a real project's bones, with renderings (a development tool, not a CTest).
-add_executable(PlateProbe tools/PlateProbe.cpp src/PlateCore.cpp src/LeFortGuideCore.cpp src/LeFortMotionCore.cpp
+add_executable(PlateProbe tools/PlateProbe.cpp src/PlateCore.cpp src/LeFortGuideCore.cpp src/GuideEngraveCore.cpp src/LeFortMotionCore.cpp
     src/GuideDesignCore.cpp
     src/GuideBaseCore.cpp src/CutSlotCore.cpp src/WrapCore.cpp src/OsteotomyCore.cpp src/ImplicitCore.cpp
     src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)

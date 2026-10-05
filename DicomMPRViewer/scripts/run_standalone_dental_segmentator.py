@@ -374,6 +374,33 @@ def fill_bone_interiors(mask, prediction, intensities, spacing_zyx, source_label
     return result
 
 
+def upper_teeth_sidecar_path(output_path):
+    """Where the upper teeth go, next to the labelmap: <name>_dientes_superiores<ext>."""
+    path = Path(output_path)
+    for ext in (".nii.gz", ".nrrd", ".mha", ".nii"):
+        if path.name.endswith(ext):
+            return path.with_name(path.name[: -len(ext)] + "_dientes_superiores" + ext)
+    return path.with_name(path.name + "_dientes_superiores.nrrd")
+
+
+def write_upper_teeth_sidecar(teeth_mask, reference, output_path):
+    """The upper teeth (DentalSegmentator label 3) on their own, for the guide's root analysis.
+
+    The labelmap keeps them inside the maxilla (APP_LABEL_MAP 3 -> 5) so the Le Fort segment carries its
+    teeth; this second file is the only place they are apart. Returns the path, or None without teeth.
+    """
+    import numpy as np
+    import SimpleITK as sitk
+
+    if teeth_mask is None or not np.any(teeth_mask):
+        return None
+    image = sitk.GetImageFromArray(teeth_mask.astype(np.uint8))
+    image.CopyInformation(reference)
+    path = upper_teeth_sidecar_path(output_path)
+    sitk.WriteImage(image, str(path), True)
+    return path
+
+
 def remap_prediction(input_path, prediction_path, output_path, target, seed=None, seed2=None):
     import numpy as np
     import SimpleITK as sitk
@@ -736,6 +763,11 @@ def remap_prediction(input_path, prediction_path, output_path, target, seed=None
     out_img = sitk.GetImageFromArray(out)
     out_img.CopyInformation(seg)
     sitk.WriteImage(out_img, str(output_path), True)
+    if arr is not None and target not in ("mandible", "mandibula", "mandíbula", "maxilla", "maxilar",
+                                          "via aerea", "via_aerea", "airway"):
+        sidecar = write_upper_teeth_sidecar(conservative_mask(3), seg, output_path)
+        if sidecar:
+            log(f"Dientes superiores aparte: {sidecar}")
 
 
 def run_dentalsegmentator_nnunet(input_path, output_path, target, seed=None, seed2=None):

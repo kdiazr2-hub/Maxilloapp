@@ -4,6 +4,9 @@
 // are table objects (actor key 1000 + label); negative ones are temporary
 // scene actors.
 
+// The upper teeth as their own object (the segmentation's "_dientes_superiores" file): the maxilla keeps
+// them too, so the Le Fort segment carries its teeth; this copy is only for the guide's root analysis.
+inline constexpr int kUpperTeethLabel = 3;
 inline constexpr int kUpperArchLabel = 201;
 inline constexpr int kLowerArchLabel = 202;
 inline constexpr int kUpperCompositeLabel  = 203;

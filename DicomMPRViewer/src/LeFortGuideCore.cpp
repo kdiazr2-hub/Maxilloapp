@@ -1,9 +1,13 @@
 #include "LeFortGuideCore.h"
+#include "GuideEngraveCore.h"
 
 #include <vtkPolyData.h>
 #include <vtkPointData.h>
 #include <vtkDoubleArray.h>
 #include <vtkClipPolyData.h>
+#include <vtkAppendPolyData.h>
+#include <vtkCleanPolyData.h>
+#include <vtkPolyDataConnectivityFilter.h>
 
 #include <algorithm>
 #include <cmath>
@@ -152,6 +156,55 @@ std::array<double, 3> AnteriorDirection(const ImplicitCore::BakedField& field, c
             front = scale(front, -1.0);
     }
     return front;
+}
+
+LeFortGuidePair SplitBySide(vtkPolyData* guides, const OsteotomyPath& path)
+{
+    LeFortGuidePair pair;
+    if (!guides || guides->GetNumberOfPolys() == 0 || path.points.size() < 4)
+        return pair;
+    const Vec3 across = sub(path.points.back(), path.points.front());
+    const Vec3 middle = scale(add(path.points[1], path.points[2]), 0.5);
+    const double rightSide = dot(sub(path.points.front(), middle), across); // negative by construction
+    auto connectivity = vtkSmartPointer<vtkPolyDataConnectivityFilter>::New();
+    connectivity->SetInputData(guides);
+    connectivity->SetExtractionModeToAllRegions();
+    connectivity->ColorRegionsOn();
+    connectivity->Update();
+    const int regions = connectivity->GetNumberOfExtractedRegions();
+    auto right = vtkSmartPointer<vtkAppendPolyData>::New();
+    auto left = vtkSmartPointer<vtkAppendPolyData>::New();
+    int rightCount = 0, leftCount = 0;
+    for (int region = 0; region < regions; ++region) {
+        auto one = vtkSmartPointer<vtkPolyDataConnectivityFilter>::New();
+        one->SetInputData(guides);
+        one->SetExtractionModeToSpecifiedRegions();
+        one->AddSpecifiedRegion(region);
+        auto clean = vtkSmartPointer<vtkCleanPolyData>::New();
+        clean->SetInputConnection(one->GetOutputPort());
+        clean->Update();
+        auto piece = vtkSmartPointer<vtkPolyData>::New();
+        piece->DeepCopy(clean->GetOutput());
+        if (piece->GetNumberOfPolys() == 0)
+            continue;
+        double b[6];
+        piece->GetBounds(b);
+        const Vec3 centre{0.5 * (b[0] + b[1]), 0.5 * (b[2] + b[3]), 0.5 * (b[4] + b[5])};
+        const bool isRight = dot(sub(centre, middle), across) * rightSide > 0.0;
+        (isRight ? right : left)->AddInputData(piece);
+        (isRight ? rightCount : leftCount) += 1;
+    }
+    const auto finish = [](vtkAppendPolyData* append, int count) {
+        auto out = vtkSmartPointer<vtkPolyData>::New();
+        if (count > 0) {
+            append->Update();
+            out->DeepCopy(append->GetOutput());
+        }
+        return out;
+    };
+    pair.right = finish(right, rightCount);
+    pair.left = finish(left, leftCount);
+    return pair;
 }
 
 vtkSmartPointer<vtkPolyData> BandOnBone(vtkPolyData* bone, const OsteotomyPath& cut, const LeFortBandProfile& band,
@@ -680,6 +733,88 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
                 layout.figures.push_back(cell);
             }
             ++row;
+        }
+    }
+
+    // The engraving (spec asistente-guia-lefort, after the user's printed guides): on each guide the case number
+    // above its cranial positioning screws and DER / IZQ below the caudal ones, at the middle of the side, clear
+    // of every screw hole and sleeve. Each label brings its own material — a strip of dabs under it, joined to
+    // the band — as the printed guides are taller where the number is; the openwork cells under it go.
+    if (params.separateSides && hasAperture && !params.caseLabel.trimmed().isEmpty()) {
+        const double textHeight = std::max(1.0, params.labelHeightMm);
+        const double pad = 0.5 * textHeight + 1.5;
+        const Vec3 upAxis = unit(path.upAxis, {0.0, 0.0, 1.0});
+        const Vec3 towardLeft = path.points.size() >= 2 ? sub(path.points.back(), path.points.front()) : lateral;
+        const double middle = 0.5 * (rimLow + rimHigh);
+        const bool lowIsRight = path.points.empty() || lateralOf(path.points.front()) < middle;
+        const double sleeveBore = 0.5 * params.sleeveOuterDiameterMm;
+        // How far a point is from the text's footprint (a segment along the reading direction).
+        const auto offText = [](const Vec3& p, const Vec3& center, const Vec3& reading, double half) {
+            const Vec3 d = sub(p, center);
+            const double t = std::clamp(dot(d, reading), -half, half);
+            return norm(sub(d, scale(reading, t)));
+        };
+        for (const bool lowSide : {true, false}) {
+            const double low = lowSide ? lowest : rimHigh, high = lowSide ? rimLow : highest;
+            const QString sideName = lowSide == lowIsRight ? QStringLiteral("DER") : QStringLiteral("IZQ");
+            const std::pair<QString, bool> lines[] = {{params.caseLabel.trimmed(), true}, {sideName, false}};
+            for (const auto& [text, cranial] : lines) {
+                const double half = 0.5 * GuideEngraveCore::TextWidth(text, textHeight);
+                const double mid = 0.5 * (low + high);
+                bool placed = false;
+                for (int k = 0; k <= static_cast<int>(std::ceil(high - low)) && !placed; ++k) {
+                    const double s = mid + ((k % 2) ? 1.0 : -1.0) * std::ceil(0.5 * k);
+                    if (s - half < low || s + half > high)
+                        continue;
+                    const double beyond = params.fixationOffsetMm + pad + 0.5;
+                    const double wanted = cranial ? bandAt(s) + beyond : -beyond;
+                    const int bin = std::clamp(static_cast<int>(std::floor((s - lowest) / spacing)), 0, bins - 1);
+                    const auto found = byBin.find(bin);
+                    if (found == byBin.end())
+                        continue;
+                    const Candidate* pick = nullptr;
+                    for (const Candidate* c : found->second)
+                        if (std::abs(c->field - wanted) < 1.0 && (!pick || c->depth > pick->depth))
+                            pick = c;
+                    if (!pick)
+                        continue;
+                    const Vec3 outward = GuideBaseCore::NormalAt(field, pick->point);
+                    // Read left to right from in front of the face, upright.
+                    Vec3 reading = unit(sub(towardLeft, scale(outward, dot(towardLeft, outward))), lateral);
+                    const Vec3 upright{outward[1] * reading[2] - outward[2] * reading[1],
+                                       outward[2] * reading[0] - outward[0] * reading[2],
+                                       outward[0] * reading[1] - outward[1] * reading[0]};
+                    if (dot(upright, upAxis) < 0.0)
+                        reading = scale(reading, -1.0);
+                    bool clear = true;
+                    for (const GuideFixationHole& screw : layout.fixation)
+                        clear = clear && offText(screw.center, pick->point, reading, half) >=
+                                             0.5 * textHeight + 0.5 * screw.diameterMm + 1.0;
+                    for (const PredictiveHole& hole : holes)
+                        clear = clear && offText(hole.preopCenter, pick->point, reading, half) >= 0.5 * textHeight + sleeveBore + 1.0;
+                    for (const LeFortGuideLabel& other : layout.labels)
+                        clear = clear && norm(sub(other.center, pick->point)) >= half + 0.5 * other.widthMm + 1.0;
+                    if (!clear)
+                        continue;
+                    const double cellClear = pad + cellRadius + 0.6;
+                    layout.figures.erase(std::remove_if(layout.figures.begin(), layout.figures.end(),
+                                                        [&](const GuideFigure& cell) {
+                                                            if (cell.operation != GuideFigureOperation::Subtract)
+                                                                return false;
+                                                            const Vec3 c{cell.matrix[3], cell.matrix[7], cell.matrix[11]};
+                                                            return offText(c, pick->point, reading, half) < cellClear;
+                                                        }),
+                                         layout.figures.end());
+                    for (double t = -half - 1.0; t <= half + 1.0 + 1e-9; t += 1.5)
+                        layout.paint.push_back({ontoSurface(field, add(pick->point, scale(reading, t))), pad, false});
+                    layout.figures.push_back(GuideEngraveCore::TextFigure(text, pick->point, reading, outward, textHeight,
+                                                                          params.labelReliefMm));
+                    layout.labels.push_back({text, pick->point, reading, 2.0 * half});
+                    placed = true;
+                }
+                if (!placed)
+                    layout.report += QStringLiteral(" No cabe el texto «%1» en la guía %2.").arg(text, sideName);
+            }
         }
     }
 

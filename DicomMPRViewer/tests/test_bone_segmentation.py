@@ -304,3 +304,32 @@ class ProcessOutputTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UpperTeethSidecarTests(unittest.TestCase):
+    """spec asistente-guia-lefort: the upper teeth come out on their own, the labelmap untouched."""
+
+    def test_the_sidecar_holds_exactly_the_upper_teeth(self):
+        labels = np.zeros((6, 7, 8), dtype=np.uint8)
+        labels[1:3, 2:4, 2:5] = 1
+        labels[3:5, 2:4, 2:5] = 1
+        teeth = np.zeros_like(labels, dtype=bool)
+        teeth[3:5, 2:4, 2:5] = True
+        reference = sitk.GetImageFromArray(labels)
+        reference.SetSpacing((0.4, 0.4, 0.7))
+        reference.SetOrigin((-10.0, 5.0, 2.0))
+        with tempfile.TemporaryDirectory() as folder:
+            output = Path(folder) / "output_segmentation.nrrd"
+            path = segmentator.write_upper_teeth_sidecar(teeth, reference, output)
+            self.assertEqual(path, Path(folder) / "output_segmentation_dientes_superiores.nrrd")
+            written = sitk.ReadImage(str(path))
+            np.testing.assert_array_equal(sitk.GetArrayFromImage(written), teeth.astype(np.uint8))
+            self.assertEqual(written.GetSpacing(), reference.GetSpacing())
+            self.assertEqual(written.GetOrigin(), reference.GetOrigin())
+
+    def test_no_teeth_writes_nothing(self):
+        reference = sitk.GetImageFromArray(np.zeros((3, 3, 3), dtype=np.uint8))
+        with tempfile.TemporaryDirectory() as folder:
+            output = Path(folder) / "out.nrrd"
+            self.assertIsNone(segmentator.write_upper_teeth_sidecar(np.zeros((3, 3, 3), bool), reference, output))
+            self.assertFalse((Path(folder) / "out_dientes_superiores.nrrd").exists())

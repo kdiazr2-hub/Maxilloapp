@@ -61,6 +61,10 @@ struct LeFortGuideParams
     // Two guides, right and left, each from the nasomaxillary to the maxillomalar pillar, with no bridge
     // between them (user's real case, 2026-10-05). Each gets its own positioning screws at both ends.
     bool separateSides = false;
+    // Engraved on each guide when not empty: the case number above the upper slit, DER / IZQ below the cut.
+    QString caseLabel;
+    double labelHeightMm = 3.0;
+    double labelReliefMm = 0.6;
     double dabSpacingMm = 2.5;        // along the cut
     double fixationDiameterMm = 1.5;  // guide fixation screws (user's choice)
     double fixationOffsetMm = 6.0;    // above and below the cut
@@ -72,6 +76,14 @@ struct LeFortGuideParams
     // painted this far past the band's upper edge so the upper slit has material on both sides.
     double bandThresholdMm = 0.5;
     double bandMarginAboveMm = 2.0;
+};
+
+struct LeFortGuideLabel
+{
+    QString text;
+    std::array<double, 3> center{0.0, 0.0, 0.0};
+    std::array<double, 3> reading{1.0, 0.0, 0.0}; // the direction the text reads in
+    double widthMm = 0.0;
 };
 
 struct LeFortGuideLayout
@@ -86,10 +98,21 @@ struct LeFortGuideLayout
     std::vector<std::array<double, 3>> cutLine; // where the slit meets the anterior wall
     int dippedBins = 0;                    // bins where the band went below the aperture
     int upperSlitPieces = 0;               // slit pieces along the band's upper edge (impaction)
+    std::vector<LeFortGuideLabel> labels;  // engraved text, also among `figures` as added meshes
+};
+
+struct LeFortGuidePair
+{
+    vtkSmartPointer<vtkPolyData> right; // the patient's right guide (the side of pilar D)
+    vtkSmartPointer<vtkPolyData> left;
 };
 
 namespace LeFortGuideCore
 {
+// The built guides apart, for one STL each: every connected piece goes to the side of the cut its centre lies
+// on, split at the middle of the two piriform points.
+LeFortGuidePair SplitBySide(vtkPolyData* guides, const OsteotomyPath& path);
+
 // The patient's anterior, out of the face, at the cut: the cut's sweep axis given the sign the bone around
 // its points says (the axis of an osteotomy plane has none of its own). The layout's frame, and what the hole
 // proposal walks back into the bone along (`LeFortHoleContext::anterior`). `field` is the wrap's field.
