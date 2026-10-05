@@ -105,3 +105,11 @@ Decision — plates win: with plates the guide drills their predictive holes; wi
            and the surgeon can move them. The band and the second slit apply either way.
 Why      — a guide whose holes miss existing plates would not fit them in theatre. To confirm with the user;
            `UnmatchedPlateHoles` stays in the core for the other choice.
+
+## 2026-10-05 — Guide first, one guide bridged under the aperture  (feature: guia-lefort-por-movimiento)
+Context  — first real case: the band was not drawn on the bone at the cut, the guide ran over the nose and
+           the anterior nasal spine, proposed holes went straight into the guide, and the plate step came first.
+Decision — (user) one guide, each side pillar nasomaxilar → pillar maxilomalar, joined by a bridge below the
+           piriform aperture clear of the ANS; band above the cut, two thin slits; holes proposed as markers and
+           put into the guide with «Aceptar orificios»; Guías before Placa personalizada, the plates later use
+           the guide's holes. Supersedes "With plates, the guide drills the plates' holes".

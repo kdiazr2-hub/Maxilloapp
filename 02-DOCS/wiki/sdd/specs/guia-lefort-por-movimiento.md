@@ -182,3 +182,14 @@ taladrar los orificios que después ocuparán las placas.
   - Se **mantiene** el aviso de placas anteriores cuyos orificios no coinciden con la guía.
   - Si cambia el movimiento, los orificios movidos a mano **se conservan** y se re-evalúan
     (antes: área no formulable; cerrada en el plan).
+- **2026-10-05 — tras probar en un caso real** (decisiones del usuario):
+  - La franja roja se ve sobre el hueso justo encima del corte, entre la osteotomía y el borde superior
+    de la franja; de ella sale la separación de las dos ranuras de la guía.
+  - La franja se quita **encima del corte** (lado craneal) y la guía lleva **dos ranuras finas**.
+  - La guía va del pilar nasomaxilar al pilar maxilomalar de cada lado, **sin meterse en la nariz ni
+    apoyarse en la espina nasal anterior**; los dos lados se unen en **una sola guía con un puente** por
+    debajo de la apertura piriforme que libra la espina.
+  - Los orificios propuestos aparecen primero como marcadores, sin tocar la guía; el profesional los mueve
+    y con **«Aceptar orificios»** pasan a la guía como camisas.
+  - **La guía va antes que la placa**: el paso Guías precede a Placa personalizada y las placas usarán
+    después los orificios de la guía (deja sin efecto «con placas mandan sus orificios»).
