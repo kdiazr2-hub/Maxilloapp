@@ -142,17 +142,17 @@ public:
                     window.m_orthoNextButton->isEnabled(),
                 "the step rail did not jump to FERULA");
         require(window.m_splintView->standardViewIndex() == 0, "FERULA does not open in the frontal view");
-        // PLACAS defines the drill map; GUIAS consumes that map as the final step.
+        // GUIAS makes the cutting guide and its drill sites; PLACAS comes after it (user's decision, 2026-10-05).
         window.m_orthoStepButtons[7]->click();
         settle();
         require(window.m_orthoStep == 7 && window.m_viewModeStack->currentIndex() == 7 &&
-                    window.m_orthoNextButton->isEnabled() && window.m_guidePlateWorkspace,
-                "PLACAS is not the definitive-hole step");
+                    window.m_orthoNextButton->isEnabled() && !window.m_guidePlateWorkspace,
+                "GUIAS is not the step before the plates");
         window.m_orthoStepButtons[8]->click();
         settle();
         require(window.m_orthoStep == 8 && window.m_viewModeStack->currentIndex() == 7 &&
-                    !window.m_orthoNextButton->isEnabled() && !window.m_guidePlateWorkspace,
-                "GUIAS is not the final pre-operative step of the bar");
+                    !window.m_orthoNextButton->isEnabled() && window.m_guidePlateWorkspace,
+                "PLACAS is not the last step of the bar");
         window.m_orthoStepButtons[6]->click();
         settle();
         for (auto* tab : window.findChildren<QToolButton*>(QStringLiteral("MT")))
@@ -920,7 +920,7 @@ public:
         settle();
         require(window.m_viewModeStack->currentIndex() == 7 && window.m_guideView != nullptr,
                 "GUIAS did not open its workspace");
-        require(window.m_orthoStep == 8, "GUIAS is not the ninth step of the bar");
+        require(window.m_orthoStep == 7, "GUIAS is not the eighth step of the bar");
         require(window.findChild<QWidget*>(QStringLiteral("GuideControlPanel")) != nullptr,
                 "the guides side panel is missing");
         // Only the reachable steps are on show: before the envelope there is nothing else to do.
@@ -1467,7 +1467,7 @@ public:
             if (tab->text() == QStringLiteral("PLACAS"))
                 tab->click();
         settle();
-        require(window.m_guidePlateWorkspace && window.m_orthoStep == 7 &&
+        require(window.m_guidePlateWorkspace && window.m_orthoStep == 8 &&
                     window.m_guidePlateSection->isVisibleTo(&window) &&
                     !window.m_guideTypeSection->isVisibleTo(&window) && window.m_guidePlannedView,
                 "the personalized-plate module did not open independently on the final Le Fort");
