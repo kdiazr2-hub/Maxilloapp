@@ -583,6 +583,27 @@ void testTheBandIsDrawnOnTheWallOnlyWhereItRises()
     require(!none || none->GetNumberOfPolys() == 0, "a descent drew a band");
 }
 
+// The guide covers the whole cut, pillar to pillar, however few holes it drills (user's report, 2026-10-05: on
+// a real maxilla the proposal found one sound site and the guide came out as a block round it). The holes can
+// only widen the band, never narrow it.
+void testTheGuideCoversTheWholeCutWithASingleHole()
+{
+    const Prepared bone = preoperativeBone();
+    PredictiveHole only;
+    only.bone = PlateBone::Cranial;
+    only.preopCenter = {-18.0, 0.0, 20.0};
+    only.preopAxis = {0.0, 1.0, 0.0};
+    const LeFortGuideLayout layout = LeFortGuideCore::Layout(bone.preparation, bone.wrap.mesh, leFortCut(), {only});
+    require(layout.ok, "the guide was not laid out: " + layout.error.toStdString());
+    double left = 1e9, right = -1e9;
+    for (const GuideBrushStroke& dab : layout.paint) {
+        left = std::min(left, dab.center[0]);
+        right = std::max(right, dab.center[0]);
+    }
+    require(left <= -18.0 && right >= 18.0, "the guide does not run from pillar to pillar: x " + std::to_string(left) +
+                                                ".." + std::to_string(right));
+}
+
 } // namespace
 
 int main()
@@ -605,6 +626,7 @@ int main()
         {"the anterior direction is out of the face whichever way the sweep axis points",
          testTheAnteriorDirectionIsOutOfTheFaceWhicheverWayTheSweepAxisPoints},
         {"the band is drawn on the wall only where it rises", testTheBandIsDrawnOnTheWallOnlyWhereItRises},
+        {"the guide covers the whole cut with a single hole", testTheGuideCoversTheWholeCutWithASingleHole},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {

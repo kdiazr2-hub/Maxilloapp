@@ -53,7 +53,7 @@ struct LeFortGuideParams
     double latticeSpacingMm = 4.4;    // between cell centres along the cut
     double latticeMarginMm = 1.1;     // material left round every cell
     double latticeSlitClearMm = 2.0;  // material left between a cell and the slit
-    double lateralMarginMm = 5.0;     // the band runs this far past the outermost predictive hole
+    double lateralMarginMm = 5.0;     // the band runs this far past the cut's ends or the outermost hole
     double dabSpacingMm = 2.5;        // along the cut
     double fixationDiameterMm = 1.5;  // guide fixation screws (user's choice)
     double fixationOffsetMm = 6.0;    // above and below the cut

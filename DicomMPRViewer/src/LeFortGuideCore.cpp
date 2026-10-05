@@ -314,17 +314,17 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
         pathDepthMax = std::max(pathDepthMax, depth);
     }
 
+    // The band runs along the whole cut, pillar to pillar, and further out where a hole lies beyond it. It used
+    // to span only the holes, which was the cut while the holes were the plates' (at the pillars); with the few
+    // sound sites a real maxilla gives, the guide shrank to a block round one hole (user's report, 2026-10-05).
     double lowest = 1e30, highest = -1e30;
-    if (holes.empty()) {
-        for (const Vec3& point : path.points) {
-            lowest = std::min(lowest, lateralOf(point));
-            highest = std::max(highest, lateralOf(point));
-        }
-    } else {
-        for (const PredictiveHole& hole : holes) {
-            lowest = std::min(lowest, lateralOf(hole.preopCenter));
-            highest = std::max(highest, lateralOf(hole.preopCenter));
-        }
+    for (const Vec3& point : path.points) {
+        lowest = std::min(lowest, lateralOf(point));
+        highest = std::max(highest, lateralOf(point));
+    }
+    for (const PredictiveHole& hole : holes) {
+        lowest = std::min(lowest, lateralOf(hole.preopCenter));
+        highest = std::max(highest, lateralOf(hole.preopCenter));
     }
     lowest -= params.lateralMarginMm;
     highest += params.lateralMarginMm;
