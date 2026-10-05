@@ -33,3 +33,4 @@ status: in-progress
 | F8 holes 2+2 on each pillar, roots warn | complete | LeFortHoleTests "two above and two below in a column on each pillar", "roots do not leave a pillar without holes below" (red → green) |
 | F9 guide to the pillar past a perforation | complete | LeFortGuideTests "a perforation is not the aperture" (red: left guide x 22–25 only → green) |
 | F10 thicker segmented bone | complete | Python ThinBoneTests 4/4 (pinhole sealed at 1.5 mm, air opening kept, other labels untouched) |
+| F11 holes in the bone mesh | complete | MeshGeneratorTests thin wall (red: vanished → green with the 0.55 floor) |
