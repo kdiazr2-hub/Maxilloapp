@@ -287,7 +287,9 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
     highest += params.lateralMarginMm;
 
     // The anterior surface near the cut: envelope vertices facing forward, within the band's reach.
-    const double reach = std::max(12.0, tallestBand + std::max(params.fixationOffsetMm, params.bandRadiusMm) + 2.0);
+    // Far enough down for the bridge that crosses below the aperture and the nasal spine.
+    const double reach = std::max({12.0, tallestBand + std::max(params.fixationOffsetMm, params.bandRadiusMm) + 2.0,
+                                   params.spineClearanceMm + 2.0 * params.bandRadiusMm + 6.0});
     std::vector<Candidate> candidates;
     for (vtkIdType id = 0; id < wrapMesh->GetNumberOfPoints(); ++id) {
         double raw[3] = {};
@@ -358,10 +360,124 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
     }
 
     const double bandRadius = std::max(1.0, params.bandRadiusMm);
+    const double strapRadius = 0.75 * bandRadius;
+    // The piriform aperture: the stretch between the last bins on the cut either side of the bins with no wall
+    // on the cut. Nothing of the guide may reach into it (user's rule, 2026-10-05: "sin meterse en la nariz").
+    bool hasAperture = false;
+    double rimLow = 0.0, rimHigh = 0.0;
+    {
+        double dipLow = 1e30, dipHigh = -1e30, cutLow = 1e30, cutHigh = -1e30;
+        for (const BandPoint& b : band) {
+            if (b.onCut) {
+                cutLow = std::min(cutLow, b.lateral);
+                cutHigh = std::max(cutHigh, b.lateral);
+            }
+        }
+        for (const BandPoint& b : band)
+            if (!b.onCut && b.lateral > cutLow && b.lateral < cutHigh) {
+                dipLow = std::min(dipLow, b.lateral);
+                dipHigh = std::max(dipHigh, b.lateral);
+            }
+        if (dipLow <= dipHigh) {
+            hasAperture = true;
+            rimLow = cutLow;
+            rimHigh = cutHigh;
+            for (const BandPoint& b : band)
+                if (b.onCut) {
+                    if (b.lateral < dipLow)
+                        rimLow = std::max(rimLow, b.lateral);
+                    else if (b.lateral > dipHigh)
+                        rimHigh = std::min(rimHigh, b.lateral);
+                }
+        }
+    }
+    // A dab beside the aperture is shrunk so it stops at the rim; one that would be a crumb is left out.
+    const auto clearOfNose = [&](double lateral, double radius) {
+        if (!hasAperture || lateral <= rimLow - radius || lateral >= rimHigh + radius)
+            return radius;
+        if (lateral > rimLow && lateral < rimHigh)
+            return 0.0;
+        return std::min(radius, (lateral <= rimLow ? rimLow - lateral : lateral - rimHigh) + 0.25);
+    };
     for (const BandPoint& b : band) {
-        // Where the cut crosses the piriform aperture the band has to span open air. A full-width band there
-        // became a slab over the nose; a strap is enough to hold the two halves together.
-        layout.paint.push_back({b.point, b.onCut ? bandRadius : 0.75 * bandRadius, false});
+        if (!b.onCut)
+            continue; // the aperture is crossed by the bridge below
+        const double radius = clearOfNose(b.lateral, bandRadius);
+        if (radius >= 1.5)
+            layout.paint.push_back({b.point, radius, false});
+    }
+    // The bridge: across the aperture on the alveolar wall, its upper edge `spineClearanceMm` below the anterior
+    // nasal spine — the forward spur at the aperture's floor — and carried a few bins past each rim so it
+    // overlaps the band there. Without a spine it keeps that clearance below the floor itself.
+    if (hasAperture) {
+        // The wall below the aperture, slice by slice downwards from the cut: the most forward point of each.
+        const double sliceMm = 0.5;
+        std::map<int, double> forwardBySlice; // slice index (downwards) → most forward depth
+        double floorField = -1e30;
+        for (const Candidate& c : candidates) {
+            if (c.lateral <= rimLow || c.lateral >= rimHigh || c.field >= -0.5)
+                continue;
+            floorField = std::max(floorField, c.field);
+            const int slice = static_cast<int>(std::floor(-c.field / sliceMm));
+            const auto it = forwardBySlice.find(slice);
+            if (it == forwardBySlice.end() || c.depth > it->second)
+                forwardBySlice[slice] = c.depth;
+        }
+        if (floorField > -1e29) {
+            // The alveolar wall's own depth: the median of the slices' forward-most points. The spine is the run
+            // of slices from the floor down that stand more than 1.5 mm in front of it.
+            std::vector<double> depths;
+            for (const auto& [slice, depth] : forwardBySlice)
+                depths.push_back(depth);
+            std::nth_element(depths.begin(), depths.begin() + depths.size() / 2, depths.end());
+            const double wall = depths[depths.size() / 2];
+            double spineBottom = floorField;
+            for (const auto& [slice, depth] : forwardBySlice) {
+                const double level = -slice * sliceMm;
+                if (level > floorField + 1e-9)
+                    continue;
+                if (depth > wall + 1.5)
+                    spineBottom = std::min(spineBottom, level - sliceMm);
+                else if (level < spineBottom - sliceMm)
+                    break; // past the spine: the plain wall
+            }
+            const double target = spineBottom - params.spineClearanceMm - strapRadius;
+            const int reachBins = static_cast<int>(std::ceil(strapRadius / spacing)) + 1;
+            for (int bin = 0; bin < bins; ++bin) {
+                const double binLateral = lowest + (bin + 0.5) * spacing;
+                if (binLateral < rimLow - reachBins * spacing || binLateral > rimHigh + reachBins * spacing)
+                    continue;
+                const auto found = byBin.find(bin);
+                if (found == byBin.end())
+                    continue;
+                // Under the aperture the bridge runs at its level; beside it the bridge ramps up towards the band
+                // so the two overlap, never reaching above the aperture's floor over the opening.
+                const auto levelAt = [&](double lateral) {
+                    const double outside = lateral < rimLow ? rimLow - lateral : lateral > rimHigh ? lateral - rimHigh : 0.0;
+                    if (outside <= 0.0)
+                        return target;
+                    double level = -0.5 * strapRadius;
+                    if (outside < strapRadius)
+                        level = std::min(level, floorField - std::sqrt(strapRadius * strapRadius - outside * outside));
+                    return std::max(level, target);
+                };
+                const Candidate* pick = nullptr;
+                double pickLevel = 0.0;
+                for (const Candidate* c : found->second) {
+                    const double level = levelAt(c->lateral);
+                    if (c->field > level + 0.25)
+                        continue;
+                    // The highest under its own level, then the most forward.
+                    const double slack = level - c->field;
+                    if (!pick || slack < pickLevel - 0.25 || (std::abs(slack - pickLevel) <= 0.25 && c->depth > pick->depth)) {
+                        pick = c;
+                        pickLevel = slack;
+                    }
+                }
+                if (pick)
+                    layout.paint.push_back({pick->point, strapRadius, false});
+            }
+        }
     }
     // Over an impaction band the guide also has to hold the upper slit, with material past it: a second row of
     // dabs centred on the band's upper edge, where the band runs on the wall.
@@ -378,8 +494,9 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
             for (const Candidate* c : found->second)
                 if (std::abs(c->field - rise) < 1.0 && (!pick || c->depth > pick->depth))
                     pick = c;
-            if (pick)
-                layout.paint.push_back({pick->point, bandRadius, false});
+            const double radius = pick ? clearOfNose(b.lateral, bandRadius) : 0.0;
+            if (radius >= 1.5)
+                layout.paint.push_back({pick->point, radius, false});
         }
     }
 

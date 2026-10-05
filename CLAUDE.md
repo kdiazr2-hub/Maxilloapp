@@ -328,7 +328,13 @@ cmake --build build-linux-core --parallel && ctest --test-dir build-linux-core -
   the second slit along `upperCut` inside each Le Fort slit piece (same bridges), only where the rise is
   ≥ 0.5 mm; paints a second row of dabs on the band's upper edge when the band is taller than the first row
   covers; raises the cranial positioning screws by the rise; keeps lattice cells `rowOffset` from both slits.
-  Without a band the layout is unchanged. `GuidePlan::lefortHoles` saves the guide's holes (center, axis,
+  Without a band the layout is unchanged. The band spans the cut's ends ∪ the holes (it used to span only
+  the holes and shrank to a block round the one sound site of a real maxilla). No guide in the nose nor on the
+  anterior nasal spine (user's rule, 2026-10-05): the piriform rims are the last bins on the cut either side of
+  the wall-less ones, dabs beside them shrink to stop at the rim, and the sides are joined by ONE bridge on the
+  alveolar wall whose upper edge is `spineClearanceMm` (3) below the spine — the run of slices from the
+  aperture's floor down standing > 1.5 mm in front of the wall's median depth — ramping up beside the rims
+  (never above the floor over the opening) so it overlaps the band. `GuidePlan::lefortHoles` saves the guide's holes (center, axis,
   pillar, side, origin auto/manual) under the optional `lefortHoles` key; support is not saved.
   UI (`MainWindowGuides.cpp`): once the envelope exists, «Generar guía desde el movimiento» (user's choice,
   2026-10-05: a button after the envelope; the hand-painted steps stay as the alternative and to retouch it)

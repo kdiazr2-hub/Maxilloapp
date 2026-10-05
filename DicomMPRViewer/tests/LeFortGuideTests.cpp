@@ -93,15 +93,21 @@ struct Prepared
     GuideDesignParams design;
 };
 
-Prepared preoperativeBone()
+// The anterior nasal spine: a 3 mm-wide spur at the midline of the aperture's floor, 4 mm proud of the face.
+vtkSmartPointer<vtkPolyData> nasalSpine() { return boxMesh({-1.5, 1.5, 0.0, 4.0, 5.0, 8.0}, false, false); }
+
+Prepared preoperativeBone(bool withSpine = false)
 {
     Prepared out;
     std::vector<vtkPolyData*> meshes;
     const auto cranial = cranialPieces();
     const auto segment = segmentBeforeCut();
+    const auto spine = nasalSpine();
     for (const auto& mesh : cranial)
         meshes.push_back(mesh);
     meshes.push_back(segment);
+    if (withSpine)
+        meshes.push_back(spine);
     WrapParams wrapParams;
     wrapParams.gapClosingMm = 1.5;
     wrapParams.smallestDetailMm = 0.4;
@@ -257,8 +263,11 @@ void testTheGuideIsOnePieceWithAnOpenSlit()
             if (onCut[0] < from + 1.0 || onCut[0] > to - 1.0)
                 continue;
             const double x = onCut[0];
-            if (distance->EvaluateFunction(x, 1.0, 11.0) >= 0.0)
-                continue; // no guide wall above the cut here (a hole, the end of the band)
+            // Every slot keeps `edgeMarginMm` (2 mm) of material to the guide's edge, so the guide holds together;
+            // since the band stops at the piriform rim (no guide in the nose) that edge is on the cut there.
+            if (distance->EvaluateFunction(x, 1.0, 11.0) >= 0.0 || distance->EvaluateFunction(x - 2.5, 1.0, 11.0) >= 0.0 ||
+                distance->EvaluateFunction(x + 2.5, 1.0, 11.0) >= 0.0)
+                continue; // no guide wall above the cut here, or the guide's edge is near (a hole, the end of the band)
             for (const double y : {0.6, 1.2})
                 require(distance->EvaluateFunction(x, y, 9.0) > 0.0,
                         "the slit is closed at x = " + std::to_string(x) + ", y = " + std::to_string(y));
@@ -603,6 +612,33 @@ void testTheGuideCoversTheWholeCutWithASingleHole()
                                                 ".." + std::to_string(right));
 }
 
+// The user's rule (2026-10-05): the guide runs from the nasomaxillary to the maxillomalar pillar on each side,
+// never into the nose, and the bridge joining the sides passes below the aperture clear of the anterior nasal
+// spine — 3 mm between the spine and the bridge's upper edge.
+void testTheGuideStaysOutOfTheNoseAndClearOfTheSpine()
+{
+    const Prepared bone = preoperativeBone(true);
+    const LeFortGuideLayout layout = LeFortGuideCore::Layout(bone.preparation, bone.wrap.mesh, leFortCut(), {});
+    require(layout.ok, "the guide was not laid out: " + layout.error.toStdString());
+    bool bridged = false;
+    for (const GuideBrushStroke& dab : layout.paint) {
+        if (dab.erase)
+            continue;
+        const double x = dab.center[0], z = dab.center[2], r = dab.radiusMm;
+        // Into the aperture (|x| < 6, z 8.5..20 — above its floor): no dab reaches over the piriform rim.
+        const double dx = std::max(0.0, std::abs(x) - 6.0), dz = std::max({0.0, 8.5 - z, z - 20.0});
+        require(std::hypot(dx, dz) >= r - 0.5, "a dab reaches into the nose: x " + std::to_string(x) + ", z " +
+                                                   std::to_string(z) + ", r " + std::to_string(r));
+        // Across the midline: the bridge, its upper edge 3 mm below the spine's foot (z = 5).
+        if (std::abs(x) < 3.0) {
+            bridged = true;
+            require(z + r <= 5.0 - 3.0 + 0.5, "the bridge is not clear of the nasal spine: z " + std::to_string(z) +
+                                                  ", r " + std::to_string(r));
+        }
+    }
+    require(bridged, "the two sides are not joined across the midline");
+}
+
 } // namespace
 
 int main()
@@ -626,6 +662,7 @@ int main()
          testTheAnteriorDirectionIsOutOfTheFaceWhicheverWayTheSweepAxisPoints},
         {"the band is the bone between the two cuts", testTheBandIsTheBoneBetweenTheTwoCuts},
         {"the guide covers the whole cut with a single hole", testTheGuideCoversTheWholeCutWithASingleHole},
+        {"the guide stays out of the nose and clear of the spine", testTheGuideStaysOutOfTheNoseAndClearOfTheSpine},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {
