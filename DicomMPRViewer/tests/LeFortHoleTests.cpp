@@ -292,23 +292,50 @@ void testWithoutABandCranialHolesKeepFourMillimetresFromTheCut()
 
 // spec §Behaviour (no valid site): a pillar with only thin bone gets no hole on that side — never a weaker
 // site — and the proposal says which and why.
-void testAThinPillarIsReportedNotFilled()
+// The anterior wall of a real maxilla is often thinner than 2 mm, and refusing it left the surgeon with no holes
+// at all (user's case, 2026-10-05: «Orificios: 0», nothing to accept). Thin bone is proposed with its warning,
+// after any sound site, and the surgeon decides.
+void testAThinPillarIsProposedWithAWarning()
 {
     const Scene s = scene(pillarCut(), rise(4.0), maxillaWithAperture(true));
     const LeFortProposal proposal = LeFortHoleCore::Propose(s.context);
-    require(count(proposal, LeFortPillar::PillarLeft, LeFortCutSide::Cranial) == 0,
-            "holes were proposed on the thin left pillar");
+    require(count(proposal, LeFortPillar::PillarLeft, LeFortCutSide::Cranial) == 2,
+            "the thin left pillar got no holes");
     require(count(proposal, LeFortPillar::PiriformLeft, LeFortCutSide::Cranial) == 2 &&
                 count(proposal, LeFortPillar::PillarRight, LeFortCutSide::Cranial) == 2 &&
                 count(proposal, LeFortPillar::PillarLeft, LeFortCutSide::Segment) == 2,
             "the sound pillars lost holes");
-    bool reported = false;
+    for (const LeFortProposedHole& hole : proposal.holes) {
+        const bool thin = hole.pillar == LeFortPillar::PillarLeft && hole.side == LeFortCutSide::Cranial &&
+                          hole.center[0] > 11.0 + 2.8;
+        if (thin)
+            require(hole.support.verdict == LeFortSupportVerdict::Warning && hole.support.reason.contains(QStringLiteral("mm")),
+                    "a site on thin bone is not marked as such: " + where(hole));
+        if (hole.support.verdict == LeFortSupportVerdict::Rejected)
+            require(false, "a refused site was proposed: " + where(hole));
+    }
     for (const LeFortMissingHoles& gap : proposal.missing)
-        reported = reported || (gap.pillar == LeFortPillar::PillarLeft && gap.side == LeFortCutSide::Cranial &&
-                                gap.missing == 2 && !gap.reason.isEmpty());
-    require(reported, "the thin pillar is not reported as missing its holes");
-    for (const LeFortProposedHole& hole : proposal.holes)
-        require(hole.support.verdict == LeFortSupportVerdict::Ok, "a weaker site was proposed: " + where(hole));
+        require(!(gap.pillar == LeFortPillar::PillarLeft && gap.side == LeFortCutSide::Cranial),
+                "the thin pillar is still reported as missing");
+}
+
+// When a pillar gets nothing, the report says what stopped it, not a generic sentence: here every drill path
+// below the cut would reach a root.
+void testAnEmptyPillarSaysWhatBlockedIt()
+{
+    Scene s = scene(cutAt(9.0), rise(0.0001));
+    auto roots = boxMesh({-25.0, 25.0, -6.0, -2.0, -10.0, 7.0}, false, false);
+    std::vector<vtkPolyData*> teethMeshes{roots};
+    const auto teeth = ImplicitCore::BakeMeshField(teethMeshes, 0.2, 4.0);
+    s.context.teeth = teeth.get();
+    const LeFortProposal proposal = LeFortHoleCore::Propose(s.context);
+    int segmentGaps = 0;
+    for (const LeFortMissingHoles& gap : proposal.missing)
+        if (gap.side == LeFortCutSide::Segment) {
+            ++segmentGaps;
+            require(gap.reason.contains(QStringLiteral("raíz")), "the gap does not name the roots: " + gap.reason.toStdString());
+        }
+    require(segmentGaps == 4, "every pillar below the cut should be blocked by the roots, got " + std::to_string(segmentGaps));
 }
 
 void testTheProposalIsDeterministic()
@@ -512,7 +539,8 @@ int main()
         {"sixteen holes are proposed on sound bone", testSixteenHolesAreProposedOnSoundBone},
         {"without a band cranial holes keep four millimetres from the cut",
          testWithoutABandCranialHolesKeepFourMillimetresFromTheCut},
-        {"a thin pillar is reported, not filled", testAThinPillarIsReportedNotFilled},
+        {"a thin pillar is proposed with a warning", testAThinPillarIsProposedWithAWarning},
+        {"an empty pillar says what blocked it", testAnEmptyPillarSaysWhatBlockedIt},
         {"the proposal is deterministic", testTheProposalIsDeterministic},
         {"a moved hole is kept and the rest fill round it", testAMovedHoleIsKeptAndTheRestFillRoundIt},
         {"a moved hole inside a new band is kept and refused", testAMovedHoleInsideANewBandIsKeptAndRefused},

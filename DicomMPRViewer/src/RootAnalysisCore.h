@@ -9,7 +9,7 @@
 //
 // The teeth come as one mesh (DentalSegmentator separates the upper teeth from the bone, not one tooth from
 // another). An apex is a local height maximum of the teeth along the cut — the tip of a root — at least
-// `minApexSpacingMm` from the next; its root length runs down to the lowest point of the teeth in its column
+// `minApexSpacingMm` from the next, seen from above (molars behind one another are told apart); its length runs down to the lowest point of the teeth in its column
 // (the cusp). The canine is the longest root within `canineReachMm` of the piriform point of its side, the
 // first molar the root nearest the pillar point: the cut's own landmarks, so no tooth numbering is needed.
 //
@@ -50,7 +50,8 @@ struct RootAnalysisParams
     double binMm = 1.0;
     double minApexSpacingMm = 4.0;
     double columnRadiusMm = 2.5;   // how far round the apex the cusp is looked for
-    double canineReachMm = 6.0;    // from the piriform point, along the cut
+    double canineReachMm = 8.0;    // from the piriform point, seen from above
+    double molarReachMm = 8.0;     // from the pillar point, seen from above
 };
 
 struct RootAnalysis
@@ -59,7 +60,7 @@ struct RootAnalysis
     QString error;
     std::vector<RootApex> apices;           // right to left along the cut
     std::array<int, 4> named{-1, -1, -1, -1}; // index into `apices` per RootTooth, −1 when not identified
-    QStringList warnings;                   // in Spanish, one per apex too close to the cut
+    QStringList warnings;                   // in Spanish, one per canine or first molar too close to the cut
     QString report;
 };
 

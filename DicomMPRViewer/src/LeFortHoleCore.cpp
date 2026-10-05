@@ -1,7 +1,10 @@
 #include "LeFortHoleCore.h"
 
+#include <QRegularExpression>
+
 #include <algorithm>
 #include <cmath>
+#include <map>
 
 namespace
 {
@@ -201,6 +204,7 @@ LeFortProposal Propose(const LeFortHoleContext& context, const std::vector<LeFor
     struct Candidate
     {
         LeFortProposedHole hole;
+        bool sound = true;          // Ok before Warning (thin bone)
         double rankThickness = 0.0; // to a quarter of a millimetre: real bone is never exactly flat
         double lateralOffset = 0.0;
         double fromWindow = 0.0;
@@ -227,6 +231,16 @@ LeFortProposal Propose(const LeFortHoleContext& context, const std::vector<LeFor
         for (const LeFortCutSide side : {LeFortCutSide::Cranial, LeFortCutSide::Segment}) {
             const bool cranial = side == LeFortCutSide::Cranial;
             std::vector<Candidate> candidates;
+            // Why sites were refused here, so an empty pillar says what stopped it. Numbers aside, the same
+            // reason counts once per site.
+            std::map<QString, std::pair<int, QString>> refusals;
+            const auto refuse = [&refusals](const QString& reason) {
+                QString key = reason;
+                key.replace(QRegularExpression(QStringLiteral("[0-9.,]+")), QStringLiteral("#"));
+                auto& entry = refusals[key];
+                if (entry.first++ == 0)
+                    entry.second = reason;
+            };
             // At a piriform rim only outward, away from the midline: below the aperture are the incisor roots
             // and the spine, and above it the nose (user's case, 2026-10-05).
             const bool piriform = index == 1 || index == 2;
@@ -255,20 +269,29 @@ LeFortProposal Propose(const LeFortHoleContext& context, const std::vector<LeFor
                     LeFortProposedHole hole;
                     hole.center = site;
                     hole.axis = PlateCore::BoneNormalAt(*context.bone, site, front);
-                    if (dot(hole.axis, front) < params.minAnteriorFacing)
-                        continue; // the wall faces sideways here: not the anterior wall the guide sits on
+                    if (dot(hole.axis, front) < params.minAnteriorFacing) {
+                        // The wall faces sideways here: not the anterior wall the guide sits on.
+                        refuse(QStringLiteral("la pared ósea mira hacia el lado, no hacia adelante"));
+                        continue;
+                    }
                     hole.pillar = kPillars[index];
                     hole.side = side;
                     hole.origin = LeFortHoleOrigin::Auto;
                     hole.support = Support(hole.center, hole.axis, context);
-                    if (hole.support.verdict != LeFortSupportVerdict::Ok)
+                    if (hole.support.verdict == LeFortSupportVerdict::Rejected) {
+                        refuse(hole.support.reason);
                         continue;
-                    candidates.push_back({hole, std::round(4.0 * hole.support.thicknessMm) / 4.0, std::abs(u),
-                                          fromCut});
+                    }
+                    // Thin bone is still a site, after the sound ones: the anterior wall of a real maxilla is
+                    // often under 2 mm, and refusing it left no holes at all (user's case, 2026-10-05).
+                    candidates.push_back({hole, hole.support.verdict == LeFortSupportVerdict::Ok,
+                                          std::round(4.0 * hole.support.thicknessMm) / 4.0, std::abs(u), fromCut});
                 }
             }
             // Thickest bone first; among equals the one nearest the pillar's own line, then nearest the cut.
             std::stable_sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
+                if (a.sound != b.sound)
+                    return a.sound;
                 if (a.rankThickness != b.rankThickness)
                     return a.rankThickness > b.rankThickness;
                 if (std::abs(a.lateralOffset - b.lateralOffset) > 1e-9)
@@ -293,12 +316,19 @@ LeFortProposal Propose(const LeFortHoleContext& context, const std::vector<LeFor
                 gap.pillar = kPillars[index];
                 gap.side = side;
                 gap.missing = params.holesPerSide - placed;
-                gap.reason = QStringLiteral("Faltan %1 orificio(s) en %2, %3: no hay hueso de al menos %4 mm lejos "
-                                            "del borde, del corte%5.")
+                // The reason most sites here were refused for, in the words Support gives a surgeon's click.
+                const std::pair<int, QString>* most = nullptr;
+                for (const auto& [key, entry] : refusals)
+                    if (!most || entry.first > most->first)
+                        most = &entry;
+                QString why = most ? most->second : QStringLiteral("no se encontró pared ósea anterior en esa zona");
+                if (why.endsWith(QLatin1Char('.')))
+                    why.chop(1);
+                if (!why.isEmpty())
+                    why[0] = why[0].toLower();
+                gap.reason = QStringLiteral("Faltan %1 orificio(s) en %2, %3: %4.")
                                  .arg(gap.missing)
-                                 .arg(PillarName(gap.pillar), SideName(gap.side))
-                                 .arg(params.minThicknessMm, 0, 'f', 1)
-                                 .arg(cranial && hasBand ? QStringLiteral(" y de la franja") : QString());
+                                 .arg(PillarName(gap.pillar), SideName(gap.side), why);
                 proposal.missing.push_back(gap);
             }
         }

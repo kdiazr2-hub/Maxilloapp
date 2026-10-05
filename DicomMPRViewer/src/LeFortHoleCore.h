@@ -142,8 +142,10 @@ LeFortHoleSupport Support(const std::array<double, 3>& site, const std::array<do
                           const LeFortHoleContext& context);
 
 // The holes the guide proposes by itself: `holesPerSide` above and below the cut at each of the four pillars
-// (the cut's points), on bone that `Support` calls Ok, the thickest first, every pair at least `pairSpacingMm`
-// apart. What a pillar cannot take is listed in `missing`, never filled with a weaker site. Deterministic.
+// (the cut's points), on bone `Support` does not refuse — Ok first, then thin bone with its warning (the
+// anterior wall is often under 2 mm; user's case 2026-10-05) — the thickest first, every pair at least
+// `pairSpacingMm` apart. What a pillar cannot take is listed in `missing` with the reason most of its sites were
+// refused for. Deterministic.
 // `manual` are the holes the surgeon placed or moved: each is kept where it is, judged again (the movement
 // may have changed), counts towards its pillar and side, and keeps the proposed ones `pairSpacingMm` away.
 LeFortProposal Propose(const LeFortHoleContext& context, const std::vector<LeFortProposedHole>& manual = {});

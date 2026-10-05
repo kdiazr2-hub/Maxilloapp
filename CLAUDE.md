@@ -350,14 +350,19 @@ cmake --build build-linux-core --parallel && ctest --test-dir build-linux-core -
 - Le Fort guide assistant (spec `02-DOCS/wiki/sdd/specs/asistente-guia-lefort.md`, user's real case of
   2026-10-05): the GUIAS panel for Le Fort is four steps, each automatic and editable. 1 · `RootAnalysisCore`
   measures the upper roots off the «Dientes superiores» object (label 3): apices = height maxima of the teeth
-  along the cut (≥ 4 mm apart, the higher kept), length = apex to the lowest tooth point in its column,
-  distance = `−PathField` to the cut; canine = longest root within 6 mm of the piriform point, first molar = root
-  nearest the pillar point; every apex < 5 mm is flagged. The teeth come from a SIDECAR the segmentation script
+  seen FROM ABOVE (a 2D grid over the horizontal plane, triangles sampled every half cell, flat tops merged to
+  their middle, ≥ 4 mm apart, the higher kept) — a grid along the cut alone stacked the molars behind one
+  another and the "first molar" took an unerupted third molar's apex above the cut (user's case, 2026-10-05);
+  distance = `−PathField` to the cut; canine = longest root within 8 mm (horizontal) of the piriform point,
+  first molar = root nearest the pillar point (≤ 8 mm); the report and the overlay give only apex → osteotomy
+  for those four («por encima … el corte cruza la raíz» when negative). The teeth come from a SIDECAR the segmentation script
   writes (`<output>_dientes_superiores.nrrd`, DentalSegmentator label 3) and `importUpperTeethSidecar` loads
   hidden — the labelmap still maps 3 → 5, so the maxilla and the Le Fort segment keep their teeth.
   Real case (2026-10-05): `BandOnBone` only draws within 6 mm (across the vertical) of the pillar–piriform pieces
   of the cut, never medial to a rim — the two cut surfaces cross the whole skull (palate, orbits). `Propose` only
-  searches outward of a piriform rim and drops sites whose drill axis is > 60° off the anterior (lateral zygoma);
+  searches outward of a piriform rim and drops sites whose drill axis is > 60° off the anterior (lateral zygoma),
+  proposes thin bone (Warning) after sound bone instead of nothing, and an empty pillar's reason is the refusal
+  most of its sites got; «Aceptar» also shows after an empty proposal (guide with positioning screws only);
   `Support` refuses a drill path that comes within 1 mm of `LeFortHoleContext::teeth` (BakeMeshField of label 3)
   to 6 mm deep. The band spinboxes are synced whenever the band is recomputed.
   2 · `LeFortMotionCore::BandFromHeights` builds the band from the surgeon's four heights (`GuidePlan::bandHeights`,

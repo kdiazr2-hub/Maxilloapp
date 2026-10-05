@@ -1386,7 +1386,8 @@ public:
         for (const int named : window.m_guideRootAnalysis.named)
             require(named >= 0, "a canine or first molar was not identified: " +
                                     window.m_guideRootAnalysis.report.toStdString());
-        require(window.m_guideRootsLabel->text().contains(QStringLiteral("canino")),
+        require(window.m_guideRootsLabel->text().contains(QStringLiteral("Canino")) &&
+                    window.m_guideRootsLabel->text().contains(QStringLiteral("osteotomía")),
                 "the roots are not reported: " + window.m_guideRootsLabel->text().toStdString());
 
         // The band is known once the envelope is: its heights are shown before anything is proposed (they read

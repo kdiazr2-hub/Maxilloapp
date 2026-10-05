@@ -2178,9 +2178,13 @@ void MainWindow::updateGuideUi()
     if (m_guideMoveHoleButton)
         m_guideMoveHoleButton->setVisible(!m_guidePlateWorkspace && hasWrap && hasSites);
     if (m_guideAcceptHolesButton) {
-        m_guideAcceptHolesButton->setVisible(!m_guidePlateWorkspace && hasWrap && hasSites);
-        m_guideAcceptHolesButton->setText(hasGuide ? tr("4 · Reconstruir guías con los orificios")
-                                                   : tr("4 · Aceptar orificios y crear guías"));
+        // Also after a proposal that found nothing: the surgeon is never left without a way on (user's case,
+        // 2026-10-05). Such a guide has only its positioning screws.
+        const bool proposed = hasSites || (leFort && !m_guideLeFortMissing.isEmpty());
+        m_guideAcceptHolesButton->setVisible(!m_guidePlateWorkspace && hasWrap && proposed);
+        m_guideAcceptHolesButton->setText(!hasSites ? tr("4 · Crear guías sin orificios de placa")
+                                          : hasGuide ? tr("4 · Reconstruir guías con los orificios")
+                                                     : tr("4 · Aceptar orificios y crear guías"));
     }
     const bool leFortAssistant = !m_guidePlateWorkspace && leFort && hasWrap;
     if (m_guideRootsButton)
@@ -3421,7 +3425,7 @@ void MainWindow::generateLeFortGuide()
 
 void MainWindow::acceptLeFortHoles()
 {
-    if (m_guidePlan.type != GuideType::LeFort || m_guidePlan.lefortHoles.empty())
+    if (m_guidePlan.type != GuideType::LeFort || (m_guidePlan.lefortHoles.empty() && m_guideLeFortMissing.isEmpty()))
         return;
     setGuidePointMode(kModeNone);
     layoutLeFortGuide(LeFortHoleCore::DrillSites(m_guidePlan.lefortHoles), guideLeFortBand(), guideLeFortHoleReport());
@@ -3746,7 +3750,8 @@ void MainWindow::analyzeGuideRoots()
         m_guideRootsLabel->setText(m_guideRootAnalysis.ok ? m_guideRootAnalysis.report
                                                           : QStringLiteral("⚠ ") + m_guideRootAnalysis.error);
     if (m_guideView) {
-        // Each named root from apex to cusp, and from its apex up to the cut; the apices too close in red.
+        // What the surgeon measures: from the apex of each canine and first molar to the osteotomy, and nothing
+        // else (the whole tooth drawn too hid the measure, user's case 2026-10-05); the apices too close in red.
         auto points = vtkSmartPointer<vtkPoints>::New();
         auto lines = vtkSmartPointer<vtkCellArray>::New();
         const auto segment = [&](const std::array<double, 3>& a, const std::array<double, 3>& b) {
@@ -3758,7 +3763,6 @@ void MainWindow::analyzeGuideRoots()
                 if (index < 0)
                     continue;
                 const RootApex& apex = m_guideRootAnalysis.apices[static_cast<size_t>(index)];
-                segment(apex.apex, apex.cusp);
                 segment(apex.apex, apex.onCut);
             }
         auto overlay = vtkSmartPointer<vtkPolyData>::New();
@@ -3770,9 +3774,13 @@ void MainWindow::analyzeGuideRoots()
             m_guideView->removeOverlay(kGuideRootsOverlayKey);
         m_guideView->clearPointMarkers();
         if (m_guideRootAnalysis.ok)
-            for (const RootApex& apex : m_guideRootAnalysis.apices)
+            for (const int index : m_guideRootAnalysis.named) {
+                if (index < 0)
+                    continue;
+                const RootApex& apex = m_guideRootAnalysis.apices[static_cast<size_t>(index)];
                 m_guideView->addPointMarker(apex.apex[0], apex.apex[1], apex.apex[2],
                                             apex.tooClose ? CranioPalette::resection() : CranioPalette::holeSound());
+            }
         m_guideView->render();
     }
     updateGuideUi();

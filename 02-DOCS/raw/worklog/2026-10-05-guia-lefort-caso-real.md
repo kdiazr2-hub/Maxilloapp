@@ -19,3 +19,11 @@ Five screenshots of the surgeon's real case after the four-step assistant showed
 
 Evidence: LeFortGuideTests, LeFortHoleTests (+3), SplintWorkspaceTests (12 sites, none over a root);
 Linux core and full app suites. Pending: Windows rebuild and the same real case.
+
+## Second round (same day)
+
+5. Root measurements were not apex → osteotomy of the canine and first molar: apices were found along the cut
+   only, so behind the first molar the 2nd/3rd molars stood in for it. Now a 2D height map seen from above;
+   report and overlay show only apex → osteotomy for the four named teeth.
+6. «Proponer orificios» gave nothing: thin anterior wall was never proposed. Now proposed with a warning; the
+   empty pillars say why; the guide can be created without plate holes.
