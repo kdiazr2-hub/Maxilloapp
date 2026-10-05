@@ -86,6 +86,11 @@ namespace LeFortMotionCore
 LeFortBandProfile Band(const OsteotomyPath& cut, const std::array<double, 16>& motion,
                        const LeFortBandParams& params = {});
 
+// The same band from heights given point by point (the surgeon's correction of the overlap, user's request
+// 2026-10-05): one per point of the cut, positive up. Spans, upper edge, kind, pitch, cant and report as `Band`.
+LeFortBandProfile BandFromHeights(const OsteotomyPath& cut, const std::vector<double>& heights,
+                                  const LeFortBandParams& params = {});
+
 // Length of the cut from its first point to its last, through every point (mm).
 double CutLength(const OsteotomyPath& cut);
 // The point of the cut at `arcLengthMm` from its first point, clamped to the cut.

@@ -165,6 +165,14 @@ QJsonObject ToJson(const GuidePlan& plan)
                 {QStringLiteral("origin"), hole.origin == LeFortHoleOrigin::Manual ? QStringLiteral("manual") : QStringLiteral("auto")}});
         out[QStringLiteral("lefortHoles")] = holes;
     }
+    if (!plan.bandHeights.empty()) {
+        QJsonArray heights;
+        for (const double height : plan.bandHeights)
+            heights.append(height);
+        out[QStringLiteral("bandHeights")] = heights;
+    }
+    if (!plan.caseLabel.isEmpty())
+        out[QStringLiteral("caseLabel")] = plan.caseLabel;
     out[QStringLiteral("plate")] = PlateCore::ParamsToJson(plan.plate);
     out[QStringLiteral("sleeve")] = QJsonObject{{QStringLiteral("boreDiameterMm"), plan.sleeve.boreDiameterMm},
                                                 {QStringLiteral("outerDiameterMm"), plan.sleeve.outerDiameterMm},
@@ -279,6 +287,9 @@ GuidePlan FromJson(const QJsonObject& object)
                                                                                               : LeFortHoleOrigin::Auto;
         plan.lefortHoles.push_back(hole);
     }
+    for (const QJsonValue& value : object.value(QStringLiteral("bandHeights")).toArray())
+        plan.bandHeights.push_back(value.toDouble());
+    plan.caseLabel = object.value(QStringLiteral("caseLabel")).toString();
     plan.plate = PlateCore::ParamsFromJson(object.value(QStringLiteral("plate")).toObject());
     const QJsonObject sleeve = object.value(QStringLiteral("sleeve")).toObject();
     plan.sleeve.boreDiameterMm = sleeve.value(QStringLiteral("boreDiameterMm")).toDouble(plan.sleeve.boreDiameterMm);

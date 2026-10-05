@@ -213,6 +213,22 @@ void testAnUnreadableHoleIsSkipped()
 }
 } // namespace
 
+// spec asistente-guia-lefort §Edge (reabrir): the surgeon's band heights and the case number travel with the
+// plan; a plan without them has none.
+void testBandHeightsAndCaseNumberTravelWithThePlan()
+{
+    GuidePlan plan;
+    plan.bandHeights = {3.0, 2.0, 2.5, 1.0};
+    plan.caseLabel = QStringLiteral("20406");
+    const GuidePlan back = GuidePlanCore::FromJson(GuidePlanCore::ToJson(plan));
+    require(back.bandHeights == plan.bandHeights, "the band heights did not come back");
+    require(back.caseLabel == plan.caseLabel, "the case number did not come back");
+    const QJsonObject empty = GuidePlanCore::ToJson(GuidePlan{});
+    require(!empty.contains(QStringLiteral("bandHeights")) && !empty.contains(QStringLiteral("caseLabel")),
+            "a plan without them writes the keys anyway");
+    require(GuidePlanCore::FromJson(QJsonObject{}).bandHeights.empty(), "an older plan came back with heights");
+}
+
 int main()
 {
     const std::vector<std::pair<const char*, std::function<void()>>> tests = {
@@ -221,6 +237,7 @@ int main()
         {"Le Fort holes travel with the plan", testLeFortHolesTravelWithThePlan},
         {"older plans load without holes", testOlderPlansLoadWithoutHoles},
         {"an unreadable hole is skipped", testAnUnreadableHoleIsSkipped},
+        {"band heights and case number travel with the plan", testBandHeightsAndCaseNumberTravelWithThePlan},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {

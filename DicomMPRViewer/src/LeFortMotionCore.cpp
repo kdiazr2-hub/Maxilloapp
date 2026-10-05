@@ -86,10 +86,29 @@ LeFortBandProfile Band(const OsteotomyPath& cut, const std::array<double, 16>& m
 
     // The rise of each point: the vertical component of its displacement. A horizontal translation and a
     // rotation about the vertical leave it unchanged, so only the changes of plane count.
-    const size_t count = cut.points.size();
-    profile.heights.reserve(count);
+    std::vector<double> heights;
+    heights.reserve(cut.points.size());
     for (const Vec3& p : cut.points)
-        profile.heights.push_back(dot(sub(moved(motion, p), p), up));
+        heights.push_back(dot(sub(moved(motion, p), p), up));
+    return BandFromHeights(cut, heights, params);
+}
+
+LeFortBandProfile BandFromHeights(const OsteotomyPath& cut, const std::vector<double>& heights,
+                                  const LeFortBandParams& params)
+{
+    LeFortBandProfile profile;
+    if (!cut.valid || cut.points.size() < 2) {
+        profile.error = cut.error.isEmpty() ? QStringLiteral("Falta la trayectoria de la osteotomía Le Fort.") : cut.error;
+        return profile;
+    }
+    if (heights.size() != cut.points.size()) {
+        profile.error = QStringLiteral("Hace falta una altura por cada punto del corte.");
+        return profile;
+    }
+    const double verticalLength = norm(params.vertical);
+    const Vec3 up = verticalLength > 1e-12 ? scale(params.vertical, 1.0 / verticalLength) : Vec3{0.0, 0.0, 1.0};
+    const size_t count = cut.points.size();
+    profile.heights = heights;
 
     // Where the rise reaches the threshold, as arc length. The rise is linear along each straight piece, so
     // each piece is either all in, all out, or in up to the exact crossing.
@@ -153,9 +172,9 @@ LeFortBandProfile Band(const OsteotomyPath& cut, const std::array<double, 16>& m
             profile.pitch = LeFortPitch::Clockwise;
     }
 
-    QStringList heights;
+    QStringList heightText;
     for (size_t i = 0; i < count; ++i)
-        heights << pointName(i, count) + QStringLiteral(" ") + (profile.heights[i] >= 0.0 ? QStringLiteral("+") : QString()) +
+        heightText << pointName(i, count) + QStringLiteral(" ") + (profile.heights[i] >= 0.0 ? QStringLiteral("+") : QString()) +
                        mm(profile.heights[i]);
     QString report;
     switch (profile.kind) {
@@ -174,7 +193,7 @@ LeFortBandProfile Band(const OsteotomyPath& cut, const std::array<double, 16>& m
                      .arg(mm(threshold));
         break;
     }
-    report += QStringLiteral(" Altura en el corte: ") + heights.join(QStringLiteral(", ")) + QStringLiteral(".");
+    report += QStringLiteral(" Altura en el corte: ") + heightText.join(QStringLiteral(", ")) + QStringLiteral(".");
     if (profile.pitch == LeFortPitch::CounterClockwise)
         report += QStringLiteral(" Rotación antihoraria (sube más adelante que atrás).");
     else if (profile.pitch == LeFortPitch::Clockwise)

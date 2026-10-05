@@ -66,6 +66,11 @@ struct GuidePlan
     // before the cut. The plate phase takes its holes from here. Their support is not saved: it is judged again
     // whenever the guide is generated, since the movement may have changed. Optional key `lefortHoles`.
     std::vector<LeFortProposedHole> lefortHoles;
+    // The surgeon's band heights, one per point of the Le Fort cut (pilar D, piriforme D, piriforme I, pilar I);
+    // empty = the band comes from the movement. Optional key `bandHeights` (spec asistente-guia-lefort).
+    std::vector<double> bandHeights;
+    // The case number engraved on the guides. Optional key `caseLabel`.
+    QString caseLabel;
 };
 
 namespace GuidePlanCore

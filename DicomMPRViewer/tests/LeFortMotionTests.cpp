@@ -261,11 +261,32 @@ void testPointsAlongTheCut()
     require(near(middle[0], 0.0, 1e-9) && near(middle[1], 5.0, 1e-9), "the midline is not half way");
     require(near(past[0], 20.0, 1e-9) && near(past[1], -5.0, 1e-9), "past the end is not clamped to pilar I");
 }
+// spec asistente-guia-lefort §Acceptance 3: the surgeon's own heights give the band, as the movement's do.
+void testTheSurgeonsHeightsGiveTheBand()
+{
+    const OsteotomyPath cut = leFortCut();
+    const LeFortBandProfile profile = LeFortMotionCore::BandFromHeights(cut, {3.0, 2.0, 2.0, 1.0});
+    require(profile.ok && !profile.noMotion, "the band was not computed from the heights");
+    require(profile.heights.size() == 4 && near(profile.heights[0], 3.0, 1e-9) && near(profile.heights[3], 1.0, 1e-9),
+            "the heights were not taken as given");
+    require(profile.kind == LeFortBandKind::Impaction && profile.cant == LeFortCant::RightHigher,
+            "the kind and the cant were not read from the heights");
+    require(profile.spans.size() == 1 && near(profile.spans.front().first, 0.0, 1e-9) &&
+                near(profile.spans.front().second, LeFortMotionCore::CutLength(cut), 1e-9),
+            "heights all over 0.5 mm must give one span over the whole cut");
+    require(near(profile.upperCut.points[0][2], 12.0, 1e-9) && near(profile.upperCut.points[3][2], 10.0, 1e-9),
+            "the band's upper edge is not the cut raised by each height");
+    const LeFortBandProfile none = LeFortMotionCore::BandFromHeights(cut, {0.0, 0.0, 0.0, 0.0});
+    require(none.ok && none.spans.empty() && none.kind == LeFortBandKind::NoPlaneChange, "zero heights must give no band");
+    require(!LeFortMotionCore::BandFromHeights(cut, {1.0, 2.0}).ok, "two heights for a four-point cut must be refused");
+}
+
 } // namespace
 
 int main()
 {
     const std::vector<std::pair<const char*, std::function<void()>>> tests = {
+        {"the surgeon's heights give the band", testTheSurgeonsHeightsGiveTheBand},
         {"a uniform impaction is a band of its height above the cut", testAUniformImpactionIsABandOfItsHeightAboveTheCut},
         {"an asymmetric impaction gives each side its height", testAnAsymmetricImpactionGivesEachSideItsHeight},
         {"an anterior impaction is higher at the front", testAnAnteriorImpactionIsHigherAtTheFront},
