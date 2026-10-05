@@ -1368,6 +1368,8 @@ public:
         require(window.m_guidePlan.lefortHoles.size() == 16, "16 drill sites were expected, got " +
                                                                   std::to_string(window.m_guidePlan.lefortHoles.size()));
         require(window.m_guideMesh && window.m_guideMesh->GetNumberOfPolys() > 0, "the guide was not built");
+        require(!window.m_guideShowFiguresCheck->isChecked(),
+                "the lattice cells' preview cylinders still cover the generated guide");
         require(window.m_guideBuiltFigures.size() == window.m_guidePlan.figures.size() + 2 * 16,
                 "the guide does not carry one sleeve per drill site");
 

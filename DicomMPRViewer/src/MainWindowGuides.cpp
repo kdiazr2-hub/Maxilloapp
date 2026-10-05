@@ -3385,6 +3385,11 @@ void MainWindow::layoutLeFortGuide(const std::vector<PredictiveHole>& drillSites
             m_guideShowWrapCheck->setChecked(false);
         if (m_guideShowGuideCheck)
             m_guideShowGuideCheck->setChecked(true);
+        // The figures are the openwork cells subtracted from the guide: on real bone each preview cylinder
+        // follows its own normal and they bristle over the guide (user's report, 2026-10-05). The guide
+        // already carries them; the layer stays one click away.
+        if (m_guideShowFiguresCheck)
+            m_guideShowFiguresCheck->setChecked(false);
         applyGuideLayers();
     }
     // The movement first: it is what the guide was made from.
