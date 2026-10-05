@@ -374,8 +374,8 @@ def fill_bone_interiors(mask, prediction, intensities, spacing_zyx, source_label
     return result
 
 
-def thicken_thin_bone(mask, prediction, intensities, spacing_zyx, grow_mm=0.6, grow_hu=150.0,
-                      seal_mm=1.5, seal_min_hu=-200.0):
+def thicken_thin_bone(mask, prediction, intensities, spacing_zyx, grow_mm=1.0, grow_hu=100.0,
+                      seal_mm=2.0, seal_min_hu=-200.0):
     """Recover the thin walls DentalSegmentator under-segments and seal the pinholes they leave.
 
     The anterior maxilla and the sinus walls are often under a millimetre thick, so partial volume keeps them
@@ -403,13 +403,44 @@ def thicken_thin_bone(mask, prediction, intensities, spacing_zyx, grow_mm=0.6, g
                 break
             result |= grown
     if seal_mm > 0:
-        radius = [max(1, int(round(seal_mm / max(1e-6, s)))) for s in spacing_zyx]
-        zz, yy, xx = np.ogrid[-radius[0]:radius[0] + 1, -radius[1]:radius[1] + 1, -radius[2]:radius[2] + 1]
-        ball = (zz / radius[0]) ** 2 + (yy / radius[1]) ** 2 + (xx / radius[2]) ** 2 <= 1.0
-        padded = np.pad(result, [(r, r) for r in radius])
-        closed = ndi.binary_erosion(ndi.binary_dilation(padded, structure=ball), structure=ball)
-        closed = closed[tuple(slice(r, -r) for r in radius)]
-        result |= closed & free & np.isfinite(intensities) & (intensities > seal_min_hu)
+        # A ball closing never seals a hole in a wall one voxel thick: the ball always reaches past the wall
+        # above and below the hole. Instead a voxel is filled when bone lies within `seal_mm` on BOTH sides of it
+        # along at least two of the 13 axes of the voxel grid: true inside a perforation of a wall, false in the
+        # hollow of a concave corner, which keeps its shape.
+        candidates = free & ~result & np.isfinite(intensities) & (intensities > seal_min_hu)
+        if np.any(candidates):
+            occupied = np.argwhere(result)
+            pad = [int(np.ceil(seal_mm / max(1e-6, sp))) + 1 for sp in spacing_zyx]
+            lo = [max(0, int(occupied[:, a].min()) - pad[a]) for a in range(3)]
+            hi = [min(result.shape[a], int(occupied[:, a].max()) + pad[a] + 1) for a in range(3)]
+            roi = tuple(slice(lo[a], hi[a]) for a in range(3))
+            directions = [(dz, dy, dx) for dz in (-1, 0, 1) for dy in (-1, 0, 1) for dx in (-1, 0, 1)
+                          if (dz, dy, dx) > (0, 0, 0)]
+
+            def shifted(volume, offset):
+                out = np.zeros_like(volume)
+                src = tuple(slice(max(0, -o), volume.shape[a] - max(0, o)) for a, o in enumerate(offset))
+                dst = tuple(slice(max(0, o), volume.shape[a] - max(0, -o)) for a, o in enumerate(offset))
+                out[dst] = volume[src]
+                return out
+
+            # A few passes: the middle of a hole closes first, then its rim sees bone on both sides too.
+            for _ in range(4):
+                bone = result[roi]
+                pairs = np.zeros(bone.shape, dtype=np.uint8)
+                for d in directions:
+                    length = float(np.sqrt(sum((d[a] * spacing_zyx[a]) ** 2 for a in range(3))))
+                    steps = max(1, int(np.floor(seal_mm / length + 1e-6)))
+                    ahead = np.zeros(bone.shape, dtype=bool)
+                    behind = np.zeros(bone.shape, dtype=bool)
+                    for k in range(1, steps + 1):
+                        ahead |= shifted(bone, tuple(-k * c for c in d))
+                        behind |= shifted(bone, tuple(k * c for c in d))
+                    pairs += (ahead & behind).astype(np.uint8)
+                sealed = (pairs >= 2) & candidates[roi] & ~bone
+                if not np.any(sealed):
+                    break
+                result[roi] |= sealed
     added = int(np.count_nonzero(result & ~mask))
     log(f"    [Hueso] Engrosado de paredes finas: {added} voxeles.")
     return result
@@ -519,9 +550,9 @@ def remap_prediction(input_path, prediction_path, output_path, target, seed=None
                     return default_value
 
             mask = thicken_thin_bone(mask, arr, intensities, image.GetSpacing()[::-1],
-                                     grow_mm=mm_env("DENTALSEGMENTATOR_BONE_GROW_MM", 0.6),
-                                     grow_hu=float(os.environ.get("DENTALSEGMENTATOR_BONE_GROW_HU", "150")),
-                                     seal_mm=mm_env("DENTALSEGMENTATOR_BONE_SEAL_MM", 1.5))
+                                     grow_mm=mm_env("DENTALSEGMENTATOR_BONE_GROW_MM", 1.0),
+                                     grow_hu=float(os.environ.get("DENTALSEGMENTATOR_BONE_GROW_HU", "100")),
+                                     seal_mm=mm_env("DENTALSEGMENTATOR_BONE_SEAL_MM", 2.0))
             mask = fill_bone_interiors(mask, arr, intensities, image.GetSpacing()[::-1], label_value)
         return mask
 

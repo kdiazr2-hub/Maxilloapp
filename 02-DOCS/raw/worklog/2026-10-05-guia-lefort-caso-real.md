@@ -44,3 +44,7 @@ Linux core and full app suites. Pending: Windows rebuild and the same real case.
     `MeshGenerator`'s Gaussian pre-smoothing, which averaged one-voxel walls under the 0.5 contour. The label's
     voxels are now floored at 0.55 before contouring (MeshGeneratorTests: one-voxel wall at 25/40/70 iterations,
     red → green).
+
+11. "Mejoró pero aún sale con orificios": grow 1.0 mm into ≥ 100 HU; the ball closing could never seal a hole in
+    a one-voxel wall (the ball reaches past the wall), so the seal is now "bone on both sides within 2 mm along
+    ≥ 2 grid axes", repeated up to 4 passes (Python: a 3 mm perforation sealed, a 110 HU wall recovered).
