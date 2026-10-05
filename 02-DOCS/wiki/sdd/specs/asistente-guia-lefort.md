@@ -6,12 +6,12 @@ tags: [sdd, spec, guias, lefort]
 timestamp: 2026-10-05T00:00:00Z
 topic: sdd
 slug: asistente-guia-lefort
-status: draft
+status: approved
 ---
 
 # Spec — Asistente de guía de corte Le Fort I en cuatro pasos
 
-> Slug: `asistente-guia-lefort` · Status: draft · Created: 2026-10-05
+> Slug: `asistente-guia-lefort` · Status: approved · Created: 2026-10-05 · Aprobada por el usuario: 2026-10-05 ("Apruebo")
 > Inherits: [constitution](../constitution.md) v1.0.0 · Builds on: [guia-lefort-por-movimiento](guia-lefort-por-movimiento.md)
 
 ## Problem & why
