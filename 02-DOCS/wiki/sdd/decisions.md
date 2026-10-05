@@ -125,3 +125,10 @@ Why      — taking the teeth out of label 5 would take them out of the maxilla 
 Context  — the band's rows next to the slits are full of positioning screws and sleeves; there was no room.
 Decision — the case number goes above the cranial screws and DER/IZQ below the caudal ones, each on a strip of
            added material joined to the guide, as the user's printed guides are taller where the number is.
+
+## 2026-10-05 — Screws keep 1 mm from the roots; holes only on the anterior wall  (feature: asistente-guia-lefort, real case)
+Context  — on the surgeon's case holes were proposed by the incisor roots, under the aperture and on the lateral
+           zygoma, and the band was drawn over the whole skull.
+Decision — a drill path within 1 mm of the upper teeth (to 6 mm deep) is refused, not warned; proposals search
+           outward of the piriform rims and need an axis within 60° of the anterior; the band is drawn only within
+           6 mm of the pillar–piriform pieces of the cut.

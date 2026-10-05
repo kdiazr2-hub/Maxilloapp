@@ -23,3 +23,7 @@ status: in-progress
 | B2 band step UI | complete | workspace: pilar D 4.0 → 3.0 taken; saved and reloaded |
 | D3 guides step UI | complete | workspace: 4 engraved labels, two STL written, no false «piezas» warning |
 | E1 docs + verify | complete in the cloud | Linux core 10/10, full app ctest 30/30 under Xvfb; Windows build + real case pending (user) |
+| F1 real case 2026-10-05: band only by the cut | complete | LeFortGuideTests "the band is the bone between the two cuts": bone far behind and a septum are not drawn (red → green: `BandOnBone` clips to 6 mm across the vertical from the pillar–piriform pieces, nothing medial to a rim) |
+| F2 band heights shown with the envelope | complete | SplintWorkspaceTests: spins read 4.0 before «Proponer» (`refreshGuideBand` syncs them) |
+| F3 holes on the anterior wall, outward of the rim | complete | LeFortHoleTests "a wall facing sideways is not proposed" (red → green, axis·anterior ≥ 0.5), "piriform holes stay lateral of the rim" (guard) |
+| F4 roots | complete | LeFortHoleTests "a drill near a root is refused" (red → green: the drill path to 6 mm keeps 1 mm from the teeth field, reason «raíz»); workspace: 12 sites, none over the synthetic roots |
