@@ -225,3 +225,11 @@ slug: guia-lefort-por-movimiento
   never saw automatic generation). Removed.
 - green: `ctest` 29/29 on Linux, including `RepositionWorkspaceTests` and the new impaction flow; the test now
   writes `impaction-guide.png`. The Windows build + ctest remains the merge bar (constitution 4).
+
+## Real-case fix 1 — 2026-10-05
+- user's report (screenshots): on a real maxilla the guide came out as a block round one hole, the band in bits.
+- cause (reproduced): `Layout` spanned the band over the holes only; with the plates' holes that was the cut,
+  with one proposed site it was ±5 mm round it.
+- red → green: `LeFortGuideTests` "the guide covers the whole cut with a single hole" (x −23..−15 before).
+  The band now spans the cut's ends ∪ the holes. Linux: core 9/9; app LeFort/Plate/Workspace 6/6.
+- open: why the proposal found so few sound sites on the real maxilla (report text requested).
