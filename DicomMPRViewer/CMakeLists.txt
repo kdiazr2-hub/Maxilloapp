@@ -132,6 +132,7 @@ set(SOURCES
     src/LeFortGuideCore.cpp
     src/LeFortMotionCore.cpp
     src/LeFortHoleCore.cpp
+    src/RootAnalysisCore.cpp
     src/GuidePlanCore.cpp
     src/CollisionCore.cpp
     src/SurfaceContourOverlay.cpp
@@ -341,6 +342,8 @@ add_core_test(MaskToObjectTests tests/MaskToObjectTests.cpp src/MaskToObjectCore
 add_core_test(ModelWorkflowTests tests/ModelWorkflowTests.cpp src/ModelWorkflowCore.cpp)
 add_core_test(OsteotomyCoreTests tests/OsteotomyCoreTests.cpp src/OsteotomyCore.cpp src/CompositeBlockCore.cpp)
 add_core_test(LeFortMotionTests tests/LeFortMotionTests.cpp src/LeFortMotionCore.cpp src/OsteotomyCore.cpp
+    src/CompositeBlockCore.cpp)
+add_core_test(RootAnalysisTests tests/RootAnalysisTests.cpp src/RootAnalysisCore.cpp src/OsteotomyCore.cpp
     src/CompositeBlockCore.cpp)
 add_core_test(LeFortHoleTests tests/LeFortHoleTests.cpp src/LeFortHoleCore.cpp src/LeFortMotionCore.cpp
     src/PlateCore.cpp src/GuideDesignCore.cpp src/GuideBaseCore.cpp src/CutSlotCore.cpp src/WrapCore.cpp

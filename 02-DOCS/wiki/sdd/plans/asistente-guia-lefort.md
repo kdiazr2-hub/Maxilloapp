@@ -6,7 +6,7 @@ tags: [sdd, plan, guias, lefort]
 timestamp: 2026-10-05T00:00:00Z
 topic: sdd
 slug: asistente-guia-lefort
-status: draft
+status: approved
 ---
 
 # Plan — Asistente de guía de corte Le Fort I
