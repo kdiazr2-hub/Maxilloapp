@@ -184,3 +184,35 @@ slug: guia-lefort-por-movimiento
   `02-DOCS/wiki/` is a separate change for the user to decide, not part of this feature.
 - PR 1 scope (T001–T011, T019) complete. Merge waits on the user's Windows Release build + full ctest
   (constitution 4).
+
+## T012 — 2026-10-05
+- status: complete in the cloud; manual check pending on Windows.
+- red → green (Linux core build): `LeFortHoleTests` +5 (moved hole kept and filled round, moved hole inside a
+  new band refused, drill sites, unmatched plate holes, MoveHole lands on bone), `LeFortGuideTests` +2
+  (AnteriorDirection, BandRibbon). Full Linux suite 9/9.
+- UI: `generateLeFortGuide` → band → holes (plates' if any, else `Propose(ctx, manual)`) → `layoutLeFortGuide`
+  → build; report = movement + layout + holes (warnings, refusals, missing). `MainWindowGuides.cpp` and
+  `SplintWorkspaceTests.cpp` pass `g++ -fsyntax-only` against Qt 6.4 + VTK 9.5.2; `MainWindow.cpp` (3 connects)
+  could not be checked here.
+- new workspace test: `runImpactionGuideWorkflow` (4 mm impaction + 3 mm advance, no plates: band drawn, both
+  slits carved, 16 sites with sleeves, a dragged site lands and is rebuilt, the project keeps it).
+- decisions: button after the envelope (user); plates win when they exist (to confirm).
+
+## T013 — 2026-10-05
+- status: complete in the cloud; manual check (light/dark) pending on Windows.
+- `LeFortGuideCore::BandRibbon` (tested) drawn as `kGuideBandActorKey` in `CranioPalette::resection()`, on top
+  of the guide, visible with the bone or guide layer.
+
+## T014 — 2026-10-05
+- status: complete in the cloud; manual check pending on Windows.
+- «Mover orificio»: markers by verdict (groups 10–12), drag → `MoveHole` → Rejected stays with the reason,
+  Warning/Ok moves (manual) and rebuilds. Saved via `lefortHoles` (T011).
+
+## T015 — 2026-10-05
+- status: complete (read only).
+- `exportGuideStl` refuses without a built guide; the guide is only built through `buildGuideMesh`, which shows
+  it and sets the step to Complete («Guía creada · lista para revisar») before «Exportar STL» is offered. No
+  new gate needed (constitution 15).
+
+## T016 — 2026-10-05
+- status: complete. CLAUDE.md § Architecture documents the UI; decisions.md has both T012 decisions.
