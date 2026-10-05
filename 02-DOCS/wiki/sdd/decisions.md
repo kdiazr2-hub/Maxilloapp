@@ -132,3 +132,9 @@ Context  — on the surgeon's case holes were proposed by the incisor roots, und
 Decision — a drill path within 1 mm of the upper teeth (to 6 mm deep) is refused, not warned; proposals search
            outward of the piriform rims and need an axis within 60° of the anterior; the band is drawn only within
            6 mm of the pillar–piriform pieces of the cut.
+
+## 2026-10-05 — Thin bone is proposed with a warning  (feature: asistente-guia-lefort, real case)
+Context  — on the surgeon's maxilla «Proponer orificios» gave 0 holes: the anterior wall is under 2 mm almost
+           everywhere, and only Ok sites were proposed (the earlier "odd places" were the few thick spots).
+Decision — Warning sites are proposed after Ok ones; an empty pillar reports the dominant refusal; the guide can
+           be created without plate holes. Supersedes "never a weaker site" of guia-lefort-por-movimiento.

@@ -27,3 +27,5 @@ status: in-progress
 | F2 band heights shown with the envelope | complete | SplintWorkspaceTests: spins read 4.0 before «Proponer» (`refreshGuideBand` syncs them) |
 | F3 holes on the anterior wall, outward of the rim | complete | LeFortHoleTests "a wall facing sideways is not proposed" (red → green, axis·anterior ≥ 0.5), "piriform holes stay lateral of the rim" (guard) |
 | F4 roots | complete | LeFortHoleTests "a drill near a root is refused" (red → green: the drill path to 6 mm keeps 1 mm from the teeth field, reason «raíz»); workspace: 12 sites, none over the synthetic roots |
+| F5 roots measured per tooth, apex → osteotomy | complete | RootAnalysisTests "the molars behind do not stand in for the first" (red: took the high third molar, as on the real case → green with the 2D height map), "the report states apex to osteotomy" |
+| F6 no proposals on a real maxilla | complete | LeFortHoleTests "a thin pillar is proposed with a warning" and "an empty pillar says what blocked it" (red → green); «Aceptar» shown after an empty proposal |
