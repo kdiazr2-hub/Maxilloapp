@@ -233,3 +233,10 @@ slug: guia-lefort-por-movimiento
 - red → green: `LeFortGuideTests` "the guide covers the whole cut with a single hole" (x −23..−15 before).
   The band now spans the cut's ends ∪ the holes. Linux: core 9/9; app LeFort/Plate/Workspace 6/6.
 - open: why the proposal found so few sound sites on the real maxilla (report text requested).
+
+## Real-case round 2 — 2026-10-05 (user's decisions, see decisions.md)
+- band drawn on the bone between the two cut surfaces (`BandOnBone`); guide out of the nose with one bridge
+  3 mm below the nasal spine; holes proposed as markers and accepted with a button; Guías before Placa.
+- red → green each: LeFortGuideTests "the band is the bone between the two cuts", "the guide stays out of the
+  nose and clear of the spine"; SplintWorkspaceTests impaction flow (propose → move → accept) and the step bar.
+- Linux: core 9/9, full app ctest 29/29 under Xvfb. Windows build + a real case pending.
