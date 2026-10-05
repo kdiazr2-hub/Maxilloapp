@@ -13,8 +13,11 @@
 #include "MainWindow.h"
 
 #include "Mesh3DView.h"
+#include "CranioPalette.h"
 #include "GuideSculptCore.h"
 #include "LeFortGuideCore.h"
+#include "LeFortHoleCore.h"
+#include "LeFortMotionCore.h"
 #include "MeshRepairCore.h"
 #include "ObjectLabels.h"
 #include "PlateCore.h"
@@ -86,6 +89,9 @@ constexpr int kModeSculpt = 5;
 constexpr int kModeTrim = 6;
 constexpr int kModeTube = 7;
 constexpr int kModePlateHoles = 8; // plate screw holes, on the planned bone
+constexpr int kModeMoveHoles = 9;  // drag the Le Fort guide's drill sites over the bone
+// Editable-point groups of the guide's drill sites, one per support verdict (Ok, Warning, Rejected).
+constexpr int kHoleGroupBase = 10;
 constexpr int kPlateDesignConventional = 0;
 constexpr int kPlateDesignThreePsi = 1;
 constexpr int kPlateDesignSplintless = 2;
@@ -517,13 +523,22 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
     connect(m_guideWorkflowNextButton, &QPushButton::clicked, this, &MainWindow::advanceGuideWorkflow);
     workflowRow->addWidget(m_guideWorkflowNextButton);
     automaticGuideBox->addLayout(workflowRow);
-    // Kept as an internal compatibility hook for old automated tests/projects;
-    // the user-facing workflow no longer generates an automatic support shape.
-    m_guideGenerateButton = new QPushButton(tr("Generar guía de corte"), panel);
-    m_guideGenerateButton->setToolTip(tr("Crea la guía sobre el Le Fort sin movimientos, con la ranura situada "
-                                         "sobre la osteotomía."));
+    // Le Fort: once the envelope exists the guide can be laid out from the movement itself — the band an
+    // impaction takes out, both slits, the drill sites — instead of painted by hand (user's choice,
+    // 2026-10-05). The hand-drawn steps stay as the alternative and to retouch it.
+    m_guideGenerateButton = new QPushButton(tr("Generar guía desde el movimiento"), panel);
+    m_guideGenerateButton->setToolTip(tr("Calcula la franja de hueso a quitar según el movimiento del Le Fort "
+                                         "(impactación o descenso), propone los orificios en hueso con buen soporte "
+                                         "y crea la guía. Con placas a medida usa sus orificios."));
     connect(m_guideGenerateButton, &QPushButton::clicked, this, &MainWindow::generateLeFortGuide);
-    m_guideGenerateButton->hide();
+    automaticGuideBox->addWidget(m_guideGenerateButton);
+    m_guideMoveHoleButton = new QPushButton(tr("Mover orificio"), panel);
+    m_guideMoveHoleButton->setCheckable(true);
+    m_guideMoveHoleButton->setToolTip(tr("Arrastre un orificio sobre el hueso. Se rechaza en el borde óseo, cerca "
+                                         "del corte o en la franja; en hueso delgado se acepta con aviso."));
+    connect(m_guideMoveHoleButton, &QPushButton::toggled, this,
+            [this](bool on) { setGuidePointMode(on ? kModeMoveHoles : kModeNone); });
+    automaticGuideBox->addWidget(m_guideMoveHoleButton);
 
     // ── Custom plates: define the definitive holes before the pre-operative guide ──
     auto* plateBox = step(tr("1. DISEÑO · POSICIÓN DEFINITIVA"));
@@ -1094,6 +1109,7 @@ void MainWindow::computeGuideWrap()
     // The bone itself, so nothing built on the wrap can end up inside it. Baked once with the envelope: it is
     // the same rasterisation, just without the closing and without contouring a mesh from it.
     m_guidePlan.design.bone = ImplicitCore::BakeMeshField(meshes, m_guidePlan.wrap.smallestDetailMm, 8.0);
+    refreshGuideBand(); // a reopened project shows its band again: it is never saved, only recomputed
     if (m_guidePlan.workflowStep == GuideWorkflowStep::Envelope) {
         // Starting the assistant is an explicit restart: legacy automatic geometry
         // must not leak into the manually painted guide.
@@ -1260,7 +1276,8 @@ void MainWindow::setGuidePointMode(int mode)
                                                               {m_guideHoleButton, kModeHoles},
                                                               {m_guidePlaceFigureButton, kModeFigure},
                                                               {m_guideTubeButton, kModeTube},
-                                                              {m_guidePlateHolesButton, kModePlateHoles}};
+                                                              {m_guidePlateHolesButton, kModePlateHoles},
+                                                              {m_guideMoveHoleButton, kModeMoveHoles}};
     for (const auto& [button, owned] : owners) {
         if (!button)
             continue;
@@ -1282,6 +1299,9 @@ void MainWindow::setGuidePointMode(int mode)
         for (size_t i = 0; i < m_guidePlan.figures.size(); ++i)
             m_guideView->setMeshPickable(figureActorKey(i), mode == kModeTube &&
                                                                m_guidePlan.figures[i].sourceLabel != 0);
+        // The drill sites are dragged over the surface; no new ones are added by clicking.
+        m_guideView->setPointEditMode(mode == kModeMoveHoles, -1);
+        showGuideLeFortHoles();
     }
     updateGuideUi();
 }
@@ -1395,6 +1415,7 @@ void MainWindow::applyGuideLayers()
     m_guideView->setMeshVisible(kGuideWrapActorKey, on(m_guideShowWrapCheck));
     m_guideView->setMeshOpacity(kGuideWrapActorKey, m_guideWrapOpacitySpin ? m_guideWrapOpacitySpin->value() : 0.6);
     m_guideView->setMeshVisible(objectActorKey(kGuideMeshLabel), on(m_guideShowGuideCheck));
+    m_guideView->setMeshVisible(kGuideBandActorKey, on(m_guideShowModelsCheck) || on(m_guideShowGuideCheck));
     for (size_t i = 0; i < m_guidePlan.figures.size(); ++i)
         m_guideView->setMeshVisible(figureActorKey(i), on(m_guideShowFiguresCheck));
     m_guideView->render();
@@ -1846,6 +1867,16 @@ std::vector<GuideSlot> MainWindow::guideChosenSlots() const
             chosen.push_back(slot);
         }
     }
+    // The second slit of an impaction runs along the band's upper edge. Its pieces follow that edge, not a
+    // remembered cut, so they are taken while the band they came from is still the movement's: a change of
+    // movement drops them until the guide is generated again.
+    if (m_guidePlan.type == GuideType::LeFort && !chosen.empty()) {
+        const LeFortBandProfile band = guideLeFortBand();
+        if (band.ok && !band.spans.empty())
+            for (const GuideSlot& slot : m_guidePlan.slotPlan)
+                if (slot.hasExtent && slot.path.points == band.upperCut.points)
+                    chosen.push_back(slot);
+    }
     return chosen;
 }
 
@@ -2033,6 +2064,13 @@ void MainWindow::syncGuideView()
         m_guideView->addMesh(key, m_guideMesh, meshLabelName(kGuideMeshLabel));
         m_guideView->setMeshColor(key, kGuideColor);
     }
+    if (m_guidePlan.type == GuideType::LeFort && m_guideBandMesh && m_guideBandMesh->GetNumberOfPolys() > 0) {
+        // The bone to take out, drawn over the guide so it reads through it.
+        m_guideView->addMesh(kGuideBandActorKey, m_guideBandMesh, tr("Franja a quitar"));
+        m_guideView->setMeshColor(kGuideBandActorKey, CranioPalette::resection());
+        m_guideView->setMeshDisplayOptions(kGuideBandActorKey, 0.85, true);
+        m_guideView->setMeshPickable(kGuideBandActorKey, false);
+    }
     for (size_t i = 0; i < m_guidePlan.figures.size(); ++i) {
         GuideFigure& figure = m_guidePlan.figures[i];
         resolveGuideFigureMesh(figure);
@@ -2075,6 +2113,11 @@ void MainWindow::updateGuideUi()
     showSection(m_guidePlateSection, m_guidePlateWorkspace && leFort);
     showSection(m_guideAdvancedSection, !m_guidePlateWorkspace && workflow == GuideWorkflowStep::Complete);
     showSection(m_guidePlateAdvancedSection, m_guidePlateWorkspace);
+    if (m_guideGenerateButton)
+        m_guideGenerateButton->setVisible(!m_guidePlateWorkspace && leFort && hasWrap);
+    if (m_guideMoveHoleButton)
+        m_guideMoveHoleButton->setVisible(!m_guidePlateWorkspace && leFort && hasGuide && !hasPlates &&
+                                          !m_guidePlan.lefortHoles.empty());
     if (m_guidePlateStepLabel) {
         const QString stepText = acceptedPillars < kPlatePillarCount
                                      ? tr("%1 de 4 · %2").arg(acceptedPillars + 1).arg(platePillarName(acceptedPillars))
@@ -2764,10 +2807,14 @@ std::vector<PredictiveHole> MainWindow::guidePredictiveHoles() const
 std::vector<GuideFigure> MainWindow::guideFiguresWithSleeves() const
 {
     std::vector<GuideFigure> figures = m_guidePlan.figures;
-    if (m_guidePlan.type == GuideType::LeFort && !m_guidePlan.plates.empty()) {
-        const auto sleeves = PlateCore::SleeveFigures(guidePredictiveHoles(), guideSleeveParams());
-        figures.insert(figures.end(), sleeves.begin(), sleeves.end());
-    }
+    if (m_guidePlan.type != GuideType::LeFort)
+        return figures;
+    // With plates the guide drills exactly their holes; without, the sites it proposed or the surgeon moved.
+    const std::vector<PredictiveHole> sites = !m_guidePlan.plates.empty()
+                                                  ? guidePredictiveHoles()
+                                                  : LeFortHoleCore::DrillSites(m_guidePlan.lefortHoles);
+    const auto sleeves = PlateCore::SleeveFigures(sites, guideSleeveParams());
+    figures.insert(figures.end(), sleeves.begin(), sleeves.end());
     return figures;
 }
 
@@ -3229,6 +3276,14 @@ bool MainWindow::exportGuidePlateFiles(const QString& folder, QString* report)
     return true;
 }
 
+namespace
+{
+QString holeLine(const LeFortProposedHole& hole)
+{
+    return LeFortHoleCore::PillarName(hole.pillar) + QStringLiteral(", ") + LeFortHoleCore::SideName(hole.side);
+}
+} // namespace
+
 void MainWindow::generateLeFortGuide()
 {
     if (m_guidePlan.type != GuideType::LeFort) {
@@ -3243,19 +3298,54 @@ void MainWindow::generateLeFortGuide()
             return;
     }
     const OsteotomyPath path = guideLeFortPath();
+    if (!path.valid) {
+        QMessageBox::warning(this, tr("Guía de corte"),
+                             path.error.isEmpty() ? tr("Falta la trayectoria de la osteotomía Le Fort.") : path.error);
+        return;
+    }
+    // Only the changes of plane shape the guide (rise, drop, rotation, cant); the advancement is the plate's.
+    const LeFortBandProfile band = guideLeFortBand();
+    std::vector<PredictiveHole> sites;
+    if (!m_guidePlan.plates.empty()) {
+        // The plates come first: the guide drills exactly their holes, carried back before the movement.
+        sites = guidePredictiveHoles();
+        m_guidePlan.lefortHoles.clear();
+        m_guideLeFortMissing.clear();
+    } else {
+        LeFortHoleContext context;
+        QString error;
+        if (!guideLeFortHoleContext(context, &error)) {
+            QMessageBox::warning(this, tr("Guía de corte"), error);
+            return;
+        }
+        QApplication::setOverrideCursor(Qt::WaitCursor);
+        statusBar()->showMessage(tr("Guía de corte: buscando hueso con buen soporte para los orificios…"));
+        // What the surgeon moved stays where it was put; the rest is proposed again on the current movement.
+        std::vector<LeFortProposedHole> manual;
+        for (const LeFortProposedHole& hole : m_guidePlan.lefortHoles)
+            if (hole.origin == LeFortHoleOrigin::Manual)
+                manual.push_back(hole);
+        const LeFortProposal proposal = LeFortHoleCore::Propose(context, manual);
+        QApplication::restoreOverrideCursor();
+        m_guidePlan.lefortHoles = proposal.holes;
+        m_guideLeFortMissing.clear();
+        for (const LeFortMissingHoles& gap : proposal.missing)
+            m_guideLeFortMissing << gap.reason;
+        sites = LeFortHoleCore::DrillSites(proposal.holes);
+    }
+    layoutLeFortGuide(sites, band, guideLeFortHoleReport());
+}
+
+void MainWindow::layoutLeFortGuide(const std::vector<PredictiveHole>& drillSites, const LeFortBandProfile& band,
+                                   const QString& holeReport)
+{
+    const OsteotomyPath path = guideLeFortPath();
     QApplication::setOverrideCursor(Qt::WaitCursor);
     statusBar()->showMessage(tr("Guía de corte: trazando sobre la osteotomía preoperatoria…"));
     LeFortGuideParams params;
     params.sleeveOuterDiameterMm = guideSleeveParams().outerDiameterMm;
-    const std::vector<PredictiveHole> predictive = guidePredictiveHoles();
-    if (predictive.empty()) {
-        QApplication::restoreOverrideCursor();
-        QMessageBox::warning(this, tr("Guía de corte"),
-                             tr("Planifique primero las placas y sus tornillos. La guía utilizará exactamente esas perforaciones."));
-        return;
-    }
-    const LeFortGuideLayout layout =
-        LeFortGuideCore::Layout(m_guidePrepared, m_guideWrapMesh, path, predictive, params);
+    const LeFortGuideLayout layout = LeFortGuideCore::Layout(m_guidePrepared, m_guideWrapMesh, path, drillSites,
+                                                             params, band.ok ? &band : nullptr);
     QApplication::restoreOverrideCursor();
     if (!layout.ok) {
         QMessageBox::warning(this, tr("Guía de corte"), layout.error);
@@ -3265,7 +3355,7 @@ void MainWindow::generateLeFortGuide()
     m_guidePlan.contour.clear();
     m_guidePlan.paint = layout.paint;
     m_guidePlan.slotPlan = layout.slotPlan;
-    m_guidePlan.holes.clear(); // every drill bore comes from the definitive plate plan
+    m_guidePlan.holes.clear(); // every drill bore is a sleeve at a drill site
     // Regeneration is a fresh automatic cutting-guide layout. Saved projects
     // may still contain legacy sleeves, imported figures or connector tubes in
     // the old coordinate frame; keeping them is what made isolated pieces
@@ -3282,6 +3372,7 @@ void MainWindow::generateLeFortGuide()
             if (index < m_guideCuts.size() && m_guideCuts[index].path.points == path.points)
                 item->setCheckState(Qt::Checked);
         }
+    refreshGuideBand();
     repaintGuideWrap();
     rebuildGuideMarkers();
     buildGuideMesh();
@@ -3297,8 +3388,169 @@ void MainWindow::generateLeFortGuide()
             m_guideShowGuideCheck->setChecked(true);
         applyGuideLayers();
     }
+    // The movement first: it is what the guide was made from.
+    QString movement = band.ok ? band.report : band.error;
+    if (band.noMotion)
+        movement = QStringLiteral("⚠ ") + movement;
     if (m_guideReportLabel && m_guideMesh)
-        m_guideReportLabel->setText(layout.report + QStringLiteral("\n") + m_guideReportLabel->text());
+        m_guideReportLabel->setText(movement + QStringLiteral("\n") + layout.report +
+                                    (holeReport.isEmpty() ? QString() : QStringLiteral("\n") + holeReport) +
+                                    QStringLiteral("\n") + m_guideReportLabel->text());
+    showGuideLeFortHoles();
+    updateGuideUi();
+}
+
+LeFortBandProfile MainWindow::guideLeFortBand() const
+{
+    std::array<double, 16> motion{};
+    QString error;
+    if (!guideSegmentMotion(motion, &error)) {
+        LeFortBandProfile none;
+        none.error = error;
+        return none;
+    }
+    return LeFortMotionCore::Band(guideLeFortPath(), motion);
+}
+
+bool MainWindow::guideLeFortHoleContext(LeFortHoleContext& context, QString* error) const
+{
+    if (!m_guidePlan.design.bone || !m_guidePrepared.ok || !m_guidePrepared.wrapField) {
+        if (error)
+            *error = tr("Calcule primero la envolvente del hueso antes del corte.");
+        return false;
+    }
+    std::array<double, 16> motion{};
+    if (!guideSegmentMotion(motion, error))
+        return false;
+    // The bone before the cut, where the guide drills, and the same bones where the plan puts them: the ring
+    // of a segment hole is judged where the plate will hold it. No cut margin: Support measures the cut itself.
+    const auto cranial = guideSourceMeshForLabel(kLeFortCranialLabel);
+    const auto segmentBefore = guideSourceMeshForLabel(kLeFortSegLabel);
+    const std::array<double, 16> still{1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0};
+    context.bone = m_guidePlan.design.bone.get();
+    context.plannedBone = PlateCore::MakeBoneQuery(repositionMeshForLabel(kLeFortCranialLabel),
+                                                   repositionMeshForLabel(kLeFortSegLabel), motion, {}, 0.0);
+    context.preopBone = PlateCore::MakeBoneQuery(cranial, segmentBefore, still, {}, 0.0);
+    context.cut = guideLeFortPath();
+    context.motion = motion;
+    const LeFortBandProfile band = LeFortMotionCore::Band(context.cut, motion);
+    if (band.ok)
+        context.band = band;
+    context.anterior = LeFortGuideCore::AnteriorDirection(*m_guidePrepared.wrapField, context.cut);
+    context.params.seat = guidePlateParams();
+    return true;
+}
+
+QString MainWindow::guideLeFortHoleReport() const
+{
+    if (!m_guidePlan.plates.empty())
+        return tr("Orificios: los de las placas a medida (%1).").arg(guidePredictiveHoles().size());
+    QStringList lines;
+    int warnings = 0, refused = 0, manual = 0;
+    for (const LeFortProposedHole& hole : m_guidePlan.lefortHoles) {
+        manual += hole.origin == LeFortHoleOrigin::Manual ? 1 : 0;
+        if (hole.support.verdict == LeFortSupportVerdict::Warning) {
+            ++warnings;
+            lines << tr("⚠ %1: %2").arg(holeLine(hole), hole.support.reason);
+        } else if (hole.support.verdict == LeFortSupportVerdict::Rejected) {
+            ++refused;
+            lines << tr("✖ %1: %2").arg(holeLine(hole), hole.support.reason);
+        }
+    }
+    QString head = tr("Orificios: %1 (%2 movidos a mano)").arg(m_guidePlan.lefortHoles.size()).arg(manual);
+    if (warnings > 0)
+        head += tr(", %1 con aviso").arg(warnings);
+    if (refused > 0)
+        head += tr(", %1 sin soporte").arg(refused);
+    head += QStringLiteral(".");
+    lines.prepend(head);
+    for (const QString& reason : m_guideLeFortMissing)
+        lines << QStringLiteral("⚠ ") + reason;
+    return lines.join(QStringLiteral("\n"));
+}
+
+void MainWindow::refreshGuideBand()
+{
+    m_guideBandMesh = nullptr;
+    if (m_guidePlan.type != GuideType::LeFort || !m_guidePlan.design.bone || !m_guidePrepared.ok ||
+        !m_guidePrepared.wrapField)
+        return;
+    const LeFortBandProfile band = guideLeFortBand();
+    if (!band.ok || band.spans.empty())
+        return;
+    const OsteotomyPath path = guideLeFortPath();
+    m_guideBandMesh = LeFortGuideCore::BandRibbon(*m_guidePlan.design.bone, path, band,
+                                                  LeFortGuideCore::AnteriorDirection(*m_guidePrepared.wrapField, path));
+}
+
+void MainWindow::showGuideLeFortHoles()
+{
+    if (!m_guideView)
+        return;
+    for (int group = 0; group < 3; ++group) {
+        m_guideHoleGroups[static_cast<size_t>(group)].clear();
+        m_guideView->setEditablePoints(kHoleGroupBase + group, {}, CranioPalette::holeSound());
+    }
+    if (m_guidePointMode != kModeMoveHoles || m_guidePlan.lefortHoles.empty())
+        return;
+    // Saved projects keep where the holes are, not how sound they were: judge them again on this movement.
+    LeFortHoleContext context;
+    const bool judged = guideLeFortHoleContext(context);
+    std::array<std::vector<std::array<double, 3>>, 3> centres;
+    for (size_t i = 0; i < m_guidePlan.lefortHoles.size(); ++i) {
+        LeFortProposedHole& hole = m_guidePlan.lefortHoles[i];
+        if (judged)
+            hole.support = LeFortHoleCore::Support(hole.center, hole.axis, context);
+        const size_t group = hole.support.verdict == LeFortSupportVerdict::Ok        ? 0
+                           : hole.support.verdict == LeFortSupportVerdict::Warning ? 1
+                                                                                     : 2;
+        m_guideHoleGroups[group].push_back(i);
+        centres[group].push_back(hole.center);
+    }
+    m_guideView->setEditablePoints(kHoleGroupBase, centres[0], CranioPalette::holeSound(), 1.2);
+    m_guideView->setEditablePoints(kHoleGroupBase + 1, centres[1], CranioPalette::holeWarning(), 1.2);
+    m_guideView->setEditablePoints(kHoleGroupBase + 2, centres[2], CranioPalette::holeRefused(), 1.2);
+    m_guideView->render();
+}
+
+void MainWindow::onGuideHoleDragged(int group, int, double x, double y, double z)
+{
+    if (group >= kHoleGroupBase && group < kHoleGroupBase + 3)
+        m_guideHoleDragTarget = {x, y, z};
+}
+
+void MainWindow::onGuideHoleDropped(int group, int index)
+{
+    if (m_guidePointMode != kModeMoveHoles || group < kHoleGroupBase || group >= kHoleGroupBase + 3)
+        return;
+    const auto& members = m_guideHoleGroups[static_cast<size_t>(group - kHoleGroupBase)];
+    if (index < 0 || static_cast<size_t>(index) >= members.size()) {
+        showGuideLeFortHoles();
+        return;
+    }
+    const size_t which = members[static_cast<size_t>(index)];
+    LeFortHoleContext context;
+    QString error;
+    if (!guideLeFortHoleContext(context, &error)) {
+        statusBar()->showMessage(error, 8000);
+        showGuideLeFortHoles();
+        return;
+    }
+    const LeFortProposedHole moved =
+        LeFortHoleCore::MoveHole(m_guidePlan.lefortHoles[which], m_guideHoleDragTarget, context);
+    if (moved.support.verdict == LeFortSupportVerdict::Rejected) {
+        // A margin, the cut or the band: the hole stays where it was.
+        statusBar()->showMessage(tr("Orificio no movido: %1").arg(moved.support.reason), 10000);
+        showGuideLeFortHoles();
+        return;
+    }
+    m_guidePlan.lefortHoles[which] = moved;
+    statusBar()->showMessage(moved.support.verdict == LeFortSupportVerdict::Warning
+                                 ? tr("Orificio movido con aviso: %1").arg(moved.support.reason)
+                                 : tr("Orificio movido: %1 mm de hueso.").arg(moved.support.thicknessMm, 0, 'f', 1),
+                             10000);
+    // The guide again, with this hole in its new place and the band and the other holes as they were.
+    layoutLeFortGuide(LeFortHoleCore::DrillSites(m_guidePlan.lefortHoles), guideLeFortBand(), guideLeFortHoleReport());
 }
 
 QString MainWindow::guideMotionSummary(bool* moved) const

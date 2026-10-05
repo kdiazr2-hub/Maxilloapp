@@ -2899,6 +2899,9 @@ void MainWindow::buildCentralWidget()
         connect(m_guideView, &Mesh3DView::fullScreenToggleRequested, this,
                 [this](Mesh3DView* source) { toggleViewFullScreen(static_cast<QWidget*>(source)); });
         connect(m_guideView, &Mesh3DView::pointPicked, this, &MainWindow::onGuidePointPicked);
+        connect(m_guideView, &Mesh3DView::editablePointMoved, this, &MainWindow::onGuideHoleDragged);
+        connect(m_guideView, &Mesh3DView::editablePointDragFinished, this, &MainWindow::onGuideHoleDropped);
+        connect(m_guideView, &Mesh3DView::editablePointRemoved, this, [this](int, int) { showGuideLeFortHoles(); });
         connect(m_guideView, &Mesh3DView::gizmoMeshUpdated, this, &MainWindow::onGuideGizmoUpdated);
         connect(m_guideView, &Mesh3DView::surfaceBrushed, this, &MainWindow::onGuideSurfaceBrushed);
         connect(m_guideView, &Mesh3DView::brushRadiusDragged, this, &MainWindow::onGuideBrushRadiusDragged);

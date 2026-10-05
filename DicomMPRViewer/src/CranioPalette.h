@@ -24,5 +24,10 @@ inline QColor osteotomy()     { return QColor(188, 162, 146); }
 inline QColor guide()         { return QColor(126, 118, 93); }
 inline QColor canal()         { return QColor(170, 134, 118); }
 inline QColor fallback()      { return QColor(196, 180, 166); }
+// Planning marks: bone to take out, and the state of a drill site.
+inline QColor resection()     { return QColor(255, 69, 58); }
+inline QColor holeSound()     { return QColor(191, 90, 242); }
+inline QColor holeWarning()   { return QColor(255, 159, 10); }
+inline QColor holeRefused()   { return QColor(255, 69, 58); }
 
 } // namespace CranioPalette

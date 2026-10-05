@@ -87,3 +87,21 @@ Decision — `Propose(ctx)`: per pillar and side, a 1 mm grid in the window, eac
            the caller (LeFortGuideCore already works it out for the guide's frame).
 Why      — regular, deterministic coverage measured on the bone itself (constitution 8), and no guessing of
            which way is the face.
+
+## 2026-10-05 — Where the generated guide enters GUÍAS  (feature: guia-lefort-por-movimiento, task: T012)
+Context  — GUÍAS had become a hand-painting assistant (envelope → paint right/left/bridge → holes → slots →
+           build); the automatic button was hidden. The guide "seguía igual" because nothing called the cores.
+Options  — a button after the envelope / replace the assistant / generate on entry.
+Decision — a button after the envelope, «Generar guía desde el movimiento»; the hand-drawn steps stay as the
+           alternative and to retouch it (user's choice, 2026-10-05).
+
+## 2026-10-05 — With plates, the guide drills the plates' holes  (feature: guia-lefort-por-movimiento, task: T012)
+Context  — the spec assumed the generated guide replaces the plate-derived one and warns when earlier plates do
+           not match. In the app today the plate step comes before the guide, and `SplintWorkspaceTests` requires
+           the guide to carry exactly the plates' predictive holes — the principle the user started from
+           ("las guías ... tengan los orificios iguales al de la placa").
+Options  — always propose and warn on mismatch / plates win when they exist / ask every time.
+Decision — plates win: with plates the guide drills their predictive holes; without, the app proposes the sites
+           and the surgeon can move them. The band and the second slit apply either way.
+Why      — a guide whose holes miss existing plates would not fit them in theatre. To confirm with the user;
+           `UnmatchedPlateHoles` stays in the core for the other choice.

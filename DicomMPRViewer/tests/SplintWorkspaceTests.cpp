@@ -1303,6 +1303,109 @@ public:
         std::cout << "Bite registration stages and local ICP OK\n";
     }
 
+    // GUÍA Le Fort from the movement, without plates: a 4 mm impaction gives the band (drawn red), the second slit
+    // along its upper edge and 16 proposed drill sites with a sleeve each; a site dragged elsewhere stays there,
+    // the guide is rebuilt round it, and the project keeps it.
+    static void runImpactionGuideWorkflow()
+    {
+        MainWindow window;
+        window.setAttribute(Qt::WA_DontShowOnScreen);
+        window.resize(1700, 950);
+        window.show();
+        settle();
+
+        // The anterior maxilla, face towards +y: cranial base above the cut (z >= 10), Le Fort segment below it
+        // (z <= 8). The plan raises the segment 4 mm and advances it 3 mm; only the rise shapes the guide.
+        const auto cranium = boxMesh({-25.0, 25.0, -10.0, 0.0, 10.0, 30.0}, false, false);
+        const auto before = boxMesh({-25.0, 25.0, -10.0, 0.0, -10.0, 8.0}, false, false);
+        auto motionTransform = vtkSmartPointer<vtkTransform>::New();
+        motionTransform->Translate(0.0, 3.0, 4.0);
+        auto moveFilter = vtkSmartPointer<vtkTransformPolyDataFilter>::New();
+        moveFilter->SetInputData(before);
+        moveFilter->SetTransform(motionTransform);
+        moveFilter->Update();
+        auto planned = vtkSmartPointer<vtkPolyData>::New();
+        planned->DeepCopy(moveFilter->GetOutput());
+        window.addObjectEntry(QStringLiteral("Segmento Le Fort I"), QColor(230, 220, 200), kLeFortSegLabel);
+        window.setRepositionMeshForLabel(kLeFortSegLabel, planned);
+        window.m_repositionOriginalMeshes[kLeFortSegLabel] = before; // as REPOSICIÓN keeps it
+        window.addObjectEntry(QStringLiteral("Base craneal"), QColor(220, 210, 190), kLeFortCranialLabel);
+        window.setRepositionMeshForLabel(kLeFortCranialLabel, cranium);
+        window.rememberOsteotomyCut(QStringLiteral("Le Fort I"),
+                                    OsteotomyCore::LeFortPath({{{-10.0, 5.0, 9.0}, {10.0, 5.0, 9.0},
+                                                                {-20.0, -5.0, 9.0}, {20.0, -5.0, 9.0}}}),
+                                    GuideType::LeFort);
+        for (auto* tab : window.findChildren<QToolButton*>(QStringLiteral("MT")))
+            if (tab->text() == QStringLiteral("GUIAS"))
+                tab->click();
+        settle();
+        require(window.m_guidePlan.type == GuideType::LeFort && window.m_guidePlan.plates.empty(),
+                "the impaction guide starts from a Le Fort guide without plates");
+        window.m_guideDetailSpin->setValue(0.5); // coarse: this is a wiring test
+        window.computeGuideWrap();
+        settle();
+        require(window.m_guideGenerateButton->isVisibleTo(&window),
+                "the guide cannot be generated from the movement once the envelope exists");
+        window.m_guideGenerateButton->click();
+        settle();
+
+        // The band: red on the wall, and in the report with its height.
+        require(window.m_guideBandMesh && window.m_guideBandMesh->GetNumberOfPolys() > 0 &&
+                    window.m_guideView->meshData(kGuideBandActorKey) != nullptr,
+                "the band to take out is not drawn");
+        require(window.m_guideReportLabel->text().contains(QStringLiteral("Impactación")) &&
+                    window.m_guideReportLabel->text().contains(QStringLiteral("4.0 mm")),
+                "the report does not state the impaction: " + window.m_guideReportLabel->text().toStdString());
+        // Two slits: the Le Fort cut and the band's upper edge, both carved.
+        const LeFortBandProfile band = window.guideLeFortBand();
+        require(band.ok && band.kind == LeFortBandKind::Impaction, "the movement is not read as an impaction");
+        const auto isUpper = [&band](const GuideSlot& slot) { return slot.path.points == band.upperCut.points; };
+        const auto chosen = window.guideChosenSlots();
+        require(std::any_of(chosen.begin(), chosen.end(), isUpper) &&
+                    std::any_of(chosen.begin(), chosen.end(), [&](const GuideSlot& slot) { return !isUpper(slot); }),
+                "the guide does not carve both the cut and the band's upper edge");
+        // The drill sites: 16 on sound bone, a sleeve body and a bore at each.
+        require(window.m_guidePlan.lefortHoles.size() == 16, "16 drill sites were expected, got " +
+                                                                  std::to_string(window.m_guidePlan.lefortHoles.size()));
+        require(window.m_guideMesh && window.m_guideMesh->GetNumberOfPolys() > 0, "the guide was not built");
+        require(window.m_guideBuiltFigures.size() == window.m_guidePlan.figures.size() + 2 * 16,
+                "the guide does not carry one sleeve per drill site");
+
+        // «Mover orificio»: drag one site 1.5 mm towards the midline, onto the bone.
+        window.m_guideMoveHoleButton->setChecked(true);
+        settle();
+        require(window.m_guideMoveHoleButton->isVisibleTo(&window) && !window.m_guideHoleGroups[0].empty(),
+                "the drill sites cannot be moved");
+        const size_t which = window.m_guideHoleGroups[0].front();
+        const std::array<double, 3> from = window.m_guidePlan.lefortHoles[which].center;
+        const double dx = from[0] > 0.0 ? -1.5 : 1.5;
+        window.onGuideHoleDragged(10, 0, from[0] + dx, from[1] + 2.0, from[2]); // 10: the sound sites' markers
+        window.onGuideHoleDropped(10, 0);
+        settle();
+        const LeFortProposedHole& moved = window.m_guidePlan.lefortHoles[which];
+        require(moved.origin == LeFortHoleOrigin::Manual && std::abs(moved.center[0] - (from[0] + dx)) < 0.3 &&
+                    std::abs(moved.center[1]) < 0.3 && std::abs(moved.center[2] - from[2]) < 0.3,
+                "the dragged site did not land on the bone where it was dropped");
+        require(window.m_guideMesh && window.m_guideMesh->GetNumberOfPolys() > 0 &&
+                    window.m_guideBuiltFigures.size() == window.m_guidePlan.figures.size() + 2 * 16,
+                "the guide was not rebuilt round the moved site");
+
+        // The project keeps the sites, the moved one included; the band comes back from the movement.
+        ProjectState state;
+        state.guidesPlan = window.guidePlanJson();
+        MainWindow reopened;
+        reopened.setAttribute(Qt::WA_DontShowOnScreen);
+        reopened.show();
+        settle();
+        reopened.restoreGuidePlan(state);
+        require(reopened.m_guidePlan.lefortHoles.size() == 16, "the drill sites did not survive the project");
+        const LeFortProposedHole& kept = reopened.m_guidePlan.lefortHoles[which];
+        require(kept.origin == LeFortHoleOrigin::Manual && std::abs(kept.center[0] - moved.center[0]) < 1e-6 &&
+                    std::abs(kept.center[2] - moved.center[2]) < 1e-6,
+                "the moved site did not come back where it was");
+        std::cout << "Impaction guide from the movement OK\n";
+    }
+
     // PLACAS + GUÍA Le Fort: plates on the planned bone, predictive holes carried into the guide's sleeves.
     static void runPlateWorkflow(const QString& artifactsDir)
     {
@@ -1808,6 +1911,7 @@ int main(int argc, char** argv)
         SplintWorkspaceTests::runInspectorTabs();
         SplintWorkspaceTests::runGuidesWorkflow(artifacts);
         SplintWorkspaceTests::runPlateWorkflow(artifacts);
+        SplintWorkspaceTests::runImpactionGuideWorkflow();
         if (!unexpectedDialogs.isEmpty()) {
             std::cerr << "FAIL unexpected dialogs: " << unexpectedDialogs.join(QStringLiteral(" | ")).toStdString() << '\n';
             return 1;

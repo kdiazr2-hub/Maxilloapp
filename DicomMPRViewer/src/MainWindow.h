@@ -280,7 +280,17 @@ private:
     void removeGuidePlate();
     void refreshGuidePlates();
     void exportGuidePlates();
-    void generateLeFortGuide(); // the cutting/drilling guide laid out from the plates and the osteotomy
+    void generateLeFortGuide(); // the cutting/drilling guide laid out from the Le Fort's movement
+    // Lays the guide out with these drill sites and the band, builds it and shows the report.
+    void layoutLeFortGuide(const std::vector<PredictiveHole>& drillSites, const LeFortBandProfile& band,
+                           const QString& holeReport);
+    LeFortBandProfile guideLeFortBand() const; // the bone an impaction takes out, from the movement
+    bool guideLeFortHoleContext(LeFortHoleContext& context, QString* error = nullptr) const;
+    QString guideLeFortHoleReport() const;
+    void refreshGuideBand();
+    void showGuideLeFortHoles(); // draggable markers in «Mover orificio», coloured by support
+    void onGuideHoleDragged(int group, int index, double x, double y, double z);
+    void onGuideHoleDropped(int group, int index);
     bool exportGuidePlateFiles(const QString& folder, QString* report = nullptr);
     bool guideSegmentMotion(std::array<double, 16>& motion, QString* error = nullptr) const;
     OsteotomyPath guideLeFortPath() const;
@@ -369,6 +379,11 @@ private:
     QPushButton* m_guidePlateCreateButton = nullptr;
     QPushButton* m_guidePlateExportButton = nullptr;
     QPushButton* m_guideGenerateButton = nullptr;
+    QPushButton* m_guideMoveHoleButton = nullptr;
+    vtkSmartPointer<vtkPolyData> m_guideBandMesh;          // the band drawn red on the wall
+    std::array<std::vector<size_t>, 3> m_guideHoleGroups;  // marker index → hole, per support verdict
+    std::array<double, 3> m_guideHoleDragTarget{0.0, 0.0, 0.0};
+    QStringList m_guideLeFortMissing;                       // holes the proposal could not place, and why
     QListWidget* m_guidePlateList = nullptr;
     QLabel* m_guidePlateCheckLabel = nullptr;
     QLabel* m_guidePlateStepLabel = nullptr;
