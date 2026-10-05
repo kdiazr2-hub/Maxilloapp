@@ -639,6 +639,53 @@ void testTheGuideStaysOutOfTheNoseAndClearOfTheSpine()
     require(bridged, "the two sides are not joined across the midline");
 }
 
+// spec asistente-guia-lefort §Acceptance 5 (user's case of 2026-10-05): two guides, right and left, each from
+// the nasomaxillary to the maxillomalar pillar, each in one piece, each held by two positioning screws, and
+// nothing of either in the nose.
+void testTwoGuidesOneEachSide()
+{
+    const Prepared bone = preoperativeBone(true);
+    LeFortGuideParams params;
+    params.separateSides = true;
+    const LeFortGuideLayout layout = LeFortGuideCore::Layout(bone.preparation, bone.wrap.mesh, leFortCut(), {}, params);
+    require(layout.ok, "the guides were not laid out: " + layout.error.toStdString());
+    // Patches by real overlap of the dabs.
+    const size_t n = layout.paint.size();
+    std::vector<size_t> parent(n);
+    for (size_t i = 0; i < n; ++i)
+        parent[i] = i;
+    const std::function<size_t(size_t)> find = [&](size_t i) { return parent[i] == i ? i : parent[i] = find(parent[i]); };
+    for (size_t i = 0; i < n; ++i)
+        for (size_t j = i + 1; j < n; ++j) {
+            const auto& a = layout.paint[i];
+            const auto& b = layout.paint[j];
+            const double d = std::hypot(std::hypot(a.center[0] - b.center[0], a.center[1] - b.center[1]), a.center[2] - b.center[2]);
+            if (d < a.radiusMm + b.radiusMm - 1.0)
+                parent[find(i)] = find(j);
+        }
+    std::set<size_t> rightRoots, leftRoots;
+    for (size_t i = 0; i < n; ++i) {
+        const auto& dab = layout.paint[i];
+        (dab.center[0] < 0.0 ? rightRoots : leftRoots).insert(find(i));
+        const double dx = std::max(0.0, std::abs(dab.center[0]) - 6.0), dz = std::max({0.0, 8.5 - dab.center[2], dab.center[2] - 20.0});
+        require(std::hypot(dx, dz) >= dab.radiusMm - 0.5, "a dab reaches into the nose at x " + std::to_string(dab.center[0]));
+    }
+    require(rightRoots.size() == 1 && leftRoots.size() == 1, "each side is not one patch: " + std::to_string(rightRoots.size()) +
+                                                                 " right, " + std::to_string(leftRoots.size()) + " left");
+    require(*rightRoots.begin() != *leftRoots.begin(), "the two guides are joined");
+    int right = 0, left = 0;
+    for (const GuideFixationHole& screw : layout.fixation)
+        (screw.center[0] < 0.0 ? right : left) += 1;
+    require(right >= 2 && left >= 2, "each guide needs two positioning screws: " + std::to_string(right) + " right, " +
+                                         std::to_string(left) + " left");
+    const GuideRegion region = GuideBaseCore::MakeBrushRegion(bone.preparation.wrapField, layout.paint, bone.design.base);
+    require(region.valid, "the region is not valid: " + region.error.toStdString());
+    const GuideDesignResult guides =
+        GuideDesignCore::Build(bone.preparation, region, layout.slotPlan, layout.fixation, layout.figures, bone.design);
+    require(guides.ok && guides.pieces == 2, "two guides were expected, the build gave " + std::to_string(guides.pieces) +
+                                                 " pieces");
+}
+
 } // namespace
 
 int main()
@@ -663,6 +710,7 @@ int main()
         {"the band is the bone between the two cuts", testTheBandIsTheBoneBetweenTheTwoCuts},
         {"the guide covers the whole cut with a single hole", testTheGuideCoversTheWholeCutWithASingleHole},
         {"the guide stays out of the nose and clear of the spine", testTheGuideStaysOutOfTheNoseAndClearOfTheSpine},
+        {"two guides, one each side", testTwoGuidesOneEachSide},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {

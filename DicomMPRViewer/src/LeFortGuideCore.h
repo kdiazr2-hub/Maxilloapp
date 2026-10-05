@@ -58,6 +58,9 @@ struct LeFortGuideParams
     // upper edge stays this far below the anterior nasal spine (user's rule, 2026-10-05: no guide in the nose
     // nor on the spine).
     double spineClearanceMm = 3.0;
+    // Two guides, right and left, each from the nasomaxillary to the maxillomalar pillar, with no bridge
+    // between them (user's real case, 2026-10-05). Each gets its own positioning screws at both ends.
+    bool separateSides = false;
     double dabSpacingMm = 2.5;        // along the cut
     double fixationDiameterMm = 1.5;  // guide fixation screws (user's choice)
     double fixationOffsetMm = 6.0;    // above and below the cut

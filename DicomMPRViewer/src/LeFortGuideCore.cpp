@@ -391,6 +391,13 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
                 }
         }
     }
+    // Two guides without an aperture between them (the cut does not cross one): they part at the midline.
+    if (params.separateSides && !hasAperture && path.points.size() == 4) {
+        const double middle = 0.5 * (lateralOf(path.points[1]) + lateralOf(path.points[2]));
+        hasAperture = true;
+        rimLow = middle - 2.0;
+        rimHigh = middle + 2.0;
+    }
     // A dab beside the aperture is shrunk so it stops at the rim; one that would be a crumb is left out.
     const auto clearOfNose = [&](double lateral, double radius) {
         if (!hasAperture || lateral <= rimLow - radius || lateral >= rimHigh + radius)
@@ -409,7 +416,7 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
     // The bridge: across the aperture on the alveolar wall, its upper edge `spineClearanceMm` below the anterior
     // nasal spine — the forward spur at the aperture's floor — and carried a few bins past each rim so it
     // overlaps the band there. Without a spine it keeps that clearance below the floor itself.
-    if (hasAperture) {
+    if (hasAperture && !params.separateSides) {
         // The wall below the aperture, slice by slice downwards from the cut: the most forward point of each.
         const double sliceMm = 0.5;
         std::map<int, double> forwardBySlice; // slice index (downwards) → most forward depth
@@ -569,11 +576,57 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
                 }
             }
         }
+        // Two guides: each also needs a screw at its inner end, by the piriform rim, clear of the opening.
+        if (params.separateSides && hasAperture) {
+            constexpr double kScrewPad = 3.5;
+            for (const int inner : {-1, 1}) { // −1: the right guide's inner end, +1: the left guide's
+                for (const double sign : sides) {
+                    bool placed = false;
+                    for (int step = 0; step < bins && !placed; ++step) {
+                        const double s = inner < 0 ? rimLow - (kScrewPad + 0.5) - step * spacing
+                                                   : rimHigh + (kScrewPad + 0.5) + step * spacing;
+                        if (s < lowest || s > highest)
+                            break;
+                        const int bin = std::clamp(static_cast<int>(std::floor((s - lowest) / spacing)), 0, bins - 1);
+                        const double wanted = sign * params.fixationOffsetMm + (sign > 0.0 ? bandAt(s) : 0.0);
+                        const auto found = byBin.find(bin);
+                        if (found == byBin.end())
+                            continue;
+                        const Candidate* pick = nullptr;
+                        for (const Candidate* c : found->second)
+                            if (std::abs(c->field - wanted) < 1.0 && (inner < 0 ? c->lateral <= s + 0.5 : c->lateral >= s - 0.5) &&
+                                (!pick || c->depth > pick->depth))
+                                pick = c;
+                        if (!pick || !clearOfHoles(pick->point))
+                            continue;
+                        GuideFixationHole screw;
+                        screw.center = pick->point;
+                        screw.axis = GuideBaseCore::NormalAt(field, pick->point);
+                        screw.diameterMm = params.fixationDiameterMm;
+                        layout.fixation.push_back(screw);
+                        layout.paint.push_back({pick->point, kScrewPad, false});
+                        placed = true;
+                    }
+                }
+            }
+        }
     }
 
     // Nothing painted may stand on its own: a sleeve's pad that touches no other is a ring floating over the
     // bone. This is also what makes the guide come out in one piece.
-    const int connectors = connectPaint(field, layout.paint);
+    int connectors = 0;
+    if (params.separateSides && hasAperture) {
+        // Each guide on its own: patches are joined within a side, never across the midline.
+        const double middle = 0.5 * (rimLow + rimHigh);
+        GuideBrushPaint right, left;
+        for (const GuideBrushStroke& dab : layout.paint)
+            (lateralOf(dab.center) < middle ? right : left).push_back(dab);
+        connectors = connectPaint(field, right) + connectPaint(field, left);
+        layout.paint = right;
+        layout.paint.insert(layout.paint.end(), left.begin(), left.end());
+    } else {
+        connectors = connectPaint(field, layout.paint);
+    }
 
     // The cells. A row above and a row below the slit, staggered along the cut, each taken at the envelope
     // vertex nearest its place on the anterior wall and kept clear of the slit, of every sleeve and screw, and
