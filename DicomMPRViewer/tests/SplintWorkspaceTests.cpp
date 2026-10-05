@@ -1345,48 +1345,26 @@ public:
         window.computeGuideWrap();
         settle();
         require(window.m_guideGenerateButton->isVisibleTo(&window),
-                "the guide cannot be generated from the movement once the envelope exists");
+                "the holes cannot be proposed from the movement once the envelope exists");
         window.m_guideGenerateButton->click();
         settle();
 
-        // The band: red on the wall, and in the report with its height.
+        // First the band and the proposed sites, on the bone: nothing is put in the guide yet.
         require(window.m_guideBandMesh && window.m_guideBandMesh->GetNumberOfPolys() > 0 &&
                     window.m_guideView->meshData(kGuideBandActorKey) != nullptr,
                 "the band to take out is not drawn");
         require(window.m_guideReportLabel->text().contains(QStringLiteral("Impactación")) &&
                     window.m_guideReportLabel->text().contains(QStringLiteral("4.0 mm")),
                 "the report does not state the impaction: " + window.m_guideReportLabel->text().toStdString());
-        // Two slits: the Le Fort cut and the band's upper edge, both carved.
-        const LeFortBandProfile band = window.guideLeFortBand();
-        require(band.ok && band.kind == LeFortBandKind::Impaction, "the movement is not read as an impaction");
-        const auto isUpper = [&band](const GuideSlot& slot) { return slot.path.points == band.upperCut.points; };
-        const auto chosen = window.guideChosenSlots();
-        require(std::any_of(chosen.begin(), chosen.end(), isUpper) &&
-                    std::any_of(chosen.begin(), chosen.end(), [&](const GuideSlot& slot) { return !isUpper(slot); }),
-                "the guide does not carve both the cut and the band's upper edge");
-        // The drill sites: 16 on sound bone, a sleeve body and a bore at each.
         require(window.m_guidePlan.lefortHoles.size() == 16, "16 drill sites were expected, got " +
                                                                   std::to_string(window.m_guidePlan.lefortHoles.size()));
-        require(window.m_guideMesh && window.m_guideMesh->GetNumberOfPolys() > 0, "the guide was not built");
-        require(!window.m_guideShowFiguresCheck->isChecked(),
-                "the lattice cells' preview cylinders still cover the generated guide");
-        require(window.m_guideBuiltFigures.size() == window.m_guidePlan.figures.size() + 2 * 16,
-                "the guide does not carry one sleeve per drill site");
+        require(!window.m_guideMesh || window.m_guideMesh->GetNumberOfPolys() == 0,
+                "the proposed holes went into a guide before they were accepted");
+        require(window.m_guideAcceptHolesButton->isVisibleTo(&window) && window.m_guideMoveHoleButton->isChecked() &&
+                    !window.m_guideHoleGroups[0].empty(),
+                "the proposed sites cannot be moved and accepted");
 
-        // This synthetic face looks towards +y (a CT's anterior is -y), so the camera looks back along -y.
-        QDir().mkpath(artifactsDir);
-        window.m_guideView->setViewAlongDirection({0.0, 0.0, 12.0}, {0.0, -1.0, 0.0}, {0.0, 0.0, 1.0}, 30.0);
-        window.m_guideView->render();
-        settle();
-        require(window.m_guideView->findChild<QVTKOpenGLNativeWidget*>()->grabFramebuffer().save(
-                    QDir(artifactsDir).filePath(QStringLiteral("impaction-guide.png"))),
-                "the impaction guide screenshot was not written");
-
-        // «Mover orificio»: drag one site 1.5 mm towards the midline, onto the bone.
-        window.m_guideMoveHoleButton->setChecked(true);
-        settle();
-        require(window.m_guideMoveHoleButton->isVisibleTo(&window) && !window.m_guideHoleGroups[0].empty(),
-                "the drill sites cannot be moved");
+        // Drag one site 1.5 mm towards the midline, onto the bone, before accepting.
         const size_t which = window.m_guideHoleGroups[0].front();
         const std::array<double, 3> from = window.m_guidePlan.lefortHoles[which].center;
         const double dx = from[0] > 0.0 ? -1.5 : 1.5;
@@ -1397,9 +1375,37 @@ public:
         require(moved.origin == LeFortHoleOrigin::Manual && std::abs(moved.center[0] - (from[0] + dx)) < 0.3 &&
                     std::abs(moved.center[1]) < 0.3 && std::abs(moved.center[2] - from[2]) < 0.3,
                 "the dragged site did not land on the bone where it was dropped");
-        require(window.m_guideMesh && window.m_guideMesh->GetNumberOfPolys() > 0 &&
-                    window.m_guideBuiltFigures.size() == window.m_guidePlan.figures.size() + 2 * 16,
-                "the guide was not rebuilt round the moved site");
+        require(!window.m_guideMesh || window.m_guideMesh->GetNumberOfPolys() == 0,
+                "moving a proposed site built the guide");
+
+        // «Aceptar orificios»: the guide, with both slits and a sleeve at every site, the moved one where it is.
+        window.m_guideAcceptHolesButton->click();
+        settle();
+        require(window.m_guideMesh && window.m_guideMesh->GetNumberOfPolys() > 0, "the guide was not built");
+        const LeFortBandProfile band = window.guideLeFortBand();
+        require(band.ok && band.kind == LeFortBandKind::Impaction, "the movement is not read as an impaction");
+        const auto isUpper = [&band](const GuideSlot& slot) { return slot.path.points == band.upperCut.points; };
+        const auto chosen = window.guideChosenSlots();
+        require(std::any_of(chosen.begin(), chosen.end(), isUpper) &&
+                    std::any_of(chosen.begin(), chosen.end(), [&](const GuideSlot& slot) { return !isUpper(slot); }),
+                "the guide does not carve both the cut and the band's upper edge");
+        require(!window.m_guideShowFiguresCheck->isChecked(),
+                "the lattice cells' preview cylinders still cover the generated guide");
+        require(window.m_guideBuiltFigures.size() == window.m_guidePlan.figures.size() + 2 * 16,
+                "the guide does not carry one sleeve per drill site");
+        const auto sleeves = PlateCore::SleeveFigures(LeFortHoleCore::DrillSites({moved}), window.guideSleeveParams());
+        require(std::any_of(window.m_guideBuiltFigures.begin(), window.m_guideBuiltFigures.end(),
+                            [&](const GuideFigure& figure) { return figure.matrix == sleeves.front().matrix; }),
+                "the moved site's sleeve is not where it was moved to");
+
+        // This synthetic face looks towards +y (a CT's anterior is -y), so the camera looks back along -y.
+        QDir().mkpath(artifactsDir);
+        window.m_guideView->setViewAlongDirection({0.0, 0.0, 12.0}, {0.0, -1.0, 0.0}, {0.0, 0.0, 1.0}, 30.0);
+        window.m_guideView->render();
+        settle();
+        require(window.m_guideView->findChild<QVTKOpenGLNativeWidget*>()->grabFramebuffer().save(
+                    QDir(artifactsDir).filePath(QStringLiteral("impaction-guide.png"))),
+                "the impaction guide screenshot was not written");
 
         // The project keeps the sites, the moved one included; the band comes back from the movement.
         ProjectState state;
@@ -1545,12 +1551,13 @@ public:
                 require(std::abs(hole.preopCenter[1]) < 0.05, "a segment hole did not go back to the pre-operative face");
         }
 
-        // 4. The guide is created afterwards and contains exactly those holes, with no unrelated guide screws.
+        // 4. The guide made after plates that already exist (the order before 2026-10-05; now the guide comes
+        //    first): it proposes its own sites, and the report says which plate holes they leave out.
         for (auto* tab : window.findChildren<QToolButton*>(QStringLiteral("MT")))
             if (tab->text() == QStringLiteral("GUIAS"))
                 tab->click();
         settle();
-        require(window.m_orthoStep == 8 && !window.m_guidePlateWorkspace && !window.m_guidePlannedView,
+        require(!window.m_guidePlateWorkspace && !window.m_guidePlannedView,
                 "the guide module did not return to the bone before the cut");
         window.m_guideDetailSpin->setValue(0.5); // coarse: this is a wiring test
         GuideFigure legacyFigure;
@@ -1562,6 +1569,12 @@ public:
         window.m_guideGenerateButton->click();
         settle();
         require(window.m_guideWrapMesh && window.m_guidePrepared.ok, "the guide envelope was not built");
+        require(!window.m_guidePlan.lefortHoles.empty(), "the guide proposed no drill sites");
+        require(window.m_guideReportLabel->text().contains(QStringLiteral("no coinciden")),
+                "the report does not warn that the earlier plates' holes are not the guide's: " +
+                    window.m_guideReportLabel->text().toStdString());
+        window.m_guideAcceptHolesButton->click();
+        settle();
         require(!window.m_guidePlan.paint.empty() && window.m_guidePlan.slotPlan.size() >= 2 &&
                     window.m_guidePlan.holes.empty(),
                 "the guide lost its band or kept unrelated drill holes");
@@ -1571,21 +1584,9 @@ public:
                         figure.shape == GuideFigureShape::Cylinder,
                     "the guide kept legacy geometry");
         require(window.m_guideMesh && window.m_guideMesh->GetNumberOfPolys() > 0, "the guide was not built");
-        const auto expectedSleeves = PlateCore::SleeveFigures(predicted, window.guideSleeveParams());
-        require(window.m_guideBuiltFigures.size() == expectedSleeves.size() + window.m_guidePlan.figures.size() &&
-                    expectedSleeves.size() == predicted.size() * 2,
-                "the guide does not contain one sleeve body and one bore per definitive plate hole, plus its cells");
-        // The plan's own figures (the lattice) come first, then the sleeves.
-        const size_t firstSleeve = window.m_guidePlan.figures.size();
-        for (size_t index = 0; index < expectedSleeves.size(); ++index) {
-            const GuideFigure& actual = window.m_guideBuiltFigures[firstSleeve + index];
-            const GuideFigure& expected = expectedSleeves[index];
-            require(actual.shape == expected.shape && actual.operation == expected.operation,
-                    "a guide sleeve changed shape or boolean operation");
-            for (size_t element = 0; element < actual.matrix.size(); ++element)
-                require(std::abs(actual.matrix[element] - expected.matrix[element]) < 1e-9,
-                        "a guide sleeve does not use the plate hole center and vector");
-        }
+        require(window.m_guideBuiltFigures.size() ==
+                    window.m_guidePlan.figures.size() + 2 * window.m_guidePlan.lefortHoles.size(),
+                "the guide does not carry one sleeve body and one bore per drill site, plus its cells");
         require(window.m_guideBuildSection->isVisibleTo(&window) &&
                     window.m_guideBuildButton->text() == QStringLiteral("Reconstruir guía"),
                 "the generated guide cannot be retouched and rebuilt");

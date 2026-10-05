@@ -336,16 +336,17 @@ cmake --build build-linux-core --parallel && ctest --test-dir build-linux-core -
   aperture's floor down standing > 1.5 mm in front of the wall's median depth — ramping up beside the rims
   (never above the floor over the opening) so it overlaps the band. `GuidePlan::lefortHoles` saves the guide's holes (center, axis,
   pillar, side, origin auto/manual) under the optional `lefortHoles` key; support is not saved.
-  UI (`MainWindowGuides.cpp`): once the envelope exists, «Generar guía desde el movimiento» (user's choice,
-  2026-10-05: a button after the envelope; the hand-painted steps stay as the alternative and to retouch it)
-  computes the band, keeps the surgeon's manual holes and proposes the rest (`Propose(ctx, manual)`), lays the
-  guide out with `Layout(..., &band)` and builds it. With plates the guide drills exactly their predictive holes
-  (the plate step comes first; `SplintWorkspaceTests` holds it); without, `DrillSites(lefortHoles)` become the
-  sleeves. The upper slit's pieces follow `band.upperCut`, so `guideChosenSlots` adds them only while the
-  movement still gives that band. The band is drawn red on the bone itself between the two cut surfaces (`BandOnBone`, `kGuideBandActorKey`,
-  `CranioPalette::resection`) and recomputed with the envelope. «Mover orificio» (`kModeMoveHoles`) shows the
+  UI (`MainWindowGuides.cpp`): once the envelope exists, «Proponer orificios» computes the band (drawn red on
+  the bone) and proposes the sites, keeping the surgeon's manual ones (`Propose(ctx, manual)`); they are only
+  markers until «Aceptar orificios y crear guía» (`acceptLeFortHoles`, user's request 2026-10-05) lays the guide
+  out with `Layout(..., &band)` and builds it with `DrillSites(lefortHoles)` as sleeves. The guide comes before
+  the plates: plates designed earlier are only reported (`UnmatchedPlateHoles`); a legacy project with plates
+  and no sites keeps drilling the plates' holes. The upper slit's pieces follow `band.upperCut`, so
+  `guideChosenSlots` adds them only while the movement still gives that band. The band is drawn red on the
+  bone itself between the two cut surfaces (`BandOnBone`, `kGuideBandActorKey`, `CranioPalette::resection`)
+  and recomputed with the envelope. «Mover orificio» (`kModeMoveHoles`) shows the
   sites as draggable markers by verdict; a drop goes through `MoveHole`: Rejected stays put with the reason in
-  the status bar, Warning/Ok moves it (manual) and rebuilds with everything else unchanged.
+  the status bar, Warning/Ok moves it (manual) and, once the guide exists, rebuilds it with everything else unchanged.
 - `GuideSculptCore` is the EDITAR step: Freeform's clay, except the clay is the signed distance grid the guide was
   contoured from. `SculptSession::Reset` bakes the finished guide (`BakeMeshField`, detail spacing, ≥ 3 mm padding so
   material can be added outside it) and the brushes edit that grid: Suavizar `φ += w·λ·(G∗φ − φ)` with a 3×3×3

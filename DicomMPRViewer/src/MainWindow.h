@@ -280,7 +280,8 @@ private:
     void removeGuidePlate();
     void refreshGuidePlates();
     void exportGuidePlates();
-    void generateLeFortGuide(); // the cutting/drilling guide laid out from the Le Fort's movement
+    void generateLeFortGuide(); // the band and the proposed drill sites, from the Le Fort's movement
+    void acceptLeFortHoles();   // puts the sites in the guide and builds it
     // Lays the guide out with these drill sites and the band, builds it and shows the report.
     void layoutLeFortGuide(const std::vector<PredictiveHole>& drillSites, const LeFortBandProfile& band,
                            const QString& holeReport);
@@ -380,6 +381,7 @@ private:
     QPushButton* m_guidePlateExportButton = nullptr;
     QPushButton* m_guideGenerateButton = nullptr;
     QPushButton* m_guideMoveHoleButton = nullptr;
+    QPushButton* m_guideAcceptHolesButton = nullptr;
     vtkSmartPointer<vtkPolyData> m_guideBandMesh;          // the band drawn red on the wall
     std::array<std::vector<size_t>, 3> m_guideHoleGroups;  // marker index → hole, per support verdict
     std::array<double, 3> m_guideHoleDragTarget{0.0, 0.0, 0.0};
