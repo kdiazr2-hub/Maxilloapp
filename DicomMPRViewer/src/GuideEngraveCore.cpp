@@ -74,10 +74,11 @@ vtkSmartPointer<vtkPolyData> TextSolid(const QString& text, double heightMm, dou
     flat->GetBounds(b);
     const double h = std::max(0.02, std::min(0.08, 0.03 * heightMm));
     const double dz = std::min(0.1, 0.25 * (sinkMm + reliefMm));
-    const int nx = static_cast<int>(std::ceil((b[1] - b[0]) / h)) + 3;
-    const int ny = static_cast<int>(std::ceil((b[3] - b[2]) / h)) + 3;
+    const int margin = static_cast<int>(std::ceil(0.1 * heightMm / h)) + 2;
+    const int nx = static_cast<int>(std::ceil((b[1] - b[0]) / h)) + 2 * margin + 1;
+    const int ny = static_cast<int>(std::ceil((b[3] - b[2]) / h)) + 2 * margin + 1;
     const int nz = static_cast<int>(std::ceil((sinkMm + reliefMm) / dz)) + 3;
-    const double x0 = b[0] - h, y0 = b[2] - h, z0 = -sinkMm - dz;
+    const double x0 = b[0] - margin * h, y0 = b[2] - margin * h, z0 = -sinkMm - dz;
     std::vector<unsigned char> inside(static_cast<size_t>(nx) * ny, 0);
     auto ids = vtkSmartPointer<vtkIdList>::New();
     for (vtkIdType cell = 0; cell < flat->GetNumberOfCells(); ++cell) {
@@ -101,6 +102,24 @@ vtkSmartPointer<vtkPolyData> TextSolid(const QString& text, double heightMm, dou
                 if (w0 >= -1e-9 && w1 >= -1e-9 && w2 >= -1e-9)
                     inside[static_cast<size_t>(j) * nx + i] = 1;
             }
+    }
+    // The font's strokes are about an eighth of the height: thinner than the guide's grid, they would vanish
+    // when the guide is contoured. They are thickened to print (a quarter of a millimetre a side at 3 mm).
+    const int bold = std::max(1, static_cast<int>(std::round(0.085 * heightMm / h)));
+    {
+        std::vector<unsigned char> grown(inside.size(), 0);
+        for (int j = 0; j < ny; ++j)
+            for (int i = 0; i < nx; ++i) {
+                if (!inside[static_cast<size_t>(j) * nx + i])
+                    continue;
+                for (int dj = -bold; dj <= bold; ++dj)
+                    for (int di = -bold; di <= bold; ++di) {
+                        const int x = i + di, y = j + dj;
+                        if (x >= 1 && y >= 1 && x < nx - 1 && y < ny - 1 && di * di + dj * dj <= bold * bold)
+                            grown[static_cast<size_t>(y) * nx + x] = 1;
+                    }
+            }
+        inside.swap(grown);
     }
     auto image = vtkSmartPointer<vtkImageData>::New();
     image->SetDimensions(nx, ny, nz);

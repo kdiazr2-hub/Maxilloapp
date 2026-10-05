@@ -37,7 +37,7 @@ Tests (CTest):
 - `GeometryCoreTests`, `BoneCavityFillTests`, `MeshGeneratorTests` — plain C++ executables
 - `MaskToObjectTests` checks exact label extraction, committed cavity filling and immutable input.
 - `ModelWorkflowTests` checks guided MODELOS steps, paired point requirements, fine adjustment and mandatory acceptance.
-- `SplintHeightmapTests`, `SplintDesignTests`, `SplintContourEditTests`, `SplintPreviewSchedulerTests`, `ProjectSerializerTests`, `CompositeBlockTests`, `MeshRepairTests`, `OsteotomyCoreTests`, `CollisionTests`, `ImplicitCoreTests`, `WrapCoreTests`, `GuideBaseTests`, `CutSlotTests`, `GuideDesignTests`, `GuideSculptTests`, `PlateTests`, `LeFortGuideTests`, `LeFortMotionTests`, `LeFortHoleTests`, `GuidePlanTests`, `SegmentationProgressTests` — core tests declared with `add_core_test()`; synthetic arches in `tests/SplintTestGeometry.h`
+- `SplintHeightmapTests`, `SplintDesignTests`, `SplintContourEditTests`, `SplintPreviewSchedulerTests`, `ProjectSerializerTests`, `CompositeBlockTests`, `MeshRepairTests`, `OsteotomyCoreTests`, `CollisionTests`, `ImplicitCoreTests`, `WrapCoreTests`, `GuideBaseTests`, `CutSlotTests`, `GuideDesignTests`, `GuideSculptTests`, `PlateTests`, `LeFortGuideTests`, `LeFortMotionTests`, `LeFortHoleTests`, `RootAnalysisTests`, `GuidePlanTests`, `SegmentationProgressTests` — core tests declared with `add_core_test()`; synthetic arches in `tests/SplintTestGeometry.h`
 - `SplintWorkspaceTests` also covers the composite block flow and the osteotomy wizard (Le Fort I → BSSO → genioplasty)
 - `RepositionWorkspaceTests`, `SplintWorkspaceTests` — instantiate `MainWindow` (declared `friend`), render offscreen, write PNGs to `build/workspace-test-artifacts`
 - `Mesh3DViewInteractionTests` — drives `Mesh3DView` offscreen with synthetic mouse events
@@ -347,6 +347,22 @@ cmake --build build-linux-core --parallel && ctest --test-dir build-linux-core -
   and recomputed with the envelope. «Mover orificio» (`kModeMoveHoles`) shows the
   sites as draggable markers by verdict; a drop goes through `MoveHole`: Rejected stays put with the reason in
   the status bar, Warning/Ok moves it (manual) and, once the guide exists, rebuilds it with everything else unchanged.
+- Le Fort guide assistant (spec `02-DOCS/wiki/sdd/specs/asistente-guia-lefort.md`, user's real case of
+  2026-10-05): the GUIAS panel for Le Fort is four steps, each automatic and editable. 1 · `RootAnalysisCore`
+  measures the upper roots off the «Dientes superiores» object (label 3): apices = height maxima of the teeth
+  along the cut (≥ 4 mm apart, the higher kept), length = apex to the lowest tooth point in its column,
+  distance = `−PathField` to the cut; canine = longest root within 6 mm of the piriform point, first molar = root
+  nearest the pillar point; every apex < 5 mm is flagged. The teeth come from a SIDECAR the segmentation script
+  writes (`<output>_dientes_superiores.nrrd`, DentalSegmentator label 3) and `importUpperTeethSidecar` loads
+  hidden — the labelmap still maps 3 → 5, so the maxilla and the Le Fort segment keep their teeth.
+  2 · `LeFortMotionCore::BandFromHeights` builds the band from the surgeon's four heights (`GuidePlan::bandHeights`,
+  optional key; `guideLeFortBand` prefers them; «Restablecer» clears them). 3 · holes as before. 4 · two guides:
+  `LeFortGuideParams::separateSides` (the UI always sets it) — no bridge, `connectPaint` per side, a second
+  positioning screw at each guide's inner end, `SplitBySide` → `guia_der.stl` / `guia_izq.stl`
+  (`exportLeFortGuideFiles`); `GuideEngraveCore` engraves `caseLabel` (optional key) above the cranial screws and
+  DER / IZQ below the caudal ones: VTK's font rasterised, strokes thickened to print, stacked into a closed solid
+  sitting on the guide's OUTER face (`labelWallMm` = clearance + thickness; on the bone it was buried in the
+  wall), with its own strip of material and the cells under it removed.
 - `GuideSculptCore` is the EDITAR step: Freeform's clay, except the clay is the signed distance grid the guide was
   contoured from. `SculptSession::Reset` bakes the finished guide (`BakeMeshField`, detail spacing, ≥ 3 mm padding so
   material can be added outside it) and the brushes edit that grid: Suavizar `φ += w·λ·(G∗φ − φ)` with a 3×3×3

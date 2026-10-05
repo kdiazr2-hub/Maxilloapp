@@ -762,11 +762,13 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
                 const double half = 0.5 * GuideEngraveCore::TextWidth(text, textHeight);
                 const double mid = 0.5 * (low + high);
                 bool placed = false;
+                // Row by row away from the cut, and along each row from the middle of the side outwards.
+                for (int row = 0; row <= 8 && !placed; ++row)
                 for (int k = 0; k <= static_cast<int>(std::ceil(high - low)) && !placed; ++k) {
                     const double s = mid + ((k % 2) ? 1.0 : -1.0) * std::ceil(0.5 * k);
                     if (s - half < low || s + half > high)
                         continue;
-                    const double beyond = params.fixationOffsetMm + pad + 0.5;
+                    const double beyond = params.fixationOffsetMm + pad + 0.5 + row;
                     const double wanted = cranial ? bandAt(s) + beyond : -beyond;
                     const int bin = std::clamp(static_cast<int>(std::floor((s - lowest) / spacing)), 0, bins - 1);
                     const auto found = byBin.find(bin);
@@ -807,9 +809,11 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
                                          layout.figures.end());
                     for (double t = -half - 1.0; t <= half + 1.0 + 1e-9; t += 1.5)
                         layout.paint.push_back({ontoSurface(field, add(pick->point, scale(reading, t))), pad, false});
-                    layout.figures.push_back(GuideEngraveCore::TextFigure(text, pick->point, reading, outward, textHeight,
+                    // On the guide's outer face, not on the bone: inside the wall the letters would not show.
+                    const Vec3 onFace = add(pick->point, scale(outward, std::max(0.0, params.labelWallMm)));
+                    layout.figures.push_back(GuideEngraveCore::TextFigure(text, onFace, reading, outward, textHeight,
                                                                           params.labelReliefMm));
-                    layout.labels.push_back({text, pick->point, reading, 2.0 * half});
+                    layout.labels.push_back({text, onFace, pick->point, reading, 2.0 * half});
                     placed = true;
                 }
                 if (!placed)

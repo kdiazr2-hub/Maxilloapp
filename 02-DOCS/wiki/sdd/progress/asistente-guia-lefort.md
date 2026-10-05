@@ -1,0 +1,25 @@
+---
+type: progress
+title: Progress — Asistente de guía de corte Le Fort I
+description: Ledger of the four-step assistant tasks, autopilot run of 2026-10-05.
+tags: [sdd, progress, guias, lefort]
+timestamp: 2026-10-05T00:00:00Z
+topic: sdd
+slug: asistente-guia-lefort
+status: in-progress
+---
+
+# Progress — asistente-guia-lefort (autopilot, user's approval 2026-10-05)
+
+| Task | Status | Evidence |
+|------|--------|----------|
+| A3 RootAnalysisCore | complete | RootAnalysisTests 3/3 (red → green; flat root tips gave two peaks → keep the higher within 4 mm) |
+| B1 BandFromHeights + bandHeights/caseLabel | complete | LeFortMotionTests +1, GuidePlanTests +1 |
+| D1 two guides | complete | LeFortGuideTests "two guides, one each side" (2 patches, no material in the nose, ≥ 2 screws each, 2 pieces) |
+| D2 engraving | complete | LeFortGuideTests: text is a closed solid of its width; labels on the guide, clear of screws, stand ≥ 0.35 mm proud (red until the text was put on the outer face, not the bone) |
+| A1 teeth sidecar | complete | Python 25/25 (2 new) |
+| A2 sidecar import | complete | SplintWorkspaceTests impaction flow: hidden «Dientes superiores» object |
+| A4 roots step UI | complete | workspace: 4 teeth named, report shown, overlays |
+| B2 band step UI | complete | workspace: pilar D 4.0 → 3.0 taken; saved and reloaded |
+| D3 guides step UI | complete | workspace: 4 engraved labels, two STL written, no false «piezas» warning |
+| E1 docs + verify | complete in the cloud | Linux core 10/10, full app ctest 30/30 under Xvfb; Windows build + real case pending (user) |

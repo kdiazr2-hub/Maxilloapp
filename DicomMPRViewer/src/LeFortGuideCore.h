@@ -65,6 +65,7 @@ struct LeFortGuideParams
     QString caseLabel;
     double labelHeightMm = 3.0;
     double labelReliefMm = 0.6;
+    double labelWallMm = 2.5;     // the guide's wall (clearance + thickness): the text sits on its outer face
     double dabSpacingMm = 2.5;        // along the cut
     double fixationDiameterMm = 1.5;  // guide fixation screws (user's choice)
     double fixationOffsetMm = 6.0;    // above and below the cut
@@ -81,7 +82,8 @@ struct LeFortGuideParams
 struct LeFortGuideLabel
 {
     QString text;
-    std::array<double, 3> center{0.0, 0.0, 0.0};
+    std::array<double, 3> center{0.0, 0.0, 0.0};  // on the guide's outer face
+    std::array<double, 3> onBone{0.0, 0.0, 0.0};  // the same place on the bone
     std::array<double, 3> reading{1.0, 0.0, 0.0}; // the direction the text reads in
     double widthMm = 0.0;
 };

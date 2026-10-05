@@ -41,6 +41,7 @@
 #include <QIcon>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QLineEdit>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPixmap>
@@ -526,9 +527,46 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
     // Le Fort: once the envelope exists the guide can be laid out from the movement itself — the band an
     // impaction takes out, both slits, the drill sites — instead of painted by hand (user's choice,
     // 2026-10-05). The hand-drawn steps stay as the alternative and to retouch it.
+    // The Le Fort guide assistant (spec asistente-guia-lefort, after the user's own case): 1 roots, 2 band,
+    // 3 holes, 4 guides. Each step is computed and editable.
+    m_guideRootsButton = new QPushButton(tr("1 · Medir raíces y ápices"), panel);
+    m_guideRootsButton->setToolTip(tr("Longitud de las raíces del canino y del primer molar y distancia de cada ápice "
+                                      "al corte. Avisa si algún ápice queda a menos de 5 mm."));
+    connect(m_guideRootsButton, &QPushButton::clicked, this, &MainWindow::analyzeGuideRoots);
+    automaticGuideBox->addWidget(m_guideRootsButton);
+    m_guideRootsLabel = new QLabel(panel);
+    m_guideRootsLabel->setWordWrap(true);
+    m_guideRootsLabel->setStyleSheet(QStringLiteral("color:%1; font-size:11px;").arg(CranioPalette::MutedText));
+    automaticGuideBox->addWidget(m_guideRootsLabel);
+    m_guideBandBox = new QWidget(panel);
+    {
+        auto* bandForm = new QFormLayout(m_guideBandBox);
+        bandForm->setContentsMargins(0, 0, 0, 0);
+        const QString names[] = {tr("Pilar D"), tr("Piriforme D"), tr("Piriforme I"), tr("Pilar I")};
+        for (size_t i = 0; i < m_guideBandSpins.size(); ++i) {
+            auto* spin = new QDoubleSpinBox(m_guideBandBox);
+            spin->setRange(-10.0, 15.0);
+            spin->setDecimals(1);
+            spin->setSingleStep(0.5);
+            spin->setSuffix(QStringLiteral(" mm"));
+            connect(spin, &QDoubleSpinBox::editingFinished, this, &MainWindow::applyGuideBandHeights);
+            m_guideBandSpins[i] = spin;
+            bandForm->addRow(names[i], spin);
+        }
+        auto* reset = new QPushButton(tr("Restablecer (movimiento)"), m_guideBandBox);
+        connect(reset, &QPushButton::clicked, this, &MainWindow::resetGuideBandHeights);
+        bandForm->addRow(reset);
+    }
+    automaticGuideBox->addWidget(new QLabel(tr("2 · Franja a quitar (overlap)"), panel));
+    automaticGuideBox->addWidget(m_guideBandBox);
+    m_guideCaseEdit = new QLineEdit(panel);
+    m_guideCaseEdit->setPlaceholderText(tr("Número de caso (se graba en las guías)"));
+    connect(m_guideCaseEdit, &QLineEdit::editingFinished, this,
+            [this] { m_guidePlan.caseLabel = m_guideCaseEdit->text().trimmed(); });
+    automaticGuideBox->addWidget(m_guideCaseEdit);
     // The holes come first, as markers on the bone the surgeon can move; only «Aceptar orificios» puts them in
     // the guide and builds it (user's request, 2026-10-05).
-    m_guideGenerateButton = new QPushButton(tr("Proponer orificios"), panel);
+    m_guideGenerateButton = new QPushButton(tr("3 · Proponer orificios"), panel);
     m_guideGenerateButton->setToolTip(tr("Calcula la franja de hueso a quitar según el movimiento del Le Fort "
                                          "(impactación o descenso) y propone los orificios en hueso con buen soporte. "
                                          "Todavía no se colocan en la guía: puede moverlos antes de aceptarlos."));
@@ -1961,7 +1999,9 @@ void MainWindow::buildGuideMesh()
     updateGuideUi();
     updateButtonStates();
     QString report = result.report;
-    if (result.pieces > 1)
+    // The assistant's Le Fort guides are two by design, right and left.
+    const int expectedPieces = m_guidePlan.type == GuideType::LeFort && !m_guidePlan.lefortHoles.empty() ? 2 : 1;
+    if (result.pieces > expectedPieces)
         report += QStringLiteral(" ") + tr("Atención: la guía quedó en %1 piezas; suba el margen al borde, acorte "
                                            "las ranuras o revise las figuras restadas.").arg(result.pieces);
     if (m_guideReportLabel)
@@ -1988,6 +2028,19 @@ void MainWindow::exportGuideStl()
 {
     if (!m_guideMesh || m_guideMesh->GetNumberOfPolys() == 0) {
         QMessageBox::warning(this, tr("Guías"), tr("Primero cree la guía."));
+        return;
+    }
+    // The assistant's Le Fort guides are two: one STL each, in a folder.
+    if (m_guidePlan.type == GuideType::LeFort && !m_guidePlan.lefortHoles.empty()) {
+        const QString folder = QFileDialog::getExistingDirectory(this, tr("Carpeta para las guías DER e IZQ"));
+        if (folder.isEmpty())
+            return;
+        QString report;
+        if (!exportLeFortGuideFiles(folder, &report)) {
+            QMessageBox::warning(this, tr("Guías"), report);
+            return;
+        }
+        statusBar()->showMessage(report);
         return;
     }
     const QString suggested = m_guidePlan.type == GuideType::Chin ? QStringLiteral("guia_menton.stl")
@@ -2126,8 +2179,20 @@ void MainWindow::updateGuideUi()
         m_guideMoveHoleButton->setVisible(!m_guidePlateWorkspace && hasWrap && hasSites);
     if (m_guideAcceptHolesButton) {
         m_guideAcceptHolesButton->setVisible(!m_guidePlateWorkspace && hasWrap && hasSites);
-        m_guideAcceptHolesButton->setText(hasGuide ? tr("Reconstruir guía con los orificios")
-                                                   : tr("Aceptar orificios y crear guía"));
+        m_guideAcceptHolesButton->setText(hasGuide ? tr("4 · Reconstruir guías con los orificios")
+                                                   : tr("4 · Aceptar orificios y crear guías"));
+    }
+    const bool leFortAssistant = !m_guidePlateWorkspace && leFort && hasWrap;
+    if (m_guideRootsButton)
+        m_guideRootsButton->setVisible(leFortAssistant);
+    if (m_guideRootsLabel)
+        m_guideRootsLabel->setVisible(leFortAssistant && !m_guideRootsLabel->text().isEmpty());
+    if (m_guideBandBox)
+        m_guideBandBox->setVisible(leFortAssistant);
+    if (m_guideCaseEdit) {
+        m_guideCaseEdit->setVisible(leFortAssistant);
+        if (!m_guideCaseEdit->hasFocus() && m_guideCaseEdit->text() != m_guidePlan.caseLabel)
+            m_guideCaseEdit->setText(m_guidePlan.caseLabel);
     }
     if (m_guidePlateStepLabel) {
         const QString stepText = acceptedPillars < kPlatePillarCount
@@ -3344,6 +3409,7 @@ void MainWindow::generateLeFortGuide()
         m_guideShowWrapCheck->setChecked(false);
     syncGuideView();
     setGuidePointMode(kModeMoveHoles);
+    syncGuideBandSpins();
     const LeFortBandProfile band = guideLeFortBand();
     if (m_guideReportLabel)
         m_guideReportLabel->setText((band.noMotion ? QStringLiteral("⚠ ") : QString()) +
@@ -3369,6 +3435,13 @@ void MainWindow::layoutLeFortGuide(const std::vector<PredictiveHole>& drillSites
     statusBar()->showMessage(tr("Guía de corte: trazando sobre la osteotomía preoperatoria…"));
     LeFortGuideParams params;
     params.sleeveOuterDiameterMm = guideSleeveParams().outerDiameterMm;
+    // Two guides, right and left, engraved with the case number and their side (user's case, 2026-10-05).
+    params.separateSides = true;
+    if (m_guideCaseEdit)
+        m_guidePlan.caseLabel = m_guideCaseEdit->text().trimmed();
+    params.caseLabel = m_guidePlan.caseLabel;
+    params.labelWallMm = (m_guideClearanceSpin ? m_guideClearanceSpin->value() : m_guidePlan.design.base.clearanceMm) +
+                         (m_guideThicknessSpin ? m_guideThicknessSpin->value() : m_guidePlan.design.base.thicknessMm);
     const LeFortGuideLayout layout = LeFortGuideCore::Layout(m_guidePrepared, m_guideWrapMesh, path, drillSites,
                                                              params, band.ok ? &band : nullptr);
     QApplication::restoreOverrideCursor();
@@ -3439,6 +3512,9 @@ LeFortBandProfile MainWindow::guideLeFortBand() const
         none.error = error;
         return none;
     }
+    // The surgeon's own heights, when set, stand for the movement's (step 2 of the assistant).
+    if (m_guidePlan.bandHeights.size() == 4)
+        return LeFortMotionCore::BandFromHeights(guideLeFortPath(), m_guidePlan.bandHeights);
     return LeFortMotionCore::Band(guideLeFortPath(), motion);
 }
 
@@ -3463,7 +3539,7 @@ bool MainWindow::guideLeFortHoleContext(LeFortHoleContext& context, QString* err
     context.preopBone = PlateCore::MakeBoneQuery(cranial, segmentBefore, still, {}, 0.0);
     context.cut = guideLeFortPath();
     context.motion = motion;
-    const LeFortBandProfile band = LeFortMotionCore::Band(context.cut, motion);
+    const LeFortBandProfile band = guideLeFortBand();
     if (band.ok)
         context.band = band;
     context.anterior = LeFortGuideCore::AnteriorDirection(*m_guidePrepared.wrapField, context.cut);
@@ -3641,4 +3717,132 @@ QString MainWindow::guideMotionSummary(bool* moved) const
         .arg(std::abs(vertical), 0, 'f', 1)
         .arg(std::abs(lateral), 0, 'f', 1)
         .arg(rotation, 0, 'f', 1);
+}
+
+void MainWindow::analyzeGuideRoots()
+{
+    if (m_guidePlan.type != GuideType::LeFort)
+        return;
+    // The upper teeth before the cut: the object the segmentation gives them (labels are not moved by REPOSICIÓN).
+    vtkSmartPointer<vtkPolyData> teeth = m_mesh3DView ? m_mesh3DView->meshData(objectActorKey(kUpperTeethLabel)) : nullptr;
+    m_guideRootAnalysis = RootAnalysisCore::Analyze(teeth, guideLeFortPath());
+    if (m_guideRootsLabel)
+        m_guideRootsLabel->setText(m_guideRootAnalysis.ok ? m_guideRootAnalysis.report
+                                                          : QStringLiteral("⚠ ") + m_guideRootAnalysis.error);
+    if (m_guideView) {
+        // Each named root from apex to cusp, and from its apex up to the cut; the apices too close in red.
+        auto points = vtkSmartPointer<vtkPoints>::New();
+        auto lines = vtkSmartPointer<vtkCellArray>::New();
+        const auto segment = [&](const std::array<double, 3>& a, const std::array<double, 3>& b) {
+            const vtkIdType ids[2] = {points->InsertNextPoint(a.data()), points->InsertNextPoint(b.data())};
+            lines->InsertNextCell(2, ids);
+        };
+        if (m_guideRootAnalysis.ok)
+            for (const int index : m_guideRootAnalysis.named) {
+                if (index < 0)
+                    continue;
+                const RootApex& apex = m_guideRootAnalysis.apices[static_cast<size_t>(index)];
+                segment(apex.apex, apex.cusp);
+                segment(apex.apex, apex.onCut);
+            }
+        auto overlay = vtkSmartPointer<vtkPolyData>::New();
+        overlay->SetPoints(points);
+        overlay->SetLines(lines);
+        if (lines->GetNumberOfCells() > 0)
+            m_guideView->setOverlayPolyline(kGuideRootsOverlayKey, overlay, QColor(CranioPalette::Accent), 2.5);
+        else
+            m_guideView->removeOverlay(kGuideRootsOverlayKey);
+        m_guideView->clearPointMarkers();
+        if (m_guideRootAnalysis.ok)
+            for (const RootApex& apex : m_guideRootAnalysis.apices)
+                m_guideView->addPointMarker(apex.apex[0], apex.apex[1], apex.apex[2],
+                                            apex.tooClose ? CranioPalette::resection() : CranioPalette::holeSound());
+        m_guideView->render();
+    }
+    updateGuideUi();
+}
+
+void MainWindow::syncGuideBandSpins()
+{
+    const LeFortBandProfile band = guideLeFortBand();
+    for (size_t i = 0; i < m_guideBandSpins.size(); ++i) {
+        if (!m_guideBandSpins[i])
+            continue;
+        QSignalBlocker blocker(m_guideBandSpins[i]);
+        m_guideBandSpins[i]->setValue(band.ok && i < band.heights.size() ? band.heights[i] : 0.0);
+    }
+}
+
+void MainWindow::applyGuideBandHeights()
+{
+    std::vector<double> heights;
+    for (QDoubleSpinBox* spin : m_guideBandSpins)
+        heights.push_back(spin ? spin->value() : 0.0);
+    // Only an actual change becomes the surgeon's band; the movement's own heights stay the movement's.
+    const LeFortBandProfile current = guideLeFortBand();
+    bool changed = !current.ok || current.heights.size() != heights.size();
+    for (size_t i = 0; !changed && i < heights.size(); ++i)
+        changed = std::abs(current.heights[i] - heights[i]) > 0.05;
+    if (!changed)
+        return;
+    m_guidePlan.bandHeights = heights;
+    refreshGuideBand();
+    syncGuideView();
+    if (m_guideMesh && m_guideMesh->GetNumberOfPolys() > 0 && !m_guidePlan.lefortHoles.empty())
+        acceptLeFortHoles(); // the guides again, with the new band and slit
+    else if (m_guideReportLabel)
+        m_guideReportLabel->setText(guideLeFortBand().report);
+    statusBar()->showMessage(tr("Franja ajustada por el cirujano."), 6000);
+}
+
+void MainWindow::resetGuideBandHeights()
+{
+    m_guidePlan.bandHeights.clear();
+    syncGuideBandSpins();
+    refreshGuideBand();
+    syncGuideView();
+    if (m_guideMesh && m_guideMesh->GetNumberOfPolys() > 0 && !m_guidePlan.lefortHoles.empty())
+        acceptLeFortHoles();
+    statusBar()->showMessage(tr("Franja restablecida desde el movimiento."), 6000);
+}
+
+bool MainWindow::exportLeFortGuideFiles(const QString& folder, QString* report)
+{
+    if (!m_guideMesh || m_guideMesh->GetNumberOfPolys() == 0) {
+        if (report)
+            *report = tr("Primero cree las guías.");
+        return false;
+    }
+    const LeFortGuidePair pair = LeFortGuideCore::SplitBySide(m_guideMesh, guideLeFortPath());
+    QStringList written;
+    for (const auto& [mesh, name] : {std::pair{pair.right, QStringLiteral("guia_der.stl")},
+                                     std::pair{pair.left, QStringLiteral("guia_izq.stl")}}) {
+        if (!mesh || mesh->GetNumberOfPolys() == 0)
+            continue;
+        vtkSmartPointer<vtkPolyData> output = mesh;
+        if (!MeshRepairCore::Analyze(mesh).Valid()) {
+            const MeshRepairResult repaired = MeshRepairCore::Repair(mesh);
+            if (repaired.ok)
+                output = repaired.mesh;
+        }
+        auto writer = vtkSmartPointer<vtkSTLWriter>::New();
+        const QString path = QDir(folder).filePath(name);
+        writer->SetFileName(path.toUtf8().constData());
+        writer->SetInputData(output);
+        writer->SetFileTypeToBinary();
+        if (writer->Write() != 1) {
+            if (report)
+                *report = tr("No se pudo escribir %1.").arg(path);
+            return false;
+        }
+        written << name;
+    }
+    if (written.size() != 2) {
+        if (report)
+            *report = tr("Se esperaban dos guías (DER e IZQ) y salieron %1.").arg(written.size());
+        return false;
+    }
+    if (report)
+        *report = tr("Guías exportadas en %1: %2").arg(folder, written.join(QStringLiteral(", ")));
+    return true;
 }

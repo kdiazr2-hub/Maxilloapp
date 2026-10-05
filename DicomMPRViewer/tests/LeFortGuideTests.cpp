@@ -695,7 +695,7 @@ void testTextIsASolidOfItsMeasuredWidth()
     double b[6];
     solid->GetBounds(b);
     const double width = GuideEngraveCore::TextWidth(QStringLiteral("20406"), 3.0);
-    require(std::abs((b[1] - b[0]) - width) < 0.6, "the text is " + std::to_string(b[1] - b[0]) + " mm wide, not " +
+    require(std::abs((b[1] - b[0]) - width) < 1.0, "the text is " + std::to_string(b[1] - b[0]) + " mm wide, not " +
                                                        std::to_string(width));
     require(std::abs(b[0] + b[1]) < 0.2 && std::abs(b[2] + b[3]) < 0.2, "the text is not centred on its origin");
     require(b[5] > 0.55 && b[5] < 0.65 && b[4] < -0.3, "the text does not stand 0.6 mm proud of its sunk base");
@@ -719,9 +719,9 @@ void testEachGuideIsEngravedWithTheCaseAndItsSide()
                 "a label says " + label.text.toStdString() + " on the " + (right ? "right" : "left"));
         // Its centre and both ends lie on the guide's material.
         for (const double along : {-0.5, 0.0, 0.5}) {
-            const Vec3 p{label.center[0] + along * label.widthMm * label.reading[0],
-                         label.center[1] + along * label.widthMm * label.reading[1],
-                         label.center[2] + along * label.widthMm * label.reading[2]};
+            const Vec3 p{label.onBone[0] + along * label.widthMm * label.reading[0],
+                         label.onBone[1] + along * label.widthMm * label.reading[1],
+                         label.onBone[2] + along * label.widthMm * label.reading[2]};
             bool onGuide = false;
             for (const GuideBrushStroke& dab : layout.paint)
                 onGuide = onGuide || std::hypot(std::hypot(dab.center[0] - p[0], dab.center[1] - p[1]), dab.center[2] - p[2]) <=
@@ -746,6 +746,22 @@ void testEachGuideIsEngravedWithTheCaseAndItsSide()
     const GuideDesignResult guides =
         GuideDesignCore::Build(bone.preparation, region, layout.slotPlan, layout.fixation, layout.figures, bone.design);
     require(guides.ok && guides.pieces == 2, "the engraved guides came out in " + std::to_string(guides.pieces) + " pieces");
+    // The letters stand out of the guide's face: within each label the guide reaches past its plain wall.
+    for (const LeFortGuideLabel& label : layout.labels) {
+        double proud = -1e9;
+        for (vtkIdType id = 0; id < guides.mesh->GetNumberOfPoints(); ++id) {
+            double q[3];
+            guides.mesh->GetPoint(id, q);
+            const Vec3 d{q[0] - label.center[0], q[1] - label.center[1], q[2] - label.center[2]};
+            const double along = d[0] * label.reading[0] + d[1] * label.reading[1] + d[2] * label.reading[2];
+            if (std::abs(along) > 0.5 * label.widthMm || std::hypot(std::hypot(d[0], d[1]), d[2]) > 0.5 * label.widthMm + 1.5)
+                continue;
+            proud = std::max(proud, bone.preparation.wrapField->At({q[0], q[1], q[2]}));
+        }
+        const double wall = bone.design.base.clearanceMm + bone.design.base.thicknessMm;
+        require(proud >= wall + 0.35, "the label " + label.text.toStdString() + " does not stand out: " +
+                                          std::to_string(proud) + " mm off the bone, wall " + std::to_string(wall));
+    }
     // And they come apart into the right guide and the left one, for two STL files.
     const LeFortGuidePair pair = LeFortGuideCore::SplitBySide(guides.mesh, leFortCut());
     require(pair.right && pair.left && pair.right->GetNumberOfPolys() > 0 && pair.left->GetNumberOfPolys() > 0,

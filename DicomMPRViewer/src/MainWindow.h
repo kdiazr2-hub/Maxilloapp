@@ -13,6 +13,7 @@
 #include "GuidePlanCore.h"
 #include "GuideSculptCore.h"
 #include "OsteotomyCore.h"
+#include "RootAnalysisCore.h"
 #include <QPointer>
 #include "CompositeBlockCore.h"
 #include "RegistrationResult.h"
@@ -64,6 +65,7 @@ class QEvent;
 class QKeyEvent;
 class QPushButton;
 class QDoubleSpinBox;
+class QLineEdit;
 class QRadioButton;
 class QTableWidget;
 class QTabWidget;
@@ -283,6 +285,12 @@ private:
     void importUpperTeethSidecar(const QString& outputSegmentationPath); // hidden «Dientes superiores» object
     void generateLeFortGuide(); // the band and the proposed drill sites, from the Le Fort's movement
     void acceptLeFortHoles();   // puts the sites in the guide and builds it
+    // The Le Fort guide assistant's other steps (spec asistente-guia-lefort): roots, editable band.
+    void analyzeGuideRoots();
+    bool exportLeFortGuideFiles(const QString& folder, QString* report = nullptr); // guia_der.stl + guia_izq.stl
+    void applyGuideBandHeights();
+    void resetGuideBandHeights();
+    void syncGuideBandSpins();
     // Lays the guide out with these drill sites and the band, builds it and shows the report.
     void layoutLeFortGuide(const std::vector<PredictiveHole>& drillSites, const LeFortBandProfile& band,
                            const QString& holeReport);
@@ -383,6 +391,12 @@ private:
     QPushButton* m_guideGenerateButton = nullptr;
     QPushButton* m_guideMoveHoleButton = nullptr;
     QPushButton* m_guideAcceptHolesButton = nullptr;
+    QPushButton* m_guideRootsButton = nullptr;
+    QLabel* m_guideRootsLabel = nullptr;
+    QWidget* m_guideBandBox = nullptr;
+    std::array<QDoubleSpinBox*, 4> m_guideBandSpins{};
+    QLineEdit* m_guideCaseEdit = nullptr;
+    RootAnalysis m_guideRootAnalysis;
     vtkSmartPointer<vtkPolyData> m_guideBandMesh;          // the band drawn red on the wall
     std::array<std::vector<size_t>, 3> m_guideHoleGroups;  // marker index → hole, per support verdict
     std::array<double, 3> m_guideHoleDragTarget{0.0, 0.0, 0.0};

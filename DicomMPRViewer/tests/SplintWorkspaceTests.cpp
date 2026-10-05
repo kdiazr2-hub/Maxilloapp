@@ -2,6 +2,7 @@
 #include "MPRView.h"
 #include "Mesh3DView.h"
 #include "MeshRepairCore.h"
+#include "NrrdVolumeExporter.h"
 #include "ObjectLabels.h"
 #include "ProjectSerializer.h"
 #include "SplintContourEditCore.h"
@@ -24,6 +25,7 @@
 #include <QFont>
 #include <QImage>
 #include <QLabel>
+#include <QLineEdit>
 #include <QPainter>
 #include <QPushButton>
 #include <QSurfaceFormat>
@@ -1346,6 +1348,51 @@ public:
         settle();
         require(window.m_guideGenerateButton->isVisibleTo(&window),
                 "the holes cannot be proposed from the movement once the envelope exists");
+
+        // Step 1 — roots. The segmentation's upper teeth arrive as their own file next to the labelmap: root
+        // columns 3 mm wide with cusps at z −10 below the segment's front wall (canines at x ±11 the longest).
+        QTemporaryDir segmentationDir;
+        require(segmentationDir.isValid(), "no temporary folder");
+        {
+            auto teeth = vtkSmartPointer<vtkImageData>::New();
+            teeth->SetOrigin(-25.0, -3.0, -12.0);
+            teeth->SetSpacing(0.5, 0.5, 0.5);
+            teeth->SetDimensions(101, 9, 41);
+            teeth->AllocateScalars(VTK_UNSIGNED_CHAR, 1);
+            auto* v = static_cast<unsigned char*>(teeth->GetScalarPointer());
+            const struct { double x, apex; } roots[] = {{3.0, 0.0}, {11.0, 4.0}, {16.0, 1.0}, {22.0, -3.0}};
+            for (int k = 0; k < 41; ++k)
+                for (int j = 0; j < 9; ++j)
+                    for (int i = 0; i < 101; ++i) {
+                        const double x = -25.0 + 0.5 * i, z = -12.0 + 0.5 * k;
+                        bool in = false;
+                        for (const auto& root : roots)
+                            in = in || (std::abs(std::abs(x) - root.x) <= 1.5 && z >= -10.0 && z <= root.apex);
+                        v[(static_cast<size_t>(k) * 9 + j) * 101 + i] = in ? 1 : 0;
+                    }
+            QString error;
+            require(NrrdVolumeExporter::exportToFile(teeth, QDir(segmentationDir.path()).filePath(
+                                                                QStringLiteral("output_segmentation_dientes_superiores.nrrd")),
+                                                     &error),
+                    "the teeth file could not be written: " + error.toStdString());
+        }
+        window.importUpperTeethSidecar(QDir(segmentationDir.path()).filePath(QStringLiteral("output_segmentation.nrrd")));
+        require(window.objectEntryExists(kUpperTeethLabel) && !window.objectEntryVisible(kUpperTeethLabel),
+                "the upper teeth did not arrive as a hidden object");
+        require(window.m_guideRootsButton->isVisibleTo(&window), "the roots step is not offered");
+        window.m_guideRootsButton->click();
+        settle();
+        require(window.m_guideRootAnalysis.ok, "the roots were not measured: " + window.m_guideRootAnalysis.error.toStdString());
+        for (const int named : window.m_guideRootAnalysis.named)
+            require(named >= 0, "a canine or first molar was not identified: " +
+                                    window.m_guideRootAnalysis.report.toStdString());
+        require(window.m_guideRootsLabel->text().contains(QStringLiteral("canino")),
+                "the roots are not reported: " + window.m_guideRootsLabel->text().toStdString());
+
+        // The case number for the engraving.
+        window.m_guideCaseEdit->setText(QStringLiteral("20406"));
+        emit window.m_guideCaseEdit->editingFinished();
+        require(window.m_guidePlan.caseLabel == QStringLiteral("20406"), "the case number was not taken");
         window.m_guideGenerateButton->click();
         settle();
 
@@ -1363,6 +1410,16 @@ public:
         require(window.m_guideAcceptHolesButton->isVisibleTo(&window) && window.m_guideMoveHoleButton->isChecked() &&
                     !window.m_guideHoleGroups[0].empty(),
                 "the proposed sites cannot be moved and accepted");
+
+        // Step 2 — the surgeon lowers the band at pilar D from the movement's 4.0 mm to 3.0 mm.
+        require(std::abs(window.m_guideBandSpins[0]->value() - 4.0) < 0.05, "the band's heights are not shown");
+        window.m_guideBandSpins[0]->setValue(3.0);
+        window.applyGuideBandHeights();
+        settle();
+        require(window.m_guidePlan.bandHeights.size() == 4 && std::abs(window.m_guidePlan.bandHeights[0] - 3.0) < 1e-9 &&
+                    std::abs(window.guideLeFortBand().heights[0] - 3.0) < 1e-9 &&
+                    std::abs(window.guideLeFortBand().heights[3] - 4.0) < 0.05,
+                "the surgeon's band height was not taken");
 
         // Drag one site 1.5 mm towards the midline, onto the bone, before accepting.
         const size_t which = window.m_guideHoleGroups[0].front();
@@ -1384,6 +1441,19 @@ public:
         require(window.m_guideMesh && window.m_guideMesh->GetNumberOfPolys() > 0, "the guide was not built");
         const LeFortBandProfile band = window.guideLeFortBand();
         require(band.ok && band.kind == LeFortBandKind::Impaction, "the movement is not read as an impaction");
+        // Step 4 — two guides, right and left, engraved, one STL each.
+        require(!window.m_guideReportLabel->text().contains(QStringLiteral("Atención")),
+                "two guides were reported as a broken one: " + window.m_guideReportLabel->text().toStdString());
+        int labels = 0;
+        for (const GuideFigure& figure : window.m_guidePlan.figures)
+            labels += figure.operation == GuideFigureOperation::Add && figure.shape == GuideFigureShape::Mesh ? 1 : 0;
+        require(labels == 4, "the guides are not engraved with the case number and their side: " + std::to_string(labels));
+        QTemporaryDir stlDir;
+        QString exportReport;
+        require(stlDir.isValid() && window.exportLeFortGuideFiles(stlDir.path(), &exportReport), exportReport.toStdString());
+        require(QFileInfo::exists(QDir(stlDir.path()).filePath(QStringLiteral("guia_der.stl"))) &&
+                    QFileInfo::exists(QDir(stlDir.path()).filePath(QStringLiteral("guia_izq.stl"))),
+                "the two guides were not written");
         const auto isUpper = [&band](const GuideSlot& slot) { return slot.path.points == band.upperCut.points; };
         const auto chosen = window.guideChosenSlots();
         require(std::any_of(chosen.begin(), chosen.end(), isUpper) &&
@@ -1406,6 +1476,17 @@ public:
         require(window.m_guideView->findChild<QVTKOpenGLNativeWidget*>()->grabFramebuffer().save(
                     QDir(artifactsDir).filePath(QStringLiteral("impaction-guide.png"))),
                 "the impaction guide screenshot was not written");
+        for (const GuideFigure& figure : window.m_guidePlan.figures)
+            if (figure.operation == GuideFigureOperation::Add && figure.shape == GuideFigureShape::Mesh) {
+                window.m_guideView->setViewAlongDirection({figure.matrix[3], figure.matrix[7], figure.matrix[11]},
+                                                          {-figure.matrix[2], -figure.matrix[6], -figure.matrix[10]},
+                                                          {figure.matrix[1], figure.matrix[5], figure.matrix[9]}, 9.0);
+                window.m_guideView->render();
+                settle();
+                window.m_guideView->findChild<QVTKOpenGLNativeWidget*>()->grabFramebuffer().save(
+                    QDir(artifactsDir).filePath(QStringLiteral("impaction-guide-label.png")));
+                break;
+            }
 
         // The project keeps the sites, the moved one included; the band comes back from the movement.
         ProjectState state;
@@ -1416,6 +1497,9 @@ public:
         settle();
         reopened.restoreGuidePlan(state);
         require(reopened.m_guidePlan.lefortHoles.size() == 16, "the drill sites did not survive the project");
+        require(reopened.m_guidePlan.bandHeights == window.m_guidePlan.bandHeights &&
+                    reopened.m_guidePlan.caseLabel == QStringLiteral("20406"),
+                "the band heights or the case number did not survive the project");
         const LeFortProposedHole& kept = reopened.m_guidePlan.lefortHoles[which];
         require(kept.origin == LeFortHoleOrigin::Manual && std::abs(kept.center[0] - moved.center[0]) < 1e-6 &&
                     std::abs(kept.center[2] - moved.center[2]) < 1e-6,

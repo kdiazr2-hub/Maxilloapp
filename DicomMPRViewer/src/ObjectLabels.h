@@ -55,6 +55,7 @@ inline constexpr int kOrientationBoneReferenceKey = -160;
 // MODELOS composite contour wall (points method).
 inline constexpr int kCompositeContourActorKey = -522;
 inline constexpr int kGuideRegionOverlayKey = 3;     // marked region outline in GUIAS
+inline constexpr int kGuideRootsOverlayKey = 4;      // root lengths and apex-to-cut lines in GUIAS
 inline constexpr int kGuideWrapActorKey = -540;      // translucent envelope while designing
 inline constexpr int kGuideBandActorKey = -545;      // Le Fort impaction band to take out, red on the anterior wall
 inline constexpr int kGuidePlateActorBase = -640;    // custom Le Fort plates in GUIAS, one per plate, counting down
