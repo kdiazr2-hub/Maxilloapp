@@ -138,3 +138,10 @@ Context  — on the surgeon's maxilla «Proponer orificios» gave 0 holes: the a
            everywhere, and only Ok sites were proposed (the earlier "odd places" were the few thick spots).
 Decision — Warning sites are proposed after Ok ones; an empty pillar reports the dominant refusal; the guide can
            be created without plate holes. Supersedes "never a weaker site" of guia-lefort-por-movimiento.
+
+## 2026-10-05 — Holes on the pillars; roots warn; thicker segmented bone  (feature: asistente-guia-lefort, real case)
+Context  — the surgeon wants two holes above and two below the cut at each nasomaxillary and zygomaticomaxillary
+           pillar; the root rule left the pillars below the cut empty; the left guide stopped short of the pillar.
+Decision — holes ranked by nearness to the pillar line within ±5 mm; root proximity becomes a warning
+           (supersedes "refused, not warned"); the aperture is only gaps inside the piriform points; envelope
+           closing 2.5 mm; the segmentation grows thin walls into ≥ 150 HU and seals non-air pinholes (1.5 mm).
