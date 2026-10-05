@@ -29,3 +29,7 @@ status: in-progress
 | F4 roots | complete | LeFortHoleTests "a drill near a root is refused" (red → green: the drill path to 6 mm keeps 1 mm from the teeth field, reason «raíz»); workspace: 12 sites, none over the synthetic roots |
 | F5 roots measured per tooth, apex → osteotomy | complete | RootAnalysisTests "the molars behind do not stand in for the first" (red: took the high third molar, as on the real case → green with the 2D height map), "the report states apex to osteotomy" |
 | F6 no proposals on a real maxilla | complete | LeFortHoleTests "a thin pillar is proposed with a warning" and "an empty pillar says what blocked it" (red → green); «Aceptar» shown after an empty proposal |
+| F7 roots: first molar found, values on the view | complete | RootAnalysisTests "a first molar ten millimetres from the pillar is found" (red: took the canine → green); workspace: 4 labels |
+| F8 holes 2+2 on each pillar, roots warn | complete | LeFortHoleTests "two above and two below in a column on each pillar", "roots do not leave a pillar without holes below" (red → green) |
+| F9 guide to the pillar past a perforation | complete | LeFortGuideTests "a perforation is not the aperture" (red: left guide x 22–25 only → green) |
+| F10 thicker segmented bone | complete | Python ThinBoneTests 4/4 (pinhole sealed at 1.5 mm, air opening kept, other labels untouched) |
