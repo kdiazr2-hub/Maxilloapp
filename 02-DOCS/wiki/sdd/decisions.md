@@ -113,3 +113,15 @@ Decision — (user) one guide, each side pillar nasomaxilar → pillar maxilomal
            piriform aperture clear of the ANS; band above the cut, two thin slits; holes proposed as markers and
            put into the guide with «Aceptar orificios»; Guías before Placa personalizada, the plates later use
            the guide's holes. Supersedes "With plates, the guide drills the plates' holes".
+
+## 2026-10-05 — Upper teeth as a sidecar, not a label change  (feature: asistente-guia-lefort, task: A1)
+Context  — the root analysis needs the upper teeth apart; the labelmap maps them into the maxilla (3 → 5).
+Options  — new label in the labelmap / a second file next to it.
+Decision — a second file (`<output>_dientes_superiores.nrrd`) loaded as a hidden object.
+Why      — taking the teeth out of label 5 would take them out of the maxilla and the Le Fort segment, which
+           must move with its teeth through REPOSICIÓN and the splints.
+
+## 2026-10-05 — Labels bring their own material  (feature: asistente-guia-lefort, task: D2)
+Context  — the band's rows next to the slits are full of positioning screws and sleeves; there was no room.
+Decision — the case number goes above the cranial screws and DER/IZQ below the caudal ones, each on a strip of
+           added material joined to the guide, as the user's printed guides are taller where the number is.
