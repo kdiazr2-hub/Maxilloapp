@@ -1389,6 +1389,8 @@ public:
         require(window.m_guideRootsLabel->text().contains(QStringLiteral("Canino")) &&
                     window.m_guideRootsLabel->text().contains(QStringLiteral("osteotomía")),
                 "the roots are not reported: " + window.m_guideRootsLabel->text().toStdString());
+        require(window.m_guideView->overlayLabelCount(kGuideRootsOverlayKey) == 4,
+                "the four apex-to-osteotomy measurements are not labelled on the view");
 
         // The band is known once the envelope is: its heights are shown before anything is proposed (they read
         // 0.0 on the user's case).
@@ -1410,18 +1412,23 @@ public:
         require(window.m_guideReportLabel->text().contains(QStringLiteral("Impactación")) &&
                     window.m_guideReportLabel->text().contains(QStringLiteral("4.0 mm")),
                 "the report does not state the impaction: " + window.m_guideReportLabel->text().toStdString());
-        // 16 sites, less the four below the cut that only had root under them: no screw goes into a tooth.
-        require(window.m_guidePlan.lefortHoles.size() == 12, "12 drill sites were expected, got " +
-                                                                  std::to_string(window.m_guidePlan.lefortHoles.size()));
+        // Two above and two below at every pillar: 16, less what the report says is missing. Below the cut the
+        // pillars stand over the roots; those sites are kept, flagged with the root (user's request, 2026-10-05).
+        require(window.m_guidePlan.lefortHoles.size() + static_cast<size_t>(window.m_guideLeFortMissing.size()) >= 16 &&
+                    window.m_guidePlan.lefortHoles.size() >= 14,
+                "16 drill sites were expected, got " + std::to_string(window.m_guidePlan.lefortHoles.size()) + " and " +
+                    std::to_string(window.m_guideLeFortMissing.size()) + " gaps");
         for (const LeFortProposedHole& hole : window.m_guidePlan.lefortHoles)
             for (const auto& [rootX, apex] : {std::pair{3.0, 0.0}, {11.0, 4.0}, {16.0, 1.0}, {22.0, -3.0}}) {
                 // From the site to the root column (1.5 mm round its axis, up to its apex), within the
                 // half-millimetre voxels the teeth were segmented on.
                 const double across = std::max(0.0, std::abs(std::abs(hole.center[0]) - rootX) - 1.5);
                 const double above = std::max(0.0, hole.center[2] - apex);
-                require(std::hypot(across, above) >= 1.0 - 0.6,
-                        "a site was proposed over a root at x " + std::to_string(hole.center[0]) + ", z " +
-                            std::to_string(hole.center[2]));
+                if (std::hypot(across, above) < 1.0 - 0.6)
+                    require(hole.support.verdict == LeFortSupportVerdict::Warning &&
+                                hole.support.reason.contains(QStringLiteral("raíz")),
+                            "a site over a root is not flagged at x " + std::to_string(hole.center[0]) + ", z " +
+                                std::to_string(hole.center[2]));
             }
         require(!window.m_guideMesh || window.m_guideMesh->GetNumberOfPolys() == 0,
                 "the proposed holes went into a guide before they were accepted");

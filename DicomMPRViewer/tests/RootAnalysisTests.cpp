@@ -136,6 +136,28 @@ void testTheMolarsBehindDoNotStandInForTheFirst()
         require(std::abs(named(analysis, tooth).cutDistanceMm - 3.0) <= 0.3, "a canine moved");
 }
 
+// The pillar point is clicked on the buttress, outside and behind the alveolus: the first molar's mesiobuccal
+// root can be 10 mm from it seen from above, and it is still the first molar (user's case, 2026-10-05: one first
+// molar was not identified at all).
+void testAFirstMolarTenMillimetresFromThePillarIsFound()
+{
+    auto append = vtkSmartPointer<vtkAppendPolyData>::New();
+    for (const double side : {-1.0, 1.0}) {
+        for (const Root& root : {Root{3.0, 2.0}, Root{11.0, 6.0}}) {
+            const double x = side * root.x;
+            append->AddInputData(boxMesh({x - 1.5, x + 1.5, -1.5, 1.5, -12.0, root.apex}, false, false));
+        }
+        const double x = side * 27.0;
+        append->AddInputData(boxMesh({x - 1.5, x + 1.5, 1.5, 4.5, -12.0, -1.0}, false, false));
+    }
+    append->Update();
+    const RootAnalysis analysis = RootAnalysisCore::Analyze(append->GetOutput(), cut());
+    require(analysis.ok, analysis.error.toStdString());
+    for (const RootTooth tooth : {RootTooth::FirstMolarRight, RootTooth::FirstMolarLeft})
+        require(std::abs(std::abs(named(analysis, tooth).apex[0]) - 27.0) <= 1.6,
+                RootAnalysisCore::ToothName(tooth).toStdString() + " is not the molar at x 27");
+}
+
 // The report gives, for each canine and first molar, how far its apex is from the osteotomy, and says plainly
 // when the cut runs through the root.
 void testTheReportStatesApexToOsteotomy()
@@ -168,6 +190,7 @@ int main()
         {"no teeth is an error, not a crash", testNoTeethIsAnErrorNotACrash},
         {"the molars behind do not stand in for the first", testTheMolarsBehindDoNotStandInForTheFirst},
         {"the report states apex to osteotomy", testTheReportStatesApexToOsteotomy},
+        {"a first molar ten millimetres from the pillar is found", testAFirstMolarTenMillimetresFromThePillarIsFound},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {

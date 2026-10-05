@@ -374,6 +374,47 @@ def fill_bone_interiors(mask, prediction, intensities, spacing_zyx, source_label
     return result
 
 
+def thicken_thin_bone(mask, prediction, intensities, spacing_zyx, grow_mm=0.6, grow_hu=150.0,
+                      seal_mm=1.5, seal_min_hu=-200.0):
+    """Recover the thin walls DentalSegmentator under-segments and seal the pinholes they leave.
+
+    The anterior maxilla and the sinus walls are often under a millimetre thick, so partial volume keeps them
+    below the network's threshold: the segmented bone came out thin and perforated, and the guide's envelope
+    fell into those holes (user's report, 2026-10-05). Two bounded steps, in millimetres:
+    - grow: up to `grow_mm` outwards, only into unlabelled voxels at least `grow_hu` (bone, not soft tissue);
+    - seal: a closing of `seal_mm` that only adds unlabelled voxels denser than air (`seal_min_hu`), so a real
+      opening to the sinus or the nose stays open.
+    """
+    import scipy.ndimage as ndi
+
+    if not np.any(mask):
+        return mask
+    if mask.shape != prediction.shape or mask.shape != intensities.shape:
+        raise ValueError("El hueso y la imagen deben compartir la misma cuadricula.")
+    free = prediction == 0
+    result = mask.copy()
+    if grow_mm > 0:
+        steps = max(1, int(round(grow_mm / max(1e-6, min(spacing_zyx)))))
+        dense = free & (intensities >= grow_hu)
+        struct = ndi.generate_binary_structure(3, 1)
+        for _ in range(steps):
+            grown = ndi.binary_dilation(result, structure=struct) & dense & ~result
+            if not np.any(grown):
+                break
+            result |= grown
+    if seal_mm > 0:
+        radius = [max(1, int(round(seal_mm / max(1e-6, s)))) for s in spacing_zyx]
+        zz, yy, xx = np.ogrid[-radius[0]:radius[0] + 1, -radius[1]:radius[1] + 1, -radius[2]:radius[2] + 1]
+        ball = (zz / radius[0]) ** 2 + (yy / radius[1]) ** 2 + (xx / radius[2]) ** 2 <= 1.0
+        padded = np.pad(result, [(r, r) for r in radius])
+        closed = ndi.binary_erosion(ndi.binary_dilation(padded, structure=ball), structure=ball)
+        closed = closed[tuple(slice(r, -r) for r in radius)]
+        result |= closed & free & np.isfinite(intensities) & (intensities > seal_min_hu)
+    added = int(np.count_nonzero(result & ~mask))
+    log(f"    [Hueso] Engrosado de paredes finas: {added} voxeles.")
+    return result
+
+
 def upper_teeth_sidecar_path(output_path):
     """Where the upper teeth go, next to the labelmap: <name>_dientes_superiores<ext>."""
     path = Path(output_path)
@@ -470,6 +511,17 @@ def remap_prediction(input_path, prediction_path, output_path, target, seed=None
         mask &= (arr == 0) | (arr == label_value)
         if label_value in (1, 2):
             image, intensities = source_image()
+
+            def mm_env(name, default_value):
+                try:
+                    return max(0.0, float(os.environ.get(name, str(default_value)).strip()))
+                except Exception:
+                    return default_value
+
+            mask = thicken_thin_bone(mask, arr, intensities, image.GetSpacing()[::-1],
+                                     grow_mm=mm_env("DENTALSEGMENTATOR_BONE_GROW_MM", 0.6),
+                                     grow_hu=float(os.environ.get("DENTALSEGMENTATOR_BONE_GROW_HU", "150")),
+                                     seal_mm=mm_env("DENTALSEGMENTATOR_BONE_SEAL_MM", 1.5))
             mask = fill_bone_interiors(mask, arr, intensities, image.GetSpacing()[::-1], label_value)
         return mask
 

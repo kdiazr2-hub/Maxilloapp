@@ -13,6 +13,7 @@
 #include <vtkSmartPointer.h>
 
 class vtkActor;
+class vtkProp;
 class vtkActor2D;
 class vtkCallbackCommand;
 class vtkCellPicker;
@@ -104,6 +105,15 @@ public:
     void removeOverlay(int key);
     void clearOverlays();
     bool hasOverlay(int key) const { return m_overlayActors.count(key) > 0; }
+    // Text that faces the camera at points of the scene (a measurement's value beside its line), drawn on top.
+    // An empty list removes the key's labels.
+    void setOverlayLabels(int key, const std::vector<std::pair<std::array<double, 3>, QString>>& labels,
+                          const QColor& color);
+    int overlayLabelCount(int key) const
+    {
+        const auto it = m_overlayLabels.find(key);
+        return it == m_overlayLabels.end() ? 0 : static_cast<int>(it->second.size());
+    }
 
     // Parallel-projection camera looking along `direction` at `focal`;
     // parallelScale <= 0 fits the scene.
@@ -253,6 +263,7 @@ private:
     QPointF m_rightPressPosition;
 
     std::map<int, vtkSmartPointer<vtkActor>> m_overlayActors;
+    std::map<int, std::vector<vtkSmartPointer<vtkProp>>> m_overlayLabels;
 
     bool m_planeDragActive = false;
     bool m_planeDragging = false;

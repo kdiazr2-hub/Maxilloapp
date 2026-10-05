@@ -353,9 +353,10 @@ cmake --build build-linux-core --parallel && ctest --test-dir build-linux-core -
   seen FROM ABOVE (a 2D grid over the horizontal plane, triangles sampled every half cell, flat tops merged to
   their middle, ≥ 4 mm apart, the higher kept) — a grid along the cut alone stacked the molars behind one
   another and the "first molar" took an unerupted third molar's apex above the cut (user's case, 2026-10-05);
-  distance = `−PathField` to the cut; canine = longest root within 8 mm (horizontal) of the piriform point,
-  first molar = root nearest the pillar point (≤ 8 mm); the report and the overlay give only apex → osteotomy
-  for those four («por encima … el corte cruza la raíz» when negative). The teeth come from a SIDECAR the segmentation script
+  distance = `−PathField` to the cut; canine = longest root within 12 mm (horizontal) of the piriform point,
+  first molar = root nearest the pillar point (≤ 14 mm) among those farther from the midline than that side's
+  canine; the report, the overlay lines and their labels (`Mesh3DView::setOverlayLabels`, billboard text) give
+  only apex → osteotomy for those four («el corte cruza la raíz» when negative). The teeth come from a SIDECAR the segmentation script
   writes (`<output>_dientes_superiores.nrrd`, DentalSegmentator label 3) and `importUpperTeethSidecar` loads
   hidden — the labelmap still maps 3 → 5, so the maxilla and the Le Fort segment keep their teeth.
   Real case (2026-10-05): `BandOnBone` only draws within 6 mm (across the vertical) of the pillar–piriform pieces
@@ -363,8 +364,14 @@ cmake --build build-linux-core --parallel && ctest --test-dir build-linux-core -
   searches outward of a piriform rim and drops sites whose drill axis is > 60° off the anterior (lateral zygoma),
   proposes thin bone (Warning) after sound bone instead of nothing, and an empty pillar's reason is the refusal
   most of its sites got; «Aceptar» also shows after an empty proposal (guide with positioning screws only);
-  `Support` refuses a drill path that comes within 1 mm of `LeFortHoleContext::teeth` (BakeMeshField of label 3)
-  to 6 mm deep. The band spinboxes are synced whenever the band is recomputed.
+  holes are 2 above + 2 below ON each pillar (user's rule, 2026-10-05): ±5 mm, ranked tier (Ok, thin, near a
+  root) → nearest the pillar line → thickest; a drill path within 1 mm of `LeFortHoleContext::teeth`
+  (BakeMeshField of label 3) to 6 mm deep is a WARNING naming the root (`nearRoot`), not a refusal.
+  The aperture is only the wall-less gaps whose middle lies inside the piriform points (a perforation in a
+  lateral wall cut the left guide back short of the pillar). The envelope's gap closing defaults to 2.5 mm and
+  Le Fort projects saved with less are raised on reopening; the segmentation script thickens bone
+  (`thicken_thin_bone`: grow ≤ 0.6 mm into ≥ 150 HU, seal 1.5 mm into anything denser than air;
+  `DENTALSEGMENTATOR_BONE_GROW_MM/_GROW_HU/_SEAL_MM`). The band spinboxes are synced whenever the band is recomputed.
   2 · `LeFortMotionCore::BandFromHeights` builds the band from the surgeon's four heights (`GuidePlan::bandHeights`,
   optional key; `guideLeFortBand` prefers them; «Restablecer» clears them). 3 · holes as before. 4 · two guides:
   `LeFortGuideParams::separateSides` (the UI always sets it) — no bridge, `connectPaint` per side, a second

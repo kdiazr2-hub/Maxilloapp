@@ -81,6 +81,7 @@ QString meshLabelName(int label);
 
 namespace
 {
+constexpr double kGuideGapClosingMm = 2.5;
 constexpr int kModeNone = 0;
 constexpr int kModeRegion = 1;
 constexpr int kModeSlotEnds = 2;
@@ -898,7 +899,9 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
     const auto [advancedHolder, advancedBox] = fold(tr("Avanzado · guía"));
     m_guideAdvancedSection = advancedHolder;
     auto* advancedForm = new QFormLayout();
-    m_guideGapSpin = spin(1.5, 0.0, 10.0, 0.1);
+    // 2.5 mm: segmented maxilla is perforated, and the guide's envelope must bridge those holes or the guide
+    // follows them down and breaks off short of the pillar (user's case, 2026-10-05).
+    m_guideGapSpin = spin(kGuideGapClosingMm, 0.0, 10.0, 0.1);
     m_guideDetailSpin = spin(0.25, 0.1, 1.0, 0.05);
     m_guideClearanceSpin = spin(0.1, 0.0, 2.0, 0.05);
     m_guideBladeSpin = spin(0.6, 0.2, 2.0, 0.1);
@@ -2416,7 +2419,11 @@ void MainWindow::restoreGuidePlan(const ProjectState& state)
         QSignalBlocker blocker(m_guideTypeCombo);
         m_guideTypeCombo->setCurrentIndex(m_guideTypeCombo->findData(static_cast<int>(m_guidePlan.type)));
     }
-    if (m_guideGapSpin) m_guideGapSpin->setValue(m_guidePlan.wrap.gapClosingMm);
+    // Le Fort guides saved with the old 1.5 mm closing get the new one: their envelope kept the bone's holes.
+    if (m_guideGapSpin)
+        m_guideGapSpin->setValue(m_guidePlan.type == GuideType::LeFort
+                                     ? std::max(m_guidePlan.wrap.gapClosingMm, kGuideGapClosingMm)
+                                     : m_guidePlan.wrap.gapClosingMm);
     if (m_guideDetailSpin) m_guideDetailSpin->setValue(m_guidePlan.wrap.smallestDetailMm);
     if (m_guideCornerSpin) m_guideCornerSpin->setValue(m_guidePlan.design.base.cornerRadiusMm);
     if (m_guideBrushSpin && !m_guidePlan.paint.empty()) m_guideBrushSpin->setValue(m_guidePlan.paint.back().radiusMm);
@@ -3769,9 +3776,28 @@ void MainWindow::analyzeGuideRoots()
         overlay->SetPoints(points);
         overlay->SetLines(lines);
         if (lines->GetNumberOfCells() > 0)
-            m_guideView->setOverlayPolyline(kGuideRootsOverlayKey, overlay, QColor(CranioPalette::Accent), 2.5);
+            m_guideView->setOverlayPolyline(kGuideRootsOverlayKey, overlay, QColor(CranioPalette::Accent), 3.5);
         else
             m_guideView->removeOverlay(kGuideRootsOverlayKey);
+        // The value beside each measurement, as the surgeon writes it on the reference image.
+        std::vector<std::pair<std::array<double, 3>, QString>> labels;
+        if (m_guideRootAnalysis.ok) {
+            static const char* kShort[] = {"1.er molar D", "Canino D", "Canino I", "1.er molar I"};
+            for (size_t t = 0; t < m_guideRootAnalysis.named.size(); ++t) {
+                const int index = m_guideRootAnalysis.named[t];
+                if (index < 0)
+                    continue;
+                const RootApex& apex = m_guideRootAnalysis.apices[static_cast<size_t>(index)];
+                const std::array<double, 3> at{0.5 * (apex.apex[0] + apex.onCut[0]), 0.5 * (apex.apex[1] + apex.onCut[1]),
+                                               0.5 * (apex.apex[2] + apex.onCut[2])};
+                labels.push_back({at, apex.cutDistanceMm >= 0.0
+                                          ? tr("%1: %2 mm").arg(QString::fromUtf8(kShort[t])).arg(apex.cutDistanceMm, 0, 'f', 1)
+                                          : tr("%1: el corte cruza la raíz (%2 mm)")
+                                                .arg(QString::fromUtf8(kShort[t]))
+                                                .arg(-apex.cutDistanceMm, 0, 'f', 1)});
+            }
+        }
+        m_guideView->setOverlayLabels(kGuideRootsOverlayKey, labels, QColor(CranioPalette::Accent));
         m_guideView->clearPointMarkers();
         if (m_guideRootAnalysis.ok)
             for (const int index : m_guideRootAnalysis.named) {

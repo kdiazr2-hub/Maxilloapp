@@ -319,23 +319,30 @@ void testAThinPillarIsProposedWithAWarning()
                 "the thin pillar is still reported as missing");
 }
 
-// When a pillar gets nothing, the report says what stopped it, not a generic sentence: here every drill path
-// below the cut would reach a root.
+// When a pillar gets nothing, the report says what stopped it, not a generic sentence: here the wall beyond the
+// left buttress faces sideways.
 void testAnEmptyPillarSaysWhatBlockedIt()
 {
-    Scene s = scene(cutAt(9.0), rise(0.0001));
-    auto roots = boxMesh({-25.0, 25.0, -6.0, -2.0, -10.0, 7.0}, false, false);
-    std::vector<vtkPolyData*> teethMeshes{roots};
-    const auto teeth = ImplicitCore::BakeMeshField(teethMeshes, 0.2, 4.0);
-    s.context.teeth = teeth.get();
+    std::vector<vtkSmartPointer<vtkPolyData>> pieces{boxMesh({-25.0, -6.0, -3.0, 0.0, 10.0, 30.0}, false, false),
+                                                     boxMesh({-6.0, 6.0, -3.0, 0.0, 20.0, 30.0}, false, false),
+                                                     boxMesh({6.0, 14.0, -3.0, 0.0, 10.0, 30.0}, false, false)};
+    auto turn = vtkSmartPointer<vtkTransform>::New();
+    turn->Translate(14.0, 0.0, 0.0);
+    turn->RotateZ(-70.0);
+    auto filter = vtkSmartPointer<vtkTransformPolyDataFilter>::New();
+    filter->SetInputData(boxMesh({0.0, 16.0, -3.0, 0.0, 10.0, 30.0}, false, false));
+    filter->SetTransform(turn);
+    filter->Update();
+    auto side = vtkSmartPointer<vtkPolyData>::New();
+    side->DeepCopy(filter->GetOutput());
+    pieces.push_back(side);
+    const Scene s = scene(pillarCut(), rise(4.0), pieces);
     const LeFortProposal proposal = LeFortHoleCore::Propose(s.context);
-    int segmentGaps = 0;
+    bool named = false;
     for (const LeFortMissingHoles& gap : proposal.missing)
-        if (gap.side == LeFortCutSide::Segment) {
-            ++segmentGaps;
-            require(gap.reason.contains(QStringLiteral("raíz")), "the gap does not name the roots: " + gap.reason.toStdString());
-        }
-    require(segmentGaps == 4, "every pillar below the cut should be blocked by the roots, got " + std::to_string(segmentGaps));
+        if (gap.pillar == LeFortPillar::PillarLeft && gap.side == LeFortCutSide::Cranial)
+            named = gap.reason.contains(QStringLiteral("hacia el lado"));
+    require(named, "the left pillar's gap does not say the wall faces sideways");
 }
 
 void testTheProposalIsDeterministic()
@@ -504,7 +511,7 @@ void testAWallFacingSidewaysIsNotProposed()
 
 // A screw must not reach a root: the drill path, to the screw's depth, keeps a millimetre from the upper teeth
 // (user's reference case measures the roots before placing anything).
-void testADrillNearARootIsRefused()
+void testADrillNearARootIsAWarningThatNamesIt()
 {
     Scene s = scene(cutAt(9.0), rise(0.0001));
     auto root = boxMesh({-13.0, -11.0, -5.0, -3.0, -10.0, 6.0}, false, false); // a canine root, 3 mm behind the wall
@@ -513,8 +520,10 @@ void testADrillNearARootIsRefused()
     require(teeth != nullptr, "the teeth field could not be baked");
     s.context.teeth = teeth.get();
     const LeFortHoleSupport onRoot = LeFortHoleCore::Support({-12.0, 0.0, 2.0}, kFacing, s.context);
-    require(onRoot.verdict == LeFortSupportVerdict::Rejected && onRoot.reason.contains(QStringLiteral("raíz")),
-            "a screw into a root was not refused: " + describe(onRoot));
+    // The surgeon decides (user's request, 2026-10-05: two holes below the cut at every pillar, where the roots
+    // are): a warning that says so, never a silent site.
+    require(onRoot.verdict == LeFortSupportVerdict::Warning && onRoot.reason.contains(QStringLiteral("raíz")),
+            "a screw into a root is not flagged: " + describe(onRoot));
     const LeFortHoleSupport clear = LeFortHoleCore::Support({-20.0, 0.0, 2.0}, kFacing, s.context);
     require(clear.verdict == LeFortSupportVerdict::Ok, "a screw 7 mm from the root was refused: " + describe(clear));
     const LeFortProposal proposal = LeFortHoleCore::Propose(s.context);
@@ -522,6 +531,38 @@ void testADrillNearARootIsRefused()
         require(hole.center[0] <= -14.0 + 1e-6 || hole.center[0] >= -10.0 - 1e-6 || hole.side == LeFortCutSide::Cranial ||
                     hole.center[2] > 7.0,
                 "a hole was proposed over the root: " + where(hole));
+}
+
+// spec, user's request 2026-10-05: at each pillar two holes above the cut and two below, on the pillar itself —
+// one over the other along it — not spread over the wall wherever the bone is thickest.
+void testTwoAboveAndTwoBelowInAColumnOnEachPillar()
+{
+    const Scene s = scene(pillarCut(), rise(4.0), maxillaWithAperture(false));
+    const LeFortProposal proposal = LeFortHoleCore::Propose(s.context);
+    require(proposal.holes.size() == 16, "16 holes were expected, got " + std::to_string(proposal.holes.size()));
+    for (const LeFortProposedHole& hole : proposal.holes)
+        require(std::abs(hole.center[0] - pillarX(hole.pillar)) <= 1.0 + 1e-6,
+                "a hole is not on its pillar: " + where(hole));
+}
+
+// Roots under the whole wall below the cut: the pillars still get their two holes below, each flagged with the
+// root it comes near, so the surgeon sees them and decides.
+void testRootsDoNotLeaveAPillarWithoutHolesBelow()
+{
+    Scene s = scene(pillarCut(), rise(4.0), maxillaWithAperture(false));
+    auto roots = boxMesh({-25.0, 25.0, -6.0, -2.0, -10.0, 7.0}, false, false);
+    std::vector<vtkPolyData*> teethMeshes{roots};
+    const auto teeth = ImplicitCore::BakeMeshField(teethMeshes, 0.2, 4.0);
+    s.context.teeth = teeth.get();
+    const LeFortProposal proposal = LeFortHoleCore::Propose(s.context);
+    for (const LeFortPillar pillar : {LeFortPillar::PillarRight, LeFortPillar::PiriformRight, LeFortPillar::PiriformLeft,
+                                      LeFortPillar::PillarLeft})
+        require(count(proposal, pillar, LeFortCutSide::Segment) == 2,
+                "a pillar lost its holes below the cut: " + LeFortHoleCore::PillarName(pillar).toStdString());
+    for (const LeFortProposedHole& hole : proposal.holes)
+        if (hole.side == LeFortCutSide::Segment)
+            require(hole.support.verdict == LeFortSupportVerdict::Warning && hole.support.reason.contains(QStringLiteral("raíz")),
+                    "a hole near the roots is not flagged: " + where(hole));
 }
 
 } // namespace
@@ -549,7 +590,9 @@ int main()
         {"a moved hole lands on the bone and is judged there", testAMovedHoleLandsOnTheBoneAndIsJudgedThere},
         {"piriform holes stay lateral of the rim", testPiriformHolesStayLateralOfTheRim},
         {"a wall facing sideways is not proposed", testAWallFacingSidewaysIsNotProposed},
-        {"a drill near a root is refused", testADrillNearARootIsRefused},
+        {"a drill near a root is a warning that names it", testADrillNearARootIsAWarningThatNamesIt},
+        {"two above and two below in a column on each pillar", testTwoAboveAndTwoBelowInAColumnOnEachPillar},
+        {"roots do not leave a pillar without holes below", testRootsDoNotLeaveAPillarWithoutHolesBelow},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {

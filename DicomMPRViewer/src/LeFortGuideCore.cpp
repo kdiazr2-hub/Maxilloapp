@@ -457,30 +457,32 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
     // on the cut. Nothing of the guide may reach into it (user's rule, 2026-10-05: "sin meterse en la nariz").
     bool hasAperture = false;
     double rimLow = 0.0, rimHigh = 0.0;
+    // Only the gaps between the piriform points: a perforation in a lateral wall is also a stretch of the cut
+    // with no wall, and taking every such bin made it part of the "nose" and cut the guide back to beyond it
+    // (user's case, 2026-10-05: the left guide never reached the zygomatic pillar). A nasal spine can split the
+    // aperture in two; both halves count.
     {
-        double dipLow = 1e30, dipHigh = -1e30, cutLow = 1e30, cutHigh = -1e30;
-        for (const BandPoint& b : band) {
-            if (b.onCut) {
-                cutLow = std::min(cutLow, b.lateral);
-                cutHigh = std::max(cutHigh, b.lateral);
-            }
-        }
+        std::vector<double> walls;
         for (const BandPoint& b : band)
-            if (!b.onCut && b.lateral > cutLow && b.lateral < cutHigh) {
-                dipLow = std::min(dipLow, b.lateral);
-                dipHigh = std::max(dipHigh, b.lateral);
-            }
-        if (dipLow <= dipHigh) {
+            if (b.onCut)
+                walls.push_back(b.lateral);
+        std::sort(walls.begin(), walls.end());
+        double innerLow = -1e30, innerHigh = 1e30;
+        if (path.points.size() == 4) {
+            innerLow = std::min(lateralOf(path.points[1]), lateralOf(path.points[2]));
+            innerHigh = std::max(lateralOf(path.points[1]), lateralOf(path.points[2]));
+        }
+        for (size_t k = 1; k < walls.size(); ++k) {
+            const double a = walls[k - 1], b = walls[k];
+            const double mid = 0.5 * (a + b);
+            // Inside the rims: its middle at least a millimetre in, and neither end more than 3 mm past a
+            // piriform point (a missing bin right at a rim is not the nose).
+            if (b - a <= 1.5 * spacing || mid < innerLow + 1.0 || mid > innerHigh - 1.0 || a < innerLow - 3.0 ||
+                b > innerHigh + 3.0)
+                continue;
+            rimLow = hasAperture ? std::min(rimLow, a) : a;
+            rimHigh = hasAperture ? std::max(rimHigh, b) : b;
             hasAperture = true;
-            rimLow = cutLow;
-            rimHigh = cutHigh;
-            for (const BandPoint& b : band)
-                if (b.onCut) {
-                    if (b.lateral < dipLow)
-                        rimLow = std::max(rimLow, b.lateral);
-                    else if (b.lateral > dipHigh)
-                        rimHigh = std::min(rimHigh, b.lateral);
-                }
         }
     }
     // Two guides without an aperture between them (the cut does not cross one): they part at the midline.

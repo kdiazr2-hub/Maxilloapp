@@ -27,3 +27,13 @@ Linux core and full app suites. Pending: Windows rebuild and the same real case.
    report and overlay show only apex → osteotomy for the four named teeth.
 6. «Proponer orificios» gave nothing: thin anterior wall was never proposed. Now proposed with a warning; the
    empty pillars say why; the guide can be created without plate holes.
+
+## Third round (same day)
+
+7. Roots: one first molar was not found (pillar point > 8 mm away) and the lines carried no value. Reach 12/14
+   mm, the molar taken behind the canine, and each measurement labelled «Canino D: 3.2 mm» on the view.
+8. Holes: 2 above + 2 below ON each pillar — ±5 mm, nearest the pillar line before thickest; near a root is a
+   warning, so the pillars below the cut keep their holes.
+9. Left guide short of the zygomatic pillar: a perforation on the cut was read as part of the nasal aperture.
+   Only gaps inside the piriform points are the aperture. Envelope closing 2.5 mm; segmentation thickens thin
+   walls from the CT and seals pinholes denser than air.

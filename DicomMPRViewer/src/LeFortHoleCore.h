@@ -42,6 +42,7 @@ struct LeFortHoleSupport
     double thicknessMm = 0.0; // bone along the drill, from the surface to where it leaves the wall
     LeFortSupportVerdict verdict = LeFortSupportVerdict::Rejected;
     QString reason; // in Spanish, ready to show; empty when Ok
+    bool nearRoot = false; // the warning is a root within the clearance, not thin bone
 };
 
 struct LeFortHoleParams
@@ -57,13 +58,13 @@ struct LeFortHoleParams
     int holesPerSide = 2;         // 2 above + 2 below at each pillar (user's choice, 2026-10-04)
     double windowNearMm = 4.0;
     double windowFarMm = 12.0;
-    double lateralReachMm = 8.0;
+    double lateralReachMm = 5.0;  // on the pillar, not over the whole wall (user's case, 2026-10-05)
     double pairSpacingMm = 6.5;   // between any two holes: 5.6 mm rings that do not overlap
     double sampleStepMm = 1.0;    // grid the sites are sought on
     // Proposed sites only: the drill axis within 60° of the anterior. Past that the wall faces sideways
     // (the zygoma beyond the buttress) and the guide does not sit there (user's case, 2026-10-05).
     double minAnteriorFacing = 0.5;
-    // Roots: the drill path, to the screw's depth, keeps this far from the upper teeth.
+    // Roots: a drill path closer than this to the upper teeth, to the screw's depth, is a warning.
     double rootClearanceMm = 1.0;
     double screwDepthMm = 6.0;
 };
@@ -81,7 +82,7 @@ struct LeFortHoleContext
     std::array<double, 16> motion{};  // the segment's motion, pre-operative → planned, row-major
     LeFortBandProfile band;           // empty (no spans) when there is nothing to take out
     // The upper teeth (`ImplicitCore::BakeMeshField` of «Dientes superiores»), when segmented: a drill path
-    // that reaches a root is refused. Null skips the check.
+    // that comes near a root is a warning naming it. Null skips the check.
     const ImplicitCore::BakedField* teeth = nullptr;
     // The patient's anterior, out of the face. The cut's sweep axis has no sign of its own, so the caller
     // gives it (LeFortGuideCore works it out the same way for the guide's frame).

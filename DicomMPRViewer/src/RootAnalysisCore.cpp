@@ -221,14 +221,22 @@ RootAnalysis Analyze(vtkPolyData* teeth, const OsteotomyPath& cut, const RootAna
 
     // Naming from the cut's own landmarks: canine = longest root near the piriform point of its side, first
     // molar = root nearest the pillar point.
-    const auto nearestTo = [&](const Vec3& landmark, bool longest, double reach) {
+    // The canine of each side first: the longest root near the piriform point. The first molar is then the root
+    // nearest the pillar point among those farther from the midline than that canine (the canine itself can be
+    // nearer the pillar point than the molar when the point is clicked high on the buttress).
+    const double midline = 0.5 * (lateralOf(cut.points[1]) + lateralOf(cut.points[2]));
+    const auto pick = [&](const Vec3& landmark, bool longest, double reach, int canine) {
         int best = -1;
         double bestScore = std::numeric_limits<double>::max();
+        const double side = lateralOf(landmark) < midline ? -1.0 : 1.0;
         for (size_t i = 0; i < analysis.apices.size(); ++i) {
-            const double away = horizontal(analysis.apices[i].apex, landmark);
-            if (away > reach)
-                continue;
-            const double score = longest ? -analysis.apices[i].lengthMm : away;
+            const double out = side * (lateralOf(analysis.apices[i].apex) - midline);
+            if (out <= 0.0 || horizontal(analysis.apices[i].apex, landmark) > reach)
+                continue; // the other side, or out of reach
+            if (canine >= 0 && (static_cast<int>(i) == canine ||
+                                out <= side * (lateralOf(analysis.apices[static_cast<size_t>(canine)].apex) - midline)))
+                continue; // the canine, or a tooth in front of it
+            const double score = longest ? -analysis.apices[i].lengthMm : horizontal(analysis.apices[i].apex, landmark);
             if (score < bestScore) {
                 bestScore = score;
                 best = static_cast<int>(i);
@@ -236,10 +244,12 @@ RootAnalysis Analyze(vtkPolyData* teeth, const OsteotomyPath& cut, const RootAna
         }
         return best;
     };
-    analysis.named[static_cast<size_t>(RootTooth::FirstMolarRight)] = nearestTo(cut.points[0], false, params.molarReachMm);
-    analysis.named[static_cast<size_t>(RootTooth::CanineRight)] = nearestTo(cut.points[1], true, params.canineReachMm);
-    analysis.named[static_cast<size_t>(RootTooth::CanineLeft)] = nearestTo(cut.points[2], true, params.canineReachMm);
-    analysis.named[static_cast<size_t>(RootTooth::FirstMolarLeft)] = nearestTo(cut.points[3], false, params.molarReachMm);
+    const int canineRight = pick(cut.points[1], true, params.canineReachMm, -1);
+    const int canineLeft = pick(cut.points[2], true, params.canineReachMm, -1);
+    analysis.named[static_cast<size_t>(RootTooth::CanineRight)] = canineRight;
+    analysis.named[static_cast<size_t>(RootTooth::CanineLeft)] = canineLeft;
+    analysis.named[static_cast<size_t>(RootTooth::FirstMolarRight)] = pick(cut.points[0], false, params.molarReachMm, canineRight);
+    analysis.named[static_cast<size_t>(RootTooth::FirstMolarLeft)] = pick(cut.points[3], false, params.molarReachMm, canineLeft);
 
     // What the surgeon measures (user's reference case): from the apex of each canine and first molar to the
     // osteotomy, below it or — when the cut runs through the root — above it.

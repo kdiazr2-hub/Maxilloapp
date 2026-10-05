@@ -134,24 +134,31 @@ LeFortHoleSupport Support(const std::array<double, 3>& site, const std::array<do
         return support;
     }
 
-    // Clear of the roots: the drill path, to the screw's depth, a millimetre from the upper teeth.
+    // Near the roots: the drill path, to the screw's depth, within a millimetre of the upper teeth. A warning
+    // the surgeon sees, not a refusal: below the cut the pillars stand over the roots, and the surgeon asked for
+    // two holes there at every pillar (user's request, 2026-10-05).
+    QString rootWarning;
     if (context.teeth) {
         const Vec3 inward = scale(unit(axis, {0.0, 0.0, 1.0}), -1.0);
         double nearest = 1e30;
         for (double t = 0.0; t <= params.screwDepthMm + 1e-9; t += 0.25)
             nearest = std::min(nearest, context.teeth->At(add(site, scale(inward, t))));
-        if (nearest < params.rootClearanceMm) {
-            support.reason = nearest <= 0.0
-                                 ? QStringLiteral("El tornillo entraría en una raíz dental: muévalo lejos de los ápices.")
-                                 : QStringLiteral("El tornillo pasaría a %1 mm de una raíz dental: deje al menos %2 mm.")
-                                       .arg(nearest, 0, 'f', 1)
-                                       .arg(params.rootClearanceMm, 0, 'f', 1);
-            return support;
-        }
+        if (nearest < params.rootClearanceMm)
+            rootWarning = nearest <= 0.0
+                              ? QStringLiteral("El tornillo entraría en una raíz dental: muévalo lejos de los ápices.")
+                              : QStringLiteral("El tornillo pasaría a %1 mm de una raíz dental: deje al menos %2 mm.")
+                                    .arg(nearest, 0, 'f', 1)
+                                    .arg(params.rootClearanceMm, 0, 'f', 1);
     }
 
     // And enough bone under the screw.
     support.thicknessMm = thicknessAlong(*context.bone, site, axis, params.maxProbeMm);
+    if (!rootWarning.isEmpty()) {
+        support.verdict = LeFortSupportVerdict::Warning;
+        support.nearRoot = true;
+        support.reason = rootWarning;
+        return support;
+    }
     if (support.thicknessMm < params.minThicknessMm) {
         support.verdict = LeFortSupportVerdict::Warning;
         support.reason = QStringLiteral("Hueso de %1 mm bajo el tornillo: menos del grosor mínimo de %2 mm.")
@@ -204,7 +211,7 @@ LeFortProposal Propose(const LeFortHoleContext& context, const std::vector<LeFor
     struct Candidate
     {
         LeFortProposedHole hole;
-        bool sound = true;          // Ok before Warning (thin bone)
+        int tier = 0;               // Ok, then thin bone, then near a root
         double rankThickness = 0.0; // to a quarter of a millimetre: real bone is never exactly flat
         double lateralOffset = 0.0;
         double fromWindow = 0.0;
@@ -284,18 +291,22 @@ LeFortProposal Propose(const LeFortHoleContext& context, const std::vector<LeFor
                     }
                     // Thin bone is still a site, after the sound ones: the anterior wall of a real maxilla is
                     // often under 2 mm, and refusing it left no holes at all (user's case, 2026-10-05).
-                    candidates.push_back({hole, hole.support.verdict == LeFortSupportVerdict::Ok,
-                                          std::round(4.0 * hole.support.thicknessMm) / 4.0, std::abs(u), fromCut});
+                    const int tier = hole.support.verdict == LeFortSupportVerdict::Ok ? 0 : hole.support.nearRoot ? 2 : 1;
+                    candidates.push_back({hole, tier, std::round(4.0 * hole.support.thicknessMm) / 4.0, std::abs(u),
+                                          fromCut});
                 }
             }
-            // Thickest bone first; among equals the one nearest the pillar's own line, then nearest the cut.
+            // On the pillar itself: the soundest tier first, then nearest the pillar's own line (to the
+            // millimetre), then the thickest bone, then nearest the cut — two holes one over the other along the
+            // buttress, as plates are screwed, not wherever the wall happens to be thickest (user's case,
+            // 2026-10-05).
             std::stable_sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
-                if (a.sound != b.sound)
-                    return a.sound;
+                if (a.tier != b.tier)
+                    return a.tier < b.tier;
+                if (std::round(a.lateralOffset) != std::round(b.lateralOffset))
+                    return std::round(a.lateralOffset) < std::round(b.lateralOffset);
                 if (a.rankThickness != b.rankThickness)
                     return a.rankThickness > b.rankThickness;
-                if (std::abs(a.lateralOffset - b.lateralOffset) > 1e-9)
-                    return a.lateralOffset < b.lateralOffset;
                 return a.fromWindow < b.fromWindow;
             });
             int placed = manualCount(kPillars[index], side);

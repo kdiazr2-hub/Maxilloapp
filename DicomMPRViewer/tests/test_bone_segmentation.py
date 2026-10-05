@@ -110,6 +110,53 @@ class BoneInteriorTests(unittest.TestCase):
             self.complete(shell(), source_label=5)
 
 
+class ThinBoneTests(unittest.TestCase):
+    """The anterior maxilla came out thin and perforated (user's report, 2026-10-05): thin walls are recovered
+    from the CT and pinholes sealed, but only where the CT says bone, never into air or another label."""
+
+    def wall(self, hole_hu):
+        # A wall one voxel thick at z = 10, with a 4 x 4 hole; partial-volume bone (250 HU) one voxel either side.
+        shape = (21, 21, 21)
+        labels = np.zeros(shape, dtype=np.uint8)
+        labels[10, 2:-2, 2:-2] = 1
+        labels[10, 8:12, 8:12] = 0
+        intensities = np.full(shape, 30.0, dtype=np.float32)  # soft tissue
+        intensities[9:12, 2:-2, 2:-2] = 250.0
+        intensities[10, 8:12, 8:12] = hole_hu
+        intensities[9, 8:12, 8:12] = hole_hu
+        intensities[11, 8:12, 8:12] = hole_hu
+        return labels, intensities
+
+    def thicken(self, labels, intensities):
+        before = labels.copy()
+        result = segmentator.thicken_thin_bone(labels == 1, labels, intensities, (0.5, 0.5, 0.5))
+        np.testing.assert_array_equal(labels, before)
+        return result
+
+    def test_a_thin_wall_is_thickened_where_the_ct_shows_bone(self):
+        labels, intensities = self.wall(250.0)
+        result = self.thicken(labels, intensities)
+        self.assertTrue(result[9, 5, 5] and result[11, 5, 5], "the partial-volume wall was not recovered")
+        self.assertFalse(result[8, 5, 5] or result[12, 5, 5], "the bone grew into soft tissue")
+
+    def test_a_pinhole_in_a_wall_is_sealed(self):
+        labels, intensities = self.wall(60.0)  # the hole reads as soft tissue: partial volume, not an opening
+        result = self.thicken(labels, intensities)
+        self.assertTrue(result[10, 9, 9] and result[10, 10, 10], "the perforation was left open")
+
+    def test_an_opening_into_air_stays_open(self):
+        labels, intensities = self.wall(-900.0)
+        result = self.thicken(labels, intensities)
+        self.assertFalse(np.any(result[10, 8:12, 8:12]), "an opening to the air was sealed")
+
+    def test_other_structures_are_never_taken(self):
+        labels, intensities = self.wall(60.0)
+        labels[9, 2:-2, 2:-2] = 3  # a tooth against the wall
+        labels[10, 9, 9] = 5       # the canal in the hole
+        result = self.thicken(labels, intensities)
+        self.assertFalse(np.any(result[labels == 3]) or result[10, 9, 9], "another label was taken as bone")
+
+
 class BoneRemapTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

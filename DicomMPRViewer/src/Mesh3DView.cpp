@@ -21,6 +21,8 @@
 
 #include <vtkActor.h>
 #include <vtkActor2D.h>
+#include <vtkBillboardTextActor3D.h>
+#include <vtkTextProperty.h>
 #include <vtkArrowSource.h>
 #include <vtkBoundingBox.h>
 #include <vtkCallbackCommand.h>
@@ -1104,8 +1106,34 @@ void Mesh3DView::setOverlayPolyline(int key, vtkSmartPointer<vtkPolyData> lines,
     render();
 }
 
+void Mesh3DView::setOverlayLabels(int key, const std::vector<std::pair<std::array<double, 3>, QString>>& labels,
+                                  const QColor& color)
+{
+    if (!m_annotationRenderer) return;
+    if (const auto it = m_overlayLabels.find(key); it != m_overlayLabels.end()) {
+        for (const auto& prop : it->second)
+            m_annotationRenderer->RemoveViewProp(prop);
+        m_overlayLabels.erase(it);
+    }
+    for (const auto& [position, text] : labels) {
+        auto label = vtkSmartPointer<vtkBillboardTextActor3D>::New();
+        label->SetInput(text.toUtf8().constData());
+        label->SetPosition(position[0], position[1], position[2]);
+        label->GetTextProperty()->SetFontSize(15);
+        label->GetTextProperty()->SetBold(true);
+        label->GetTextProperty()->SetColor(color.redF(), color.greenF(), color.blueF());
+        label->GetTextProperty()->SetBackgroundColor(0.08, 0.09, 0.11);
+        label->GetTextProperty()->SetBackgroundOpacity(0.75);
+        label->SetPickable(0);
+        m_annotationRenderer->AddViewProp(label);
+        m_overlayLabels[key].push_back(label);
+    }
+    render();
+}
+
 void Mesh3DView::removeOverlay(int key)
 {
+    setOverlayLabels(key, {}, QColor());
     if (const auto it = m_overlayActors.find(key); it != m_overlayActors.end()) {
         if (m_annotationRenderer) m_annotationRenderer->RemoveActor(it->second);
         m_overlayActors.erase(it);
@@ -1115,10 +1143,15 @@ void Mesh3DView::removeOverlay(int key)
 
 void Mesh3DView::clearOverlays()
 {
-    if (m_annotationRenderer)
+    if (m_annotationRenderer) {
         for (const auto& entry : m_overlayActors)
             m_annotationRenderer->RemoveActor(entry.second);
+        for (const auto& entry : m_overlayLabels)
+            for (const auto& prop : entry.second)
+                m_annotationRenderer->RemoveViewProp(prop);
+    }
     m_overlayActors.clear();
+    m_overlayLabels.clear();
     render();
 }
 

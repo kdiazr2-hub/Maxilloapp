@@ -706,6 +706,46 @@ void testTwoGuidesOneEachSide()
                                                  " pieces");
 }
 
+// A perforation in the left wall, across the cut, is not the nose (user's case, 2026-10-05: the left guide stopped
+// short of the zygomatic pillar where the segmented bone had a hole). The guide still runs from the rim to the
+// pillar on that side, and the aperture is only the gap between the piriform rims.
+void testAPerforationIsNotTheAperture()
+{
+    std::vector<vtkSmartPointer<vtkPolyData>> pieces{
+        boxMesh({-25.0, -6.0, -10.0, 0.0, 10.0, 30.0}, false, false), boxMesh({-6.0, 6.0, -10.0, 0.0, 20.0, 30.0}, false, false),
+        boxMesh({6.0, 13.0, -10.0, 0.0, 10.0, 30.0}, false, false), boxMesh({13.0, 18.0, -10.0, 0.0, 16.0, 30.0}, false, false),
+        boxMesh({18.0, 25.0, -10.0, 0.0, 10.0, 30.0}, false, false), boxMesh({-25.0, 13.0, -10.0, 0.0, -10.0, 8.0}, false, false),
+        boxMesh({13.0, 18.0, -10.0, 0.0, -10.0, 3.0}, false, false), boxMesh({18.0, 25.0, -10.0, 0.0, -10.0, 8.0}, false, false)};
+    std::vector<vtkPolyData*> meshes;
+    for (const auto& mesh : pieces)
+        meshes.push_back(mesh);
+    WrapParams wrapParams;
+    wrapParams.gapClosingMm = 1.5;
+    wrapParams.smallestDetailMm = 0.4;
+    const WrapResult wrap = WrapCore::Wrap(meshes, wrapParams);
+    require(wrap.ok, "the perforated bone could not be wrapped");
+    GuideDesignParams design;
+    design.base.smallestDetailMm = 0.4;
+    design.bone = ImplicitCore::BakeMeshField(meshes, 0.4, 8.0);
+    const GuidePreparation preparation = GuideDesignCore::Prepare(wrap.mesh, design);
+    require(preparation.ok, "the envelope could not be measured");
+    LeFortGuideParams params;
+    params.separateSides = true;
+    const LeFortGuideLayout layout = LeFortGuideCore::Layout(preparation, wrap.mesh, leFortCut(), {}, params);
+    require(layout.ok, "the guides were not laid out: " + layout.error.toStdString());
+    double leftInner = 1e9, leftOuter = -1e9;
+    for (const GuideBrushStroke& dab : layout.paint) {
+        if (dab.center[0] <= 0.0)
+            continue;
+        leftInner = std::min(leftInner, dab.center[0]);
+        leftOuter = std::max(leftOuter, dab.center[0]);
+        const double dx = std::max(0.0, std::abs(dab.center[0]) - 6.0), dz = std::max({0.0, 8.5 - dab.center[2], dab.center[2] - 20.0});
+        require(std::hypot(dx, dz) >= dab.radiusMm - 0.5, "a dab reaches into the nose at x " + std::to_string(dab.center[0]));
+    }
+    require(leftInner <= 10.0 && leftOuter >= 19.0, "the left guide does not run from the rim to the pillar: x " +
+                                                        std::to_string(leftInner) + ".." + std::to_string(leftOuter));
+}
+
 // The engraving is a solid of the text: as wide as `TextWidth` says, standing `reliefMm` proud of its base.
 void testTextIsASolidOfItsMeasuredWidth()
 {
@@ -819,6 +859,7 @@ int main()
         {"the guide covers the whole cut with a single hole", testTheGuideCoversTheWholeCutWithASingleHole},
         {"the guide stays out of the nose and clear of the spine", testTheGuideStaysOutOfTheNoseAndClearOfTheSpine},
         {"two guides, one each side", testTwoGuidesOneEachSide},
+        {"a perforation is not the aperture", testAPerforationIsNotTheAperture},
         {"text is a solid of its measured width", testTextIsASolidOfItsMeasuredWidth},
         {"each guide is engraved with the case and its side", testEachGuideIsEngravedWithTheCaseAndItsSide},
     };

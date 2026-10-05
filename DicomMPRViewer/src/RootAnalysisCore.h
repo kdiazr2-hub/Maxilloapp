@@ -50,8 +50,10 @@ struct RootAnalysisParams
     double binMm = 1.0;
     double minApexSpacingMm = 4.0;
     double columnRadiusMm = 2.5;   // how far round the apex the cusp is looked for
-    double canineReachMm = 8.0;    // from the piriform point, seen from above
-    double molarReachMm = 8.0;     // from the pillar point, seen from above
+    // Seen from above. The landmarks are clicked on the wall, outside the alveolus: the canine eminence and the
+    // first molar's mesiobuccal root can lie 10 mm or more from them (one molar was missed at 8 mm, 2026-10-05).
+    double canineReachMm = 12.0;   // from the piriform point: the longest root within it
+    double molarReachMm = 14.0;    // from the pillar point: the nearest root within it
 };
 
 struct RootAnalysis
