@@ -37,6 +37,7 @@
 #include "PlateCore.h"
 
 #include <QString>
+#include <vtkSmartPointer.h>
 
 #include <array>
 #include <vector>
@@ -82,6 +83,20 @@ struct LeFortGuideLayout
 
 namespace LeFortGuideCore
 {
+// The patient's anterior, out of the face, at the cut: the cut's sweep axis given the sign the bone around
+// its points says (the axis of an osteotomy plane has none of its own). The layout's frame, and what the hole
+// proposal walks back into the bone along (`LeFortHoleContext::anterior`). `field` is the wrap's field.
+std::array<double, 3> AnteriorDirection(const ImplicitCore::BakedField& field, const OsteotomyPath& path);
+
+// The band an impaction takes out, as a surface to draw: a strip on the anterior wall from the cut up to the
+// band's upper edge, sampled every `stepMm` of the cut and only inside `band.spans`. Each side is found by
+// walking back along −`anterior` onto `bone` (`ImplicitCore::BakeMeshField` of the bone before the cut) and is
+// lifted `liftMm` off it so it shows over the bone. Where there is no wall (the aperture) the strip breaks.
+// Empty when there is no band. Display only: the guide is built from the band itself.
+vtkSmartPointer<vtkPolyData> BandRibbon(const ImplicitCore::BakedField& bone, const OsteotomyPath& cut,
+                                        const LeFortBandProfile& band, const std::array<double, 3>& anterior,
+                                        double stepMm = 0.5, double liftMm = 0.2);
+
 // `preop` is the wrap of the bone before the cut (its field), `wrapMesh` its surface and `path` the planned
 // Le Fort cut. `holes` are the holes the guide drills, on the pre-operative anatomy (the proposed or moved
 // holes, or the plates' predictive holes). `band`, when it has spans, is the bone an impaction takes out

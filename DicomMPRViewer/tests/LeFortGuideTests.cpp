@@ -530,6 +530,59 @@ void testAMovedHoleTakesItsPadWithIt()
     }
     require(atNew && !atOld, "the moved hole's pad did not move with it");
 }
+// The direction out of the face, as the guide lays itself out: the cut's sweep axis has no sign of its own,
+// and the hole proposal needs the same one the layout uses.
+void testTheAnteriorDirectionIsOutOfTheFaceWhicheverWayTheSweepAxisPoints()
+{
+    const Prepared bone = preoperativeBone();
+    OsteotomyPath reversed = leFortCut();
+    for (double& value : reversed.depthAxis)
+        value = -value;
+    for (const OsteotomyPath& path : {leFortCut(), reversed}) {
+        const std::array<double, 3> front = LeFortGuideCore::AnteriorDirection(*bone.preparation.wrapField, path);
+        require(front[1] > 0.9, "the anterior direction does not point out of the face: (" + std::to_string(front[0]) +
+                                    ", " + std::to_string(front[1]) + ", " + std::to_string(front[2]) + ")");
+    }
+}
+
+// spec §Behaviour (franja visible): the band is drawn on the anterior wall, from the cut up to its upper edge,
+// only where the segment rises, and nowhere there is no wall (the aperture).
+void testTheBandIsDrawnOnTheWallOnlyWhereItRises()
+{
+    const Prepared bone = preoperativeBone();
+    const std::array<double, 3> front{0.0, 1.0, 0.0};
+    const LeFortBandProfile uniform = bandFor(4.0);
+    const auto ribbon = LeFortGuideCore::BandRibbon(*bone.design.bone, leFortCut(), uniform, front);
+    require(ribbon && ribbon->GetNumberOfPolys() > 0, "a 4 mm impaction drew no band");
+    double highest = -1e9, lowest = 1e9;
+    for (vtkIdType i = 0; i < ribbon->GetNumberOfPoints(); ++i) {
+        double p[3];
+        ribbon->GetPoint(i, p);
+        require(std::abs(p[1]) <= 0.6, "the band is not on the anterior wall: y = " + std::to_string(p[1]));
+        require(std::abs(p[0]) >= 5.5, "the band was drawn across the aperture: x = " + std::to_string(p[0]));
+        highest = std::max(highest, p[2]);
+        lowest = std::min(lowest, p[2]);
+    }
+    require(std::abs(lowest - 9.0) <= 0.3 && std::abs(highest - 13.0) <= 0.3,
+            "the band does not run from the cut to 4 mm above it: z " + std::to_string(lowest) + ".." +
+                std::to_string(highest));
+
+    // Rolled: only the right side rises (x < -5), up to 2 mm at the pillar.
+    const auto rolled = LeFortGuideCore::BandRibbon(*bone.design.bone, leFortCut(), rolledBand(), front);
+    require(rolled && rolled->GetNumberOfPolys() > 0, "the rolled band drew nothing");
+    for (vtkIdType i = 0; i < rolled->GetNumberOfPoints(); ++i) {
+        double p[3];
+        rolled->GetPoint(i, p);
+        require(p[0] <= -5.0 + 0.3, "the band was drawn where the segment does not rise: x = " + std::to_string(p[0]));
+        require(p[2] <= 9.0 + 0.1 * 20.0 + 0.3, "the band is taller than the rise: z = " + std::to_string(p[2]));
+    }
+
+    const std::array<double, 16> descent{1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, -3.0, 0.0, 0.0, 0.0, 1.0};
+    const auto none = LeFortGuideCore::BandRibbon(*bone.design.bone, leFortCut(),
+                                                  LeFortMotionCore::Band(leFortCut(), descent), front);
+    require(!none || none->GetNumberOfPolys() == 0, "a descent drew a band");
+}
+
 } // namespace
 
 int main()
@@ -549,6 +602,9 @@ int main()
         {"a tall band is covered and kept clear", testATallBandIsCoveredAndKeptClear},
         {"an empty band leaves the layout as it was", testAnEmptyBandLeavesTheLayoutAsItWas},
         {"a moved hole takes its pad with it", testAMovedHoleTakesItsPadWithIt},
+        {"the anterior direction is out of the face whichever way the sweep axis points",
+         testTheAnteriorDirectionIsOutOfTheFaceWhicheverWayTheSweepAxisPoints},
+        {"the band is drawn on the wall only where it rises", testTheBandIsDrawnOnTheWallOnlyWhereItRises},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {

@@ -322,6 +322,119 @@ void testTheProposalIsDeterministic()
                     first.holes[i].pillar == second.holes[i].pillar && first.holes[i].side == second.holes[i].side,
                 "two runs gave different holes");
 }
+
+// spec §Behaviour (edit) and §Revisions: a hole the surgeon moved stays where it was put, judged again; the
+// app fills only what that pillar and side still lack, clear of it.
+void testAMovedHoleIsKeptAndTheRestFillRoundIt()
+{
+    const Scene s = scene(pillarCut(), rise(4.0), maxillaWithAperture(false));
+    const LeFortProposal first = LeFortHoleCore::Propose(s.context);
+    require(first.holes.size() == 16, "the first proposal is incomplete");
+    LeFortProposedHole manual;
+    for (const LeFortProposedHole& hole : first.holes)
+        if (hole.pillar == LeFortPillar::PillarRight && hole.side == LeFortCutSide::Cranial) {
+            manual = hole;
+            break;
+        }
+    manual.center = {manual.center[0] + 2.0, manual.center[1], manual.center[2] + 1.0};
+    manual.origin = LeFortHoleOrigin::Manual;
+    manual.support = {}; // stale: it must be judged again
+    const LeFortProposal again = LeFortHoleCore::Propose(s.context, {manual});
+    require(again.holes.size() == 16, "16 holes were expected around the moved one, got " +
+                                          std::to_string(again.holes.size()));
+    require(count(again, LeFortPillar::PillarRight, LeFortCutSide::Cranial) == 2,
+            "the moved hole's pillar does not have exactly 2 holes above the cut");
+    int kept = 0;
+    for (const LeFortProposedHole& hole : again.holes) {
+        if (hole.origin == LeFortHoleOrigin::Manual) {
+            ++kept;
+            require(distance(hole.center, manual.center) < 1e-9, "the moved hole was moved again: " + where(hole));
+            require(hole.support.verdict == LeFortSupportVerdict::Ok && hole.support.thicknessMm > 2.0,
+                    "the moved hole was not judged again: " + describe(hole.support));
+        } else {
+            require(distance(hole.center, manual.center) >= 6.5 - 1e-6,
+                    "a proposed hole is closer than 6.5 mm to the moved one: " + where(hole));
+        }
+    }
+    require(kept == 1, "the moved hole was not kept exactly once");
+}
+
+// A moved hole that the movement now puts inside the band is still the surgeon's: kept, refused, with why.
+void testAMovedHoleInsideANewBandIsKeptAndRefused()
+{
+    const Scene s = scene(pillarCut(), rise(4.0), maxillaWithAperture(false)); // band z = 9..13
+    LeFortProposedHole manual;
+    manual.center = {-20.0, 0.0, 12.0};
+    manual.axis = kFacing;
+    manual.pillar = LeFortPillar::PillarRight;
+    manual.side = LeFortCutSide::Cranial;
+    manual.origin = LeFortHoleOrigin::Manual;
+    const LeFortProposal proposal = LeFortHoleCore::Propose(s.context, {manual});
+    const auto it = std::find_if(proposal.holes.begin(), proposal.holes.end(), [](const LeFortProposedHole& hole) {
+        return hole.origin == LeFortHoleOrigin::Manual;
+    });
+    require(it != proposal.holes.end(), "the moved hole was dropped");
+    require(it->support.verdict == LeFortSupportVerdict::Rejected && it->support.reason.contains(QStringLiteral("franja")),
+            "the moved hole in the band is not refused with the band as reason: " + describe(it->support));
+}
+
+// The guide drills the holes as sleeves: each hole carries its centre, axis and bone over unchanged.
+void testHolesBecomeTheGuidesDrillSites()
+{
+    LeFortProposedHole cranial;
+    cranial.center = {1.0, 2.0, 3.0};
+    cranial.axis = {0.0, 1.0, 0.0};
+    cranial.side = LeFortCutSide::Cranial;
+    LeFortProposedHole segment = cranial;
+    segment.center = {4.0, 5.0, 6.0};
+    segment.side = LeFortCutSide::Segment;
+    const std::vector<PredictiveHole> sites = LeFortHoleCore::DrillSites({cranial, segment});
+    require(sites.size() == 2, "every hole must become a drill site");
+    require(sites[0].bone == PlateBone::Cranial && sites[1].bone == PlateBone::Segment, "the bone was not carried over");
+    require(distance(sites[1].preopCenter, segment.center) < 1e-12 && distance(sites[1].preopAxis, segment.axis) < 1e-12,
+            "the drill site is not the hole");
+    require(sites[0].plate == -1, "a guide hole is not a plate hole");
+}
+
+// spec §Behaviour (earlier plates): plate holes with no guide hole within a millimetre are counted.
+void testPlateHolesWithoutAGuideHoleAreCounted()
+{
+    LeFortProposedHole guide;
+    guide.center = {0.0, 0.0, 20.0};
+    PredictiveHole matching;
+    matching.preopCenter = {0.5, 0.0, 20.0};
+    PredictiveHole elsewhere;
+    elsewhere.preopCenter = {8.0, 0.0, 20.0};
+    require(LeFortHoleCore::UnmatchedPlateHoles({guide}, {matching, elsewhere}) == 1,
+            "one plate hole has no guide hole and must be counted");
+    require(LeFortHoleCore::UnmatchedPlateHoles({guide}, {}) == 0, "no plates, nothing to count");
+}
+// spec §Acceptance 8-9: a click near the bone (on the guide, which stands off it) moves the hole onto the
+// bone itself, drilled along the bone's normal, judged where it landed, on whichever side of the cut that is.
+void testAMovedHoleLandsOnTheBoneAndIsJudgedThere()
+{
+    const Scene s = scene(cutAt(9.0), rise(0.0001));
+    LeFortProposedHole hole;
+    hole.center = {-12.0, 0.0, 20.0};
+    hole.axis = kFacing;
+    hole.pillar = LeFortPillar::PiriformRight;
+    hole.side = LeFortCutSide::Cranial;
+    const LeFortProposedHole sound = LeFortHoleCore::MoveHole(hole, {-14.0, 2.5, 22.0}, s.context);
+    require(std::abs(sound.center[1]) <= 0.15 && std::abs(sound.center[0] + 14.0) <= 0.15 &&
+                std::abs(sound.center[2] - 22.0) <= 0.15,
+            "the moved hole is not on the bone under the click: " + where(sound));
+    require(sound.axis[1] > 0.95, "the moved hole is not drilled along the bone's normal");
+    require(sound.origin == LeFortHoleOrigin::Manual && sound.pillar == LeFortPillar::PiriformRight,
+            "a moved hole must be manual and keep its pillar");
+    require(sound.support.verdict == LeFortSupportVerdict::Ok, "a sound site was not accepted: " + describe(sound.support));
+
+    const LeFortProposedHole thin = LeFortHoleCore::MoveHole(hole, {12.0, 2.5, 20.0}, s.context);
+    require(thin.support.verdict == LeFortSupportVerdict::Warning, "a 1 mm wall is not a warning: " + describe(thin.support));
+
+    const LeFortProposedHole below = LeFortHoleCore::MoveHole(hole, {-12.0, 2.5, 0.0}, s.context);
+    require(below.side == LeFortCutSide::Segment, "a hole moved below the cut is not on the segment");
+}
+
 } // namespace
 
 int main()
@@ -339,6 +452,11 @@ int main()
          testWithoutABandCranialHolesKeepFourMillimetresFromTheCut},
         {"a thin pillar is reported, not filled", testAThinPillarIsReportedNotFilled},
         {"the proposal is deterministic", testTheProposalIsDeterministic},
+        {"a moved hole is kept and the rest fill round it", testAMovedHoleIsKeptAndTheRestFillRoundIt},
+        {"a moved hole inside a new band is kept and refused", testAMovedHoleInsideANewBandIsKeptAndRefused},
+        {"holes become the guide's drill sites", testHolesBecomeTheGuidesDrillSites},
+        {"plate holes without a guide hole are counted", testPlateHolesWithoutAGuideHoleAreCounted},
+        {"a moved hole lands on the bone and is judged there", testAMovedHoleLandsOnTheBoneAndIsJudgedThere},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {

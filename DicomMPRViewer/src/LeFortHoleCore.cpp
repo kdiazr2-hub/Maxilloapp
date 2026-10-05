@@ -144,7 +144,7 @@ LeFortHoleSupport Support(const std::array<double, 3>& site, const std::array<do
     return support;
 }
 
-LeFortProposal Propose(const LeFortHoleContext& context)
+LeFortProposal Propose(const LeFortHoleContext& context, const std::vector<LeFortProposedHole>& manual)
 {
     LeFortProposal proposal;
     const LeFortHoleParams& params = context.params;
@@ -193,7 +193,19 @@ LeFortProposal Propose(const LeFortHoleContext& context)
     const double step = std::max(0.25, params.sampleStepMm);
     static const LeFortPillar kPillars[] = {LeFortPillar::PillarRight, LeFortPillar::PiriformRight,
                                             LeFortPillar::PiriformLeft, LeFortPillar::PillarLeft};
+    // The surgeon's holes first, where they were put, judged on the movement as it is now.
     std::vector<Vec3> chosen;
+    for (LeFortProposedHole hole : manual) {
+        hole.origin = LeFortHoleOrigin::Manual;
+        hole.support = Support(hole.center, hole.axis, context);
+        chosen.push_back(hole.center);
+        proposal.holes.push_back(hole);
+    }
+    const auto manualCount = [&manual](LeFortPillar pillar, LeFortCutSide side) {
+        return static_cast<int>(std::count_if(manual.begin(), manual.end(), [&](const LeFortProposedHole& hole) {
+            return hole.pillar == pillar && hole.side == side;
+        }));
+    };
     for (size_t index = 0; index < 4; ++index) {
         const Vec3& anchor = context.cut.points[index];
         for (const LeFortCutSide side : {LeFortCutSide::Cranial, LeFortCutSide::Segment}) {
@@ -238,7 +250,7 @@ LeFortProposal Propose(const LeFortHoleContext& context)
                     return a.lateralOffset < b.lateralOffset;
                 return a.fromWindow < b.fromWindow;
             });
-            int placed = 0;
+            int placed = manualCount(kPillars[index], side);
             for (const Candidate& candidate : candidates) {
                 if (placed >= params.holesPerSide)
                     break;
@@ -267,6 +279,74 @@ LeFortProposal Propose(const LeFortHoleContext& context)
         }
     }
     return proposal;
+}
+
+LeFortProposedHole MoveHole(const LeFortProposedHole& hole, const std::array<double, 3>& picked,
+                            const LeFortHoleContext& context)
+{
+    LeFortProposedHole moved = hole;
+    moved.origin = LeFortHoleOrigin::Manual;
+    moved.center = picked;
+    if (context.bone) {
+        // Down the bone's own gradient onto its surface: the click lands on the guide, a few tenths to a few
+        // millimetres off the bone.
+        const ImplicitCore::BakedField& bone = *context.bone;
+        const double h = std::max(0.05, bone.spacingMm);
+        Vec3 p = picked;
+        for (int iteration = 0; iteration < 12; ++iteration) {
+            const double value = bone.At(p);
+            if (std::abs(value) < 1e-3)
+                break;
+            const Vec3 gradient{(bone.At({p[0] + h, p[1], p[2]}) - bone.At({p[0] - h, p[1], p[2]})) / (2.0 * h),
+                                (bone.At({p[0], p[1] + h, p[2]}) - bone.At({p[0], p[1] - h, p[2]})) / (2.0 * h),
+                                (bone.At({p[0], p[1], p[2] + h}) - bone.At({p[0], p[1], p[2] - h})) / (2.0 * h)};
+            const double g2 = dot(gradient, gradient);
+            if (g2 < 1e-8)
+                break;
+            p = sub(p, scale(gradient, value / g2));
+        }
+        moved.center = p;
+        moved.axis = PlateCore::BoneNormalAt(bone, p, unit(hole.axis, context.anterior));
+    }
+    if (context.preopBone) {
+        double distance = 0.0;
+        const PlateBone bone = context.preopBone(moved.center, &distance);
+        if (bone == PlateBone::Cranial)
+            moved.side = LeFortCutSide::Cranial;
+        else if (bone == PlateBone::Segment)
+            moved.side = LeFortCutSide::Segment;
+    }
+    moved.support = Support(moved.center, moved.axis, context);
+    return moved;
+}
+
+std::vector<PredictiveHole> DrillSites(const std::vector<LeFortProposedHole>& holes)
+{
+    std::vector<PredictiveHole> sites;
+    sites.reserve(holes.size());
+    for (const LeFortProposedHole& hole : holes) {
+        PredictiveHole site;
+        site.bone = hole.side == LeFortCutSide::Cranial ? PlateBone::Cranial : PlateBone::Segment;
+        site.preopCenter = hole.center;
+        site.preopAxis = hole.axis;
+        site.plannedCenter = hole.center;
+        site.plannedAxis = hole.axis;
+        sites.push_back(site);
+    }
+    return sites;
+}
+
+int UnmatchedPlateHoles(const std::vector<LeFortProposedHole>& guideHoles, const std::vector<PredictiveHole>& plateHoles,
+                        double toleranceMm)
+{
+    int unmatched = 0;
+    for (const PredictiveHole& plateHole : plateHoles) {
+        const bool matched = std::any_of(guideHoles.begin(), guideHoles.end(), [&](const LeFortProposedHole& hole) {
+            return norm(sub(hole.center, plateHole.preopCenter)) <= toleranceMm;
+        });
+        unmatched += matched ? 0 : 1;
+    }
+    return unmatched;
 }
 
 QString PillarName(LeFortPillar pillar)

@@ -135,7 +135,25 @@ LeFortHoleSupport Support(const std::array<double, 3>& site, const std::array<do
 // The holes the guide proposes by itself: `holesPerSide` above and below the cut at each of the four pillars
 // (the cut's points), on bone that `Support` calls Ok, the thickest first, every pair at least `pairSpacingMm`
 // apart. What a pillar cannot take is listed in `missing`, never filled with a weaker site. Deterministic.
-LeFortProposal Propose(const LeFortHoleContext& context);
+// `manual` are the holes the surgeon placed or moved: each is kept where it is, judged again (the movement
+// may have changed), counts towards its pillar and side, and keeps the proposed ones `pairSpacingMm` away.
+LeFortProposal Propose(const LeFortHoleContext& context, const std::vector<LeFortProposedHole>& manual = {});
+
+// A hole the surgeon moved: `picked` (a click on the guide or the bone) is brought onto the bone before the
+// cut, the drill axis is the bone's own normal there (`PlateCore::BoneNormalAt`), the side of the cut is the
+// bone it landed on, and it is judged by `Support`. It keeps its pillar and becomes manual. Whether to accept
+// it is the caller's: a refusal leaves the hole where it was (spec, "orificio movido a mal sitio").
+LeFortProposedHole MoveHole(const LeFortProposedHole& hole, const std::array<double, 3>& picked,
+                            const LeFortHoleContext& context);
+
+// The guide's holes as the drill sites its sleeves are built at (`PlateCore::SleeveFigures`): centre and axis
+// on the bone before the cut, and the bone each one is in. They belong to no plate.
+std::vector<PredictiveHole> DrillSites(const std::vector<LeFortProposedHole>& holes);
+
+// How many of the plates' holes have no guide hole within `toleranceMm`: earlier plates the guide no longer
+// drills for (spec, "placas anteriores": the report says so).
+int UnmatchedPlateHoles(const std::vector<LeFortProposedHole>& guideHoles, const std::vector<PredictiveHole>& plateHoles,
+                        double toleranceMm = 1.0);
 
 // Spanish names, for reports.
 QString PillarName(LeFortPillar pillar);

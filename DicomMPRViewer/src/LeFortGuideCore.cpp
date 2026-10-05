@@ -1,5 +1,7 @@
 #include "LeFortGuideCore.h"
 
+#include <vtkCellArray.h>
+#include <vtkPoints.h>
 #include <vtkPolyData.h>
 
 #include <algorithm>
@@ -118,26 +120,8 @@ int connectPaint(const ImplicitCore::BakedField& field, GuideBrushPaint& paint)
 
 namespace LeFortGuideCore
 {
-LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, const OsteotomyPath& path,
-                         const std::vector<PredictiveHole>& holes, const LeFortGuideParams& params,
-                         const LeFortBandProfile* impaction)
+std::array<double, 3> AnteriorDirection(const ImplicitCore::BakedField& field, const OsteotomyPath& path)
 {
-    LeFortGuideLayout layout;
-    if (!preop.ok || !preop.wrapField || !wrapMesh || wrapMesh->GetNumberOfPoints() == 0) {
-        layout.error = QStringLiteral("Calcule primero la envolvente del hueso antes del corte.");
-        return layout;
-    }
-    QString pathError;
-    const auto cut = OsteotomyCore::PreparePathField(path, &pathError);
-    if (!path.valid || !cut) {
-        layout.error = pathError.isEmpty() ? QStringLiteral("Falta la trayectoria de la osteotomía Le Fort.") : pathError;
-        return layout;
-    }
-    const ImplicitCore::BakedField& field = *preop.wrapField;
-
-    // The guide's frame comes from the pre-operative osteotomy itself. If
-    // predictive holes are supplied by an older plan, their drill axes can
-    // refine the anterior direction, but they are not required.
     Vec3 front = unit(path.depthAxis, {0.0, 1.0, 0.0});
     // The sweep axis of an osteotomy plane has no intrinsic sign. LeFortPath
     // stores its points as pilar R, piriform R, piriform L, pilar L, so the
@@ -166,6 +150,116 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
         if (dot(front, anteriorHint) < 0.0)
             front = scale(front, -1.0);
     }
+    return front;
+}
+
+vtkSmartPointer<vtkPolyData> BandRibbon(const ImplicitCore::BakedField& bone, const OsteotomyPath& cut,
+                                        const LeFortBandProfile& band, const std::array<double, 3>& anterior,
+                                        double stepMm, double liftMm)
+{
+    auto ribbon = vtkSmartPointer<vtkPolyData>::New();
+    const size_t count = std::min({cut.points.size(), band.heights.size(), band.upperCut.points.size()});
+    if (band.spans.empty() || count < 2)
+        return ribbon;
+    // The band's vertical: the direction its upper edge was raised in.
+    Vec3 up{0.0, 0.0, 1.0};
+    for (size_t i = 0; i < count; ++i)
+        if (std::abs(band.heights[i]) > 1e-6) {
+            up = unit(scale(sub(band.upperCut.points[i], cut.points[i]), 1.0 / band.heights[i]), up);
+            break;
+        }
+    const Vec3 front = unit(sub(anterior, scale(up, dot(anterior, up))), {0.0, -1.0, 0.0});
+    // The rise at an arc length along the cut: linear along each straight piece.
+    const auto riseAt = [&](double s) {
+        double travelled = 0.0;
+        for (size_t i = 1; i < count; ++i) {
+            const double length = norm(sub(cut.points[i], cut.points[i - 1]));
+            if (s <= travelled + length || i + 1 == count) {
+                const double t = length > 1e-9 ? std::clamp((s - travelled) / length, 0.0, 1.0) : 0.0;
+                return band.heights[i - 1] + t * (band.heights[i] - band.heights[i - 1]);
+            }
+            travelled += length;
+        }
+        return band.heights.back();
+    };
+    // From in front of the face back onto the wall, no further than 10 mm behind the point it started from:
+    // through the aperture there is no wall, and what lies behind it is not where the band is cut.
+    const double walk = std::clamp(0.5 * bone.spacingMm, 0.02, 0.1);
+    const auto onWall = [&](const Vec3& point, Vec3& site) {
+        const Vec3 start = add(point, scale(front, 15.0));
+        double previous = bone.At(start);
+        for (double t = walk; t <= 25.0; t += walk) {
+            const Vec3 p = add(start, scale(front, -t));
+            const double value = bone.At(p);
+            if (previous >= 0.0 && value < 0.0) {
+                const double back = walk * value / (value - previous);
+                site = add(add(p, scale(front, back)), scale(front, liftMm));
+                return true;
+            }
+            previous = value;
+        }
+        return false;
+    };
+    // At the cut itself the segmentation often has a gap (the kerf, or a thin seam). The wall is then taken a
+    // little above or below and brought back to the height asked for, keeping its depth.
+    const auto nearWall = [&](const Vec3& point, Vec3& site) {
+        for (const double offset : {0.0, 0.5, -0.5, 1.0, -1.0, 1.5, -1.5})
+            if (onWall(add(point, scale(up, offset)), site)) {
+                site = sub(site, scale(up, offset));
+                return true;
+            }
+        return false;
+    };
+
+    auto points = vtkSmartPointer<vtkPoints>::New();
+    auto strips = vtkSmartPointer<vtkCellArray>::New();
+    const double step = std::max(0.1, stepMm);
+    for (const auto& [from, to] : band.spans) {
+        vtkIdType lastLower = -1, lastUpper = -1;
+        for (double s = from;; s = std::min(to, s + step)) {
+            const Vec3 onCut = LeFortMotionCore::PointAlongCut(cut, s);
+            Vec3 lower, upper;
+            if (nearWall(onCut, lower) && nearWall(add(onCut, scale(up, riseAt(s))), upper)) {
+                const vtkIdType l = points->InsertNextPoint(lower.data());
+                const vtkIdType u = points->InsertNextPoint(upper.data());
+                if (lastLower >= 0) {
+                    const vtkIdType a[3] = {lastLower, l, u}, b[3] = {lastLower, u, lastUpper};
+                    strips->InsertNextCell(3, a);
+                    strips->InsertNextCell(3, b);
+                }
+                lastLower = l;
+                lastUpper = u;
+            } else {
+                lastLower = lastUpper = -1; // no wall here: the strip breaks
+            }
+            if (s >= to)
+                break;
+        }
+    }
+    ribbon->SetPoints(points);
+    ribbon->SetPolys(strips);
+    return ribbon;
+}
+
+LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, const OsteotomyPath& path,
+                         const std::vector<PredictiveHole>& holes, const LeFortGuideParams& params,
+                         const LeFortBandProfile* impaction)
+{
+    LeFortGuideLayout layout;
+    if (!preop.ok || !preop.wrapField || !wrapMesh || wrapMesh->GetNumberOfPoints() == 0) {
+        layout.error = QStringLiteral("Calcule primero la envolvente del hueso antes del corte.");
+        return layout;
+    }
+    QString pathError;
+    const auto cut = OsteotomyCore::PreparePathField(path, &pathError);
+    if (!path.valid || !cut) {
+        layout.error = pathError.isEmpty() ? QStringLiteral("Falta la trayectoria de la osteotomía Le Fort.") : pathError;
+        return layout;
+    }
+    const ImplicitCore::BakedField& field = *preop.wrapField;
+
+    // The guide's frame comes from the pre-operative osteotomy itself.
+    Vec3 front = AnteriorDirection(field, path);
     Vec3 center{0.0, 0.0, 0.0};
     for (const Vec3& point : path.points)
         center = add(center, scale(point, 1.0 / path.points.size()));
