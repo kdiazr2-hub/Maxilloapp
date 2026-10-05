@@ -1,8 +1,9 @@
 #include "LeFortGuideCore.h"
 
-#include <vtkCellArray.h>
-#include <vtkPoints.h>
 #include <vtkPolyData.h>
+#include <vtkPointData.h>
+#include <vtkDoubleArray.h>
+#include <vtkClipPolyData.h>
 
 #include <algorithm>
 #include <cmath>
@@ -153,92 +154,48 @@ std::array<double, 3> AnteriorDirection(const ImplicitCore::BakedField& field, c
     return front;
 }
 
-vtkSmartPointer<vtkPolyData> BandRibbon(const ImplicitCore::BakedField& bone, const OsteotomyPath& cut,
-                                        const LeFortBandProfile& band, const std::array<double, 3>& anterior,
-                                        double stepMm, double liftMm)
+vtkSmartPointer<vtkPolyData> BandOnBone(vtkPolyData* bone, const OsteotomyPath& cut, const LeFortBandProfile& band,
+                                        double thresholdMm)
 {
-    auto ribbon = vtkSmartPointer<vtkPolyData>::New();
-    const size_t count = std::min({cut.points.size(), band.heights.size(), band.upperCut.points.size()});
-    if (band.spans.empty() || count < 2)
-        return ribbon;
-    // The band's vertical: the direction its upper edge was raised in.
-    Vec3 up{0.0, 0.0, 1.0};
-    for (size_t i = 0; i < count; ++i)
-        if (std::abs(band.heights[i]) > 1e-6) {
-            up = unit(scale(sub(band.upperCut.points[i], cut.points[i]), 1.0 / band.heights[i]), up);
-            break;
+    auto out = vtkSmartPointer<vtkPolyData>::New();
+    if (!bone || bone->GetNumberOfPoints() == 0 || band.spans.empty())
+        return out;
+    const auto lower = OsteotomyCore::PreparePathField(cut);
+    const auto upper = OsteotomyCore::PreparePathField(band.upperCut);
+    if (!lower || !upper)
+        return out;
+    // Three half-spaces, each clipped on its own scalar: above the cut, below the upper edge, and where the two
+    // are at least the threshold apart (the band's local height).
+    auto current = vtkSmartPointer<vtkPolyData>::New();
+    current->ShallowCopy(bone);
+    const auto clipBy = [&](const char* name, const std::function<double(const Vec3&)>& value) {
+        auto copy = vtkSmartPointer<vtkPolyData>::New();
+        copy->ShallowCopy(current);
+        auto scalars = vtkSmartPointer<vtkDoubleArray>::New();
+        scalars->SetName(name);
+        scalars->SetNumberOfTuples(copy->GetNumberOfPoints());
+        for (vtkIdType i = 0; i < copy->GetNumberOfPoints(); ++i) {
+            double p[3];
+            copy->GetPoint(i, p);
+            scalars->SetValue(i, value({p[0], p[1], p[2]}));
         }
-    const Vec3 front = unit(sub(anterior, scale(up, dot(anterior, up))), {0.0, -1.0, 0.0});
-    // The rise at an arc length along the cut: linear along each straight piece.
-    const auto riseAt = [&](double s) {
-        double travelled = 0.0;
-        for (size_t i = 1; i < count; ++i) {
-            const double length = norm(sub(cut.points[i], cut.points[i - 1]));
-            if (s <= travelled + length || i + 1 == count) {
-                const double t = length > 1e-9 ? std::clamp((s - travelled) / length, 0.0, 1.0) : 0.0;
-                return band.heights[i - 1] + t * (band.heights[i] - band.heights[i - 1]);
-            }
-            travelled += length;
-        }
-        return band.heights.back();
+        copy->GetPointData()->SetScalars(scalars);
+        auto clip = vtkSmartPointer<vtkClipPolyData>::New();
+        clip->SetInputData(copy);
+        clip->SetValue(0.0); // keeps value >= 0
+        clip->Update();
+        current = vtkSmartPointer<vtkPolyData>::New();
+        current->DeepCopy(clip->GetOutput());
     };
-    // From in front of the face back onto the wall, no further than 10 mm behind the point it started from:
-    // through the aperture there is no wall, and what lies behind it is not where the band is cut.
-    const double walk = std::clamp(0.5 * bone.spacingMm, 0.02, 0.1);
-    const auto onWall = [&](const Vec3& point, Vec3& site) {
-        const Vec3 start = add(point, scale(front, 15.0));
-        double previous = bone.At(start);
-        for (double t = walk; t <= 25.0; t += walk) {
-            const Vec3 p = add(start, scale(front, -t));
-            const double value = bone.At(p);
-            if (previous >= 0.0 && value < 0.0) {
-                const double back = walk * value / (value - previous);
-                site = add(add(p, scale(front, back)), scale(front, liftMm));
-                return true;
-            }
-            previous = value;
-        }
-        return false;
-    };
-    // At the cut itself the segmentation often has a gap (the kerf, or a thin seam). The wall is then taken a
-    // little above or below and brought back to the height asked for, keeping its depth.
-    const auto nearWall = [&](const Vec3& point, Vec3& site) {
-        for (const double offset : {0.0, 0.5, -0.5, 1.0, -1.0, 1.5, -1.5})
-            if (onWall(add(point, scale(up, offset)), site)) {
-                site = sub(site, scale(up, offset));
-                return true;
-            }
-        return false;
-    };
-
-    auto points = vtkSmartPointer<vtkPoints>::New();
-    auto strips = vtkSmartPointer<vtkCellArray>::New();
-    const double step = std::max(0.1, stepMm);
-    for (const auto& [from, to] : band.spans) {
-        vtkIdType lastLower = -1, lastUpper = -1;
-        for (double s = from;; s = std::min(to, s + step)) {
-            const Vec3 onCut = LeFortMotionCore::PointAlongCut(cut, s);
-            Vec3 lower, upper;
-            if (nearWall(onCut, lower) && nearWall(add(onCut, scale(up, riseAt(s))), upper)) {
-                const vtkIdType l = points->InsertNextPoint(lower.data());
-                const vtkIdType u = points->InsertNextPoint(upper.data());
-                if (lastLower >= 0) {
-                    const vtkIdType a[3] = {lastLower, l, u}, b[3] = {lastLower, u, lastUpper};
-                    strips->InsertNextCell(3, a);
-                    strips->InsertNextCell(3, b);
-                }
-                lastLower = l;
-                lastUpper = u;
-            } else {
-                lastLower = lastUpper = -1; // no wall here: the strip breaks
-            }
-            if (s >= to)
-                break;
-        }
-    }
-    ribbon->SetPoints(points);
-    ribbon->SetPolys(strips);
-    return ribbon;
+    clipBy("AboveCut", [&](const Vec3& p) { return OsteotomyCore::FieldAt(*lower, p); });
+    if (current->GetNumberOfPolys() > 0)
+        clipBy("BelowUpperEdge", [&](const Vec3& p) { return -OsteotomyCore::FieldAt(*upper, p); });
+    if (current->GetNumberOfPolys() > 0)
+        clipBy("BandHeight", [&](const Vec3& p) {
+            return OsteotomyCore::FieldAt(*lower, p) - OsteotomyCore::FieldAt(*upper, p) - thresholdMm;
+        });
+    current->GetPointData()->SetScalars(nullptr);
+    return current;
 }
 
 LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, const OsteotomyPath& path,

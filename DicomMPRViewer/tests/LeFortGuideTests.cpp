@@ -545,41 +545,40 @@ void testTheAnteriorDirectionIsOutOfTheFaceWhicheverWayTheSweepAxisPoints()
     }
 }
 
-// spec §Behaviour (franja visible): the band is drawn on the anterior wall, from the cut up to its upper edge,
-// only where the segment rises, and nowhere there is no wall (the aperture).
-void testTheBandIsDrawnOnTheWallOnlyWhereItRises()
+// spec §Behaviour (franja visible) and the user's report of 2026-10-05: the band is the bone itself between the
+// Le Fort cut and the band's upper edge — the same two surfaces the slits are carved from — only where the
+// segment rises at least 0.5 mm.
+void testTheBandIsTheBoneBetweenTheTwoCuts()
 {
-    const Prepared bone = preoperativeBone();
-    const std::array<double, 3> front{0.0, 1.0, 0.0};
-    const LeFortBandProfile uniform = bandFor(4.0);
-    const auto ribbon = LeFortGuideCore::BandRibbon(*bone.design.bone, leFortCut(), uniform, front);
-    require(ribbon && ribbon->GetNumberOfPolys() > 0, "a 4 mm impaction drew no band");
-    double highest = -1e9, lowest = 1e9;
-    for (vtkIdType i = 0; i < ribbon->GetNumberOfPoints(); ++i) {
+    const auto cranial = merged(cranialPieces()); // cranial bone from z = 10 (the cut is at z = 9)
+    const auto uniform = LeFortGuideCore::BandOnBone(cranial, leFortCut(), bandFor(4.0)); // band z 9..13
+    require(uniform && uniform->GetNumberOfPolys() > 0, "a 4 mm impaction drew no band on the bone");
+    double lowest = 1e9, highest = -1e9;
+    bool front = false;
+    for (vtkIdType i = 0; i < uniform->GetNumberOfPoints(); ++i) {
         double p[3];
-        ribbon->GetPoint(i, p);
-        require(std::abs(p[1]) <= 0.6, "the band is not on the anterior wall: y = " + std::to_string(p[1]));
-        require(std::abs(p[0]) >= 5.5, "the band was drawn across the aperture: x = " + std::to_string(p[0]));
-        highest = std::max(highest, p[2]);
+        uniform->GetPoint(i, p);
         lowest = std::min(lowest, p[2]);
+        highest = std::max(highest, p[2]);
+        front = front || std::abs(p[1]) < 1e-6;
     }
-    require(std::abs(lowest - 9.0) <= 0.3 && std::abs(highest - 13.0) <= 0.3,
-            "the band does not run from the cut to 4 mm above it: z " + std::to_string(lowest) + ".." +
+    require(lowest >= 10.0 - 1e-6 && std::abs(highest - 13.0) <= 0.05,
+            "the band is not the bone from the cut up to 4 mm above it: z " + std::to_string(lowest) + ".." +
                 std::to_string(highest));
+    require(front, "the band does not lie on the anterior wall");
 
-    // Rolled: only the right side rises (x < -5), up to 2 mm at the pillar.
-    const auto rolled = LeFortGuideCore::BandRibbon(*bone.design.bone, leFortCut(), rolledBand(), front);
+    // Rolled: only the right side rises (rise = −0.1·x), and only where it reaches 0.5 mm.
+    const auto rolled = LeFortGuideCore::BandOnBone(cranial, leFortCut(), rolledBand());
     require(rolled && rolled->GetNumberOfPolys() > 0, "the rolled band drew nothing");
     for (vtkIdType i = 0; i < rolled->GetNumberOfPoints(); ++i) {
         double p[3];
         rolled->GetPoint(i, p);
         require(p[0] <= -5.0 + 0.3, "the band was drawn where the segment does not rise: x = " + std::to_string(p[0]));
-        require(p[2] <= 9.0 + 0.1 * 20.0 + 0.3, "the band is taller than the rise: z = " + std::to_string(p[2]));
+        require(p[2] <= 9.0 - 0.1 * p[0] + 0.1, "the band is taller than the rise there: z = " + std::to_string(p[2]));
     }
 
     const std::array<double, 16> descent{1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, -3.0, 0.0, 0.0, 0.0, 1.0};
-    const auto none = LeFortGuideCore::BandRibbon(*bone.design.bone, leFortCut(),
-                                                  LeFortMotionCore::Band(leFortCut(), descent), front);
+    const auto none = LeFortGuideCore::BandOnBone(cranial, leFortCut(), LeFortMotionCore::Band(leFortCut(), descent));
     require(!none || none->GetNumberOfPolys() == 0, "a descent drew a band");
 }
 
@@ -625,7 +624,7 @@ int main()
         {"a moved hole takes its pad with it", testAMovedHoleTakesItsPadWithIt},
         {"the anterior direction is out of the face whichever way the sweep axis points",
          testTheAnteriorDirectionIsOutOfTheFaceWhicheverWayTheSweepAxisPoints},
-        {"the band is drawn on the wall only where it rises", testTheBandIsDrawnOnTheWallOnlyWhereItRises},
+        {"the band is the bone between the two cuts", testTheBandIsTheBoneBetweenTheTwoCuts},
         {"the guide covers the whole cut with a single hole", testTheGuideCoversTheWholeCutWithASingleHole},
     };
     int failures = 0;

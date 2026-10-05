@@ -88,14 +88,12 @@ namespace LeFortGuideCore
 // proposal walks back into the bone along (`LeFortHoleContext::anterior`). `field` is the wrap's field.
 std::array<double, 3> AnteriorDirection(const ImplicitCore::BakedField& field, const OsteotomyPath& path);
 
-// The band an impaction takes out, as a surface to draw: a strip on the anterior wall from the cut up to the
-// band's upper edge, sampled every `stepMm` of the cut and only inside `band.spans`. Each side is found by
-// walking back along −`anterior` onto `bone` (`ImplicitCore::BakeMeshField` of the bone before the cut) and is
-// lifted `liftMm` off it so it shows over the bone. Where there is no wall (the aperture) the strip breaks.
+// The band an impaction takes out, drawn on the bone itself: the part of `bone` (the cranial base before the
+// cut) between the Le Fort cut and the band's upper edge — the very surfaces the guide's two slits are carved
+// from, so what is red is what the saw takes out — and only where that band is at least `thresholdMm` tall.
 // Empty when there is no band. Display only: the guide is built from the band itself.
-vtkSmartPointer<vtkPolyData> BandRibbon(const ImplicitCore::BakedField& bone, const OsteotomyPath& cut,
-                                        const LeFortBandProfile& band, const std::array<double, 3>& anterior,
-                                        double stepMm = 0.5, double liftMm = 0.2);
+vtkSmartPointer<vtkPolyData> BandOnBone(vtkPolyData* bone, const OsteotomyPath& cut, const LeFortBandProfile& band,
+                                        double thresholdMm = 0.5);
 
 // `preop` is the wrap of the bone before the cut (its field), `wrapMesh` its surface and `path` the planned
 // Le Fort cut. `holes` are the holes the guide drills, on the pre-operative anatomy (the proposed or moved

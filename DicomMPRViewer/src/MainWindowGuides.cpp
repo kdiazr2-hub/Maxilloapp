@@ -3476,15 +3476,13 @@ QString MainWindow::guideLeFortHoleReport() const
 void MainWindow::refreshGuideBand()
 {
     m_guideBandMesh = nullptr;
-    if (m_guidePlan.type != GuideType::LeFort || !m_guidePlan.design.bone || !m_guidePrepared.ok ||
-        !m_guidePrepared.wrapField)
+    if (m_guidePlan.type != GuideType::LeFort)
         return;
     const LeFortBandProfile band = guideLeFortBand();
     if (!band.ok || band.spans.empty())
         return;
-    const OsteotomyPath path = guideLeFortPath();
-    m_guideBandMesh = LeFortGuideCore::BandRibbon(*m_guidePlan.design.bone, path, band,
-                                                  LeFortGuideCore::AnteriorDirection(*m_guidePrepared.wrapField, path));
+    // On the cranial bone before the cut: that is where the band is taken out.
+    m_guideBandMesh = LeFortGuideCore::BandOnBone(guideSourceMeshForLabel(kLeFortCranialLabel), guideLeFortPath(), band);
 }
 
 void MainWindow::showGuideLeFortHoles()

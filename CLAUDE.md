@@ -336,7 +336,7 @@ cmake --build build-linux-core --parallel && ctest --test-dir build-linux-core -
   guide out with `Layout(..., &band)` and builds it. With plates the guide drills exactly their predictive holes
   (the plate step comes first; `SplintWorkspaceTests` holds it); without, `DrillSites(lefortHoles)` become the
   sleeves. The upper slit's pieces follow `band.upperCut`, so `guideChosenSlots` adds them only while the
-  movement still gives that band. The band is drawn red over the guide (`BandRibbon`, `kGuideBandActorKey`,
+  movement still gives that band. The band is drawn red on the bone itself between the two cut surfaces (`BandOnBone`, `kGuideBandActorKey`,
   `CranioPalette::resection`) and recomputed with the envelope. «Mover orificio» (`kModeMoveHoles`) shows the
   sites as draggable markers by verdict; a drop goes through `MoveHole`: Rejected stays put with the reason in
   the status bar, Warning/Ok moves it (manual) and rebuilds with everything else unchanged.
