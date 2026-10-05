@@ -70,6 +70,9 @@ cmake --build build-linux-core --parallel && ctest --test-dir build-linux-core -
   Prefer putting new logic in separate core classes (like `TransformCore`, `SplintGenerator`) that tests can link without Qt widgets.
 - DICOM load: `AsyncDicomLoader` (worker thread) → `DicomSeriesIndexer` → `VolumeCacheManager` (.mha cache in `%LOCALAPPDATA%`) → `DicomVolumeLoader`.
 - `MPRView` (2D reslice views), `Mesh3DView` (3D scenes, gizmos, picking).
+- `MeshGenerator::generateMesh`: bone labels with ≥ 25 smoothing iterations are Gaussian-blurred before
+  marching cubes; every voxel of the label is floored at 0.55 so a one-voxel wall can never blur under the 0.5
+  contour (it used to, and thin maxillary/orbital walls came out as holes — user's report, 2026-10-05).
 - AI segmentation: `StandaloneDentalSegmentatorService` launches `scripts/run_standalone_dental_segmentator.py` (nnU-Net DentalSegmentator, weights in `%LOCALAPPDATA%/DicomMPRViewer/DentalSegmentator/ML`).
 - `ProjectSerializer` saves/loads `.maxilloproject` files; new keys must stay optional so older projects load.
 - Splints: `SplintHeightmapGenerator` (height-map splint, Prepare/Build), `SplintDesignCore` (named designs, JSON),

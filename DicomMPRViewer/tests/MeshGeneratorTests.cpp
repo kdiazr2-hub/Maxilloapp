@@ -81,6 +81,32 @@ bool contains(vtkImageData* image, vtkPolyData* mesh, double x, double y, double
     return distance->EvaluateFunction(point) < 0;
 }
 
+// A wall one voxel thick (the anterior maxilla, a sinus or orbital wall at CT resolution) must stay in the mesh
+// at the strongest smoothing. The Gaussian pre-smoothing used to average it below the contour level and the
+// bone came out full of holes (user's report, 2026-10-05: "salen más huecos").
+void checkThinWallSurvivesSmoothing(int iterations)
+{
+    auto image = vtkSmartPointer<vtkImageData>::New();
+    image->SetExtent(0, 40, 0, 40, 0, 30);
+    image->SetSpacing(0.3, 0.3, 0.3);
+    image->AllocateScalars(VTK_UNSIGNED_CHAR, 1);
+    image->GetPointData()->GetScalars()->FillComponent(0, 0);
+    for (int y = 5; y <= 35; ++y)
+        for (int x = 5; x <= 35; ++x)
+            image->SetScalarComponentFromDouble(x, y, 15, 0, 5); // the wall, one voxel thick at z = 15
+    QString error;
+    const auto mesh = MeshGenerator::generateMesh(image, 5, true, iterations, &error);
+    require(mesh && mesh->GetNumberOfPoints() > 0, "a one-voxel bone wall vanished from the smoothed mesh");
+    // No hole: every point of the wall's middle lies between the two faces.
+    auto distance = vtkSmartPointer<vtkImplicitPolyDataDistance>::New();
+    distance->SetInput(mesh);
+    for (int y = 10; y <= 30; y += 2)
+        for (int x = 10; x <= 30; x += 2) {
+            double p[3] = {0.3 * x, 0.3 * y, 0.3 * 15};
+            require(distance->EvaluateFunction(p) < 0, "the smoothed thin wall has a hole");
+        }
+}
+
 void checkScanBoundary(int label, bool hollow, int iterations, bool oriented)
 {
     auto image = imageWithBone(label, hollow, oriented);
@@ -196,6 +222,8 @@ int main(int argc, char** argv)
                 }
             }
         }
+        for (int iterations : {25, 40, 70})
+            checkThinWallSurvivesSmoothing(iterations);
         if (argc > 1) renderComparison(argv[1]);
         std::cout << "Mesh scan-boundary tests passed (36 cases).\n";
         return 0;

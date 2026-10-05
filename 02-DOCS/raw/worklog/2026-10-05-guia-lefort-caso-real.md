@@ -37,3 +37,10 @@ Linux core and full app suites. Pending: Windows rebuild and the same real case.
 9. Left guide short of the zygomatic pillar: a perforation on the cut was read as part of the nasal aperture.
    Only gaps inside the piriform points are the aperture. Envelope closing 2.5 mm; segmentation thickens thin
    walls from the CT and seals pinholes denser than air.
+
+## Fourth round (same day)
+
+10. "Salen más huecos" after re-segmenting. Adding voxels cannot open holes; the holes come from
+    `MeshGenerator`'s Gaussian pre-smoothing, which averaged one-voxel walls under the 0.5 contour. The label's
+    voxels are now floored at 0.55 before contouring (MeshGeneratorTests: one-voxel wall at 25/40/70 iterations,
+    red → green).

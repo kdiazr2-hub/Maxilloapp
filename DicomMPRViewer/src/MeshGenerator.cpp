@@ -6,7 +6,9 @@
 #include <vtkImageConstantPad.h>
 #include <vtkImageGaussianSmooth.h>
 #include <vtkImageData.h>
+#include <vtkDataArray.h>
 #include <vtkImageThreshold.h>
+#include <vtkPointData.h>
 #include <vtkMarchingCubes.h>
 #include <vtkPolyData.h>
 #include <vtkPolyDataNormals.h>
@@ -116,8 +118,23 @@ vtkSmartPointer<vtkPolyData> MeshGenerator::generateMesh(vtkImageData* labelmap,
         gaussian->SetStandardDeviations(sigma[0], sigma[1], sigma[2]);
         gaussian->SetRadiusFactors(2.0, 2.0, 2.0);
 
+        // The blur never takes a voxel of the label below the contour level. A wall one or two voxels thick
+        // (the anterior maxilla, the sinus and orbital walls) is otherwise averaged under 0.5 and drops out of
+        // the mesh as holes (user's report, 2026-10-05: "salen más huecos"); with the floor the surface still
+        // rounds off, but only outside the voxels the segmentation calls bone.
+        threshold->Update();
+        gaussian->Update();
+        auto floored = vtkSmartPointer<vtkImageData>::New();
+        floored->DeepCopy(gaussian->GetOutput());
+        vtkDataArray* mask = threshold->GetOutput()->GetPointData()->GetScalars();
+        vtkDataArray* field = floored->GetPointData()->GetScalars();
+        constexpr double kInside = 0.55;
+        for (vtkIdType i = 0; i < field->GetNumberOfTuples(); ++i)
+            if (mask->GetTuple1(i) > 0.5 && field->GetTuple1(i) < kInside)
+                field->SetTuple1(i, kInside);
+
         auto cubes = vtkSmartPointer<vtkMarchingCubes>::New();
-        cubes->SetInputConnection(gaussian->GetOutputPort());
+        cubes->SetInputData(floored);
         cubes->SetValue(0, 0.50);
         cubes->ComputeNormalsOff();
         cubes->ComputeGradientsOff();
