@@ -88,6 +88,11 @@ struct LeFortHoleContext
     // gives it (LeFortGuideCore works it out the same way for the guide's frame).
     std::array<double, 3> anterior{0.0, -1.0, 0.0}; // DICOM LPS: anterior is −Y
     LeFortHoleParams params;
+    // Where each pillar's holes are sought, in the cut's order (pilar D, piriforme D, piriforme I, pilar I), when
+    // the cut's own point is not the place: the maxillomalar buttress stands over the first molar, and the pillar
+    // point is clicked at the cut's lateral end, well behind it (user's case, 2026-10-06). Unset: the cut's point.
+    std::array<std::array<double, 3>, 4> anchors{};
+    std::array<bool, 4> hasAnchor{};
 };
 
 enum class LeFortPillar

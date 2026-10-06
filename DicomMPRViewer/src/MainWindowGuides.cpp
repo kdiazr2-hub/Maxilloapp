@@ -81,7 +81,7 @@ QString meshLabelName(int label);
 
 namespace
 {
-constexpr double kGuideGapClosingMm = 2.5;
+constexpr double kGuideGapClosingMm = 4.0; // the envelope bridges the maxilla's perforations (2026-10-06)
 constexpr int kModeNone = 0;
 constexpr int kModeRegion = 1;
 constexpr int kModeSlotEnds = 2;
@@ -1977,8 +1977,15 @@ void MainWindow::buildGuideMesh()
         // A drill sleeve at every predictive hole of the plates, carved with everything else.
         m_guidePlan.sleeve = guideSleeveParams();
         m_guideBuiltFigures = guideFiguresWithSleeves();
+        // The Le Fort guide is laid on the envelope and nothing else: its inner face is the envelope plus the
+        // clearance (user's request, 2026-10-06: "la guía debe crearse sobre el envolvente, no sobre el hueso").
+        // The envelope no longer sinks into the bone it wraps, so the bone clip only made the guide follow the
+        // segmentation's holes. The bone field stays for judging the drill sites.
+        GuideDesignParams design = m_guidePlan.design;
+        if (m_guidePlan.type == GuideType::LeFort)
+            design.bone.reset();
         result = GuideDesignCore::Build(m_guidePrepared, m_guideRegion, chosen, m_guidePlan.holes,
-                                        m_guideBuiltFigures, m_guidePlan.design);
+                                        m_guideBuiltFigures, design);
     }
     QApplication::restoreOverrideCursor();
     if (!m_guidePrepared.ok) {
@@ -3384,6 +3391,9 @@ void MainWindow::generateLeFortGuide()
         if (!m_guideWrapMesh || !m_guidePrepared.ok)
             return;
     }
+    // The first molars anchor the maxillomalar holes: measure the roots now if step 1 was skipped.
+    if (!m_guideRootAnalysis.ok && m_mesh3DView && m_mesh3DView->meshData(objectActorKey(kUpperTeethLabel)))
+        analyzeGuideRoots();
     const OsteotomyPath path = guideLeFortPath();
     if (!path.valid) {
         QMessageBox::warning(this, tr("Guía de corte"),
@@ -3568,6 +3578,16 @@ bool MainWindow::guideLeFortHoleContext(LeFortHoleContext& context, QString* err
         m_guideTeethFieldTime = teeth->GetMTime();
     }
     context.teeth = m_guideTeethField.get();
+    // The maxillomalar buttress stands over the first molar: its place on the cut anchors that pillar's holes.
+    if (m_guideRootAnalysis.ok) {
+        for (const auto& [tooth, slot] : {std::pair{RootTooth::FirstMolarRight, 0}, std::pair{RootTooth::FirstMolarLeft, 3}}) {
+            const int index = m_guideRootAnalysis.named[static_cast<size_t>(tooth)];
+            if (index < 0)
+                continue;
+            context.anchors[static_cast<size_t>(slot)] = m_guideRootAnalysis.apices[static_cast<size_t>(index)].onCut;
+            context.hasAnchor[static_cast<size_t>(slot)] = true;
+        }
+    }
     return true;
 }
 

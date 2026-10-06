@@ -581,6 +581,24 @@ void testTwoHolesFitWhereTheBoneIsShort()
                 " hole(s) above the cut instead of 2");
 }
 
+// The maxillomalar buttress stands over the first molar, and the pillar point is clicked at the lateral end of the
+// cut, well behind it: on the surgeon's case the holes came out ~19 mm lateral of the molar (2026-10-06). When the
+// first molar is known, its place on the cut anchors that pillar's holes.
+void testThePillarHolesFollowTheFirstMolar()
+{
+    Scene s = scene(pillarCut(), rise(4.0), maxillaWithAperture(false));
+    s.context.anchors[3] = {17.0, 0.0, 9.0}; // the left first molar's apex, on the cut
+    s.context.hasAnchor[3] = true;
+    const LeFortProposal proposal = LeFortHoleCore::Propose(s.context);
+    int onMolar = 0;
+    for (const LeFortProposedHole& hole : proposal.holes)
+        if (hole.pillar == LeFortPillar::PillarLeft) {
+            require(std::abs(hole.center[0] - 17.0) <= 1.5, "a maxillomalar hole is not over the first molar: " + where(hole));
+            ++onMolar;
+        }
+    require(onMolar == 4, "the maxillomalar pillar did not get its four holes: " + std::to_string(onMolar));
+}
+
 } // namespace
 
 int main()
@@ -608,6 +626,7 @@ int main()
         {"a wall facing sideways is not proposed", testAWallFacingSidewaysIsNotProposed},
         {"a drill near a root is a warning that names it", testADrillNearARootIsAWarningThatNamesIt},
         {"two holes fit where the bone is short", testTwoHolesFitWhereTheBoneIsShort},
+        {"the pillar holes follow the first molar", testThePillarHolesFollowTheFirstMolar},
         {"two above and two below in a column on each pillar", testTwoAboveAndTwoBelowInAColumnOnEachPillar},
         {"roots do not leave a pillar without holes below", testRootsDoNotLeaveAPillarWithoutHolesBelow},
     };

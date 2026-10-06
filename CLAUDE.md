@@ -372,7 +372,11 @@ cmake --build build-linux-core --parallel && ctest --test-dir build-linux-core -
   left one per pillar where the usable bone was short, 2026-10-06); a drill path within 1 mm of `LeFortHoleContext::teeth`
   (BakeMeshField of label 3) to 6 mm deep is a WARNING naming the root (`nearRoot`), not a refusal.
   The aperture is only the wall-less gaps whose middle lies inside the piriform points (a perforation in a
-  lateral wall cut the left guide back short of the pillar). The envelope's gap closing defaults to 2.5 mm and
+  lateral wall cut the left guide back short of the pillar). The Le Fort guide is built WITHOUT the bone clip
+  (`design.bone` reset for the build only; user's request 2026-10-06: "sobre el envolvente, no sobre el hueso"),
+  and the maxillomalar holes are anchored over the first molar (`LeFortHoleContext::anchors`, the molar's apex on
+  the cut; «Proponer» measures the roots first if needed) — the pillar point sits ~19 mm behind it on the real
+  case. The envelope's gap closing defaults to 4.0 mm (was 2.5) and
   Le Fort projects saved with less are raised on reopening; the segmentation script thickens bone
   (`thicken_thin_bone`: grow ≤ 1.2 mm into ≥ 100 HU; seal: a non-air voxel with bone within 2.5 mm on BOTH
   sides along ≥ 2 of the 13 grid axes, up to 4 passes — a ball closing never seals a hole in a one-voxel wall;

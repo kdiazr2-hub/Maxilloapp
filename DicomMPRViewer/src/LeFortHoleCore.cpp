@@ -234,7 +234,7 @@ LeFortProposal Propose(const LeFortHoleContext& context, const std::vector<LeFor
         }));
     };
     for (size_t index = 0; index < 4; ++index) {
-        const Vec3& anchor = context.cut.points[index];
+        const Vec3& anchor = context.hasAnchor[index] ? context.anchors[index] : context.cut.points[index];
         for (const LeFortCutSide side : {LeFortCutSide::Cranial, LeFortCutSide::Segment}) {
             const bool cranial = side == LeFortCutSide::Cranial;
             std::vector<Candidate> candidates;

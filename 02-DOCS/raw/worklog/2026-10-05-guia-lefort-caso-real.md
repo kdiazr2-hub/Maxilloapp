@@ -56,3 +56,5 @@ Linux core and full app suites. Pending: Windows rebuild and the same real case.
 14. "No, me refiero a los orificios del maxilar" (2026-10-06): the anterior maxillary wall over the sinus reads around -400 HU in its gaps (partial volume with the sinus air), below the -200 HU "not air" limit. The maxilla now seals down to -700 HU and up to ~6 mm (3.5 mm reach); -1000 HU openings stay open; the mandible keeps its rule (Python 36 OK; ~18 s on a 400^3 head).
 
 15. (2026-10-06) Slits ran the whole guide and nearly split it: they now cover 65% of each guide from the piriform rim, the lateral end whole (LeFortGuideTests "the slits leave the lateral end solid", red: slit to x 25 → green). Holes came one per pillar: greedy took the middle of short bone; now the best pair (LeFortHoleTests "two holes fit where the bone is short", red → green).
+
+16. (2026-10-06) "La guía debe crearse sobre el envolvente": the Le Fort build drops the bone clip; envelope gap closing 4 mm. Holes off the pillars: the maxillomalar anchor is now the first molar on the cut (LeFortHoleTests "the pillar holes follow the first molar").
