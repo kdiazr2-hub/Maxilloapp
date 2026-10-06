@@ -393,6 +393,7 @@ private:
     QPushButton* m_guideMarkHolesButton = nullptr;  // «Marcar orificios»: each click adds a drill site
     QPushButton* m_guideClearHolesButton = nullptr; // «Borrar orificios»
     QPushButton* m_guideNextPillarButton = nullptr; // guided marking: on to the next pillar
+    QPushButton* m_guideMarkForaminaButton = nullptr; // guided marking from the infraorbital foramina
     QDoubleSpinBox* m_guideScrewSpin = nullptr;     // the screw the surgeon chose for the Le Fort guide
     QLabel* m_guideScrewBoreLabel = nullptr;        // the guide's hole that screw gets (its pilot drill)
     QWidget* m_guideScrewRow = nullptr;

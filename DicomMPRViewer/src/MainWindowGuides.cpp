@@ -603,6 +603,19 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
         showGuideMarkPrompt();
     });
     automaticGuideBox->addWidget(m_guideMarkHolesButton);
+    // The infraorbital foramina on their own, too: the guide keeps clear of them (user's report, 2026-10-06: "no
+    // sale la parte de marcar agujero infraorbitario" — it was only reached after the four pillars).
+    m_guideMarkForaminaButton = new QPushButton(tr("3b · Marcar agujeros infraorbitarios"), panel);
+    m_guideMarkForaminaButton->setToolTip(tr("Haga clic en cada agujero infraorbitario sobre la envolvente: "
+                                             "la guía no lo tocará."));
+    connect(m_guideMarkForaminaButton, &QPushButton::clicked, this, [this] {
+        if (!m_guideMarkHolesButton->isChecked())
+            m_guideMarkHolesButton->setChecked(true); // the envelope alone, as for the holes
+        m_guideMarkStep = 4;
+        showGuideMarkPrompt();
+        updateGuideUi();
+    });
+    automaticGuideBox->addWidget(m_guideMarkForaminaButton);
     m_guideNextPillarButton = new QPushButton(tr("Siguiente pilar ›"), panel);
     connect(m_guideNextPillarButton, &QPushButton::clicked, this, [this] {
         ++m_guideMarkStep;
@@ -2349,8 +2362,12 @@ void MainWindow::updateGuideUi()
     if (m_guideClearHolesButton)
         m_guideClearHolesButton->setVisible(!m_guidePlateWorkspace && hasWrap && hasSites);
     const bool marking = m_guidePointMode == kModeMarkHoles;
-    if (m_guideNextPillarButton)
+    if (m_guideNextPillarButton) {
         m_guideNextPillarButton->setVisible(!m_guidePlateWorkspace && marking);
+        m_guideNextPillarButton->setText(m_guideMarkStep < 4 ? tr("Siguiente pilar ›") : tr("Siguiente ›"));
+    }
+    if (m_guideMarkForaminaButton)
+        m_guideMarkForaminaButton->setVisible(!m_guidePlateWorkspace && leFort && hasWrap);
     if (m_guideUndoHoleButton)
         m_guideUndoHoleButton->setVisible(!m_guidePlateWorkspace && marking && (hasSites || !m_guidePlan.foramina.empty()));
     if (m_guideAcceptHolesButton) {
@@ -2420,9 +2437,14 @@ void MainWindow::updateGuideUi()
     showSection(m_guideFiguresSection, !m_guidePlateWorkspace && workflow == GuideWorkflowStep::Complete);
     showSection(m_guideBuildSection, !m_guidePlateWorkspace &&
         (workflow == GuideWorkflowStep::Build || workflow == GuideWorkflowStep::Complete));
-    if (m_guideBuildButton)
+    // The assistant builds and rebuilds from its step 4 alone; the hand-drawn flow's rebuild, its «Anterior» and
+    // the clay editor are not offered with it (user's report, 2026-10-06).
+    if (m_guideBuildButton) {
         m_guideBuildButton->setText(hasGuide ? tr("Reconstruir guía") : tr("Crear guía"));
-    showSection(m_guideEditSection, !m_guidePlateWorkspace && hasGuide && workflow == GuideWorkflowStep::Complete);
+        m_guideBuildButton->setVisible(!(leFortAssistant && m_guidePlan.assistant));
+    }
+    showSection(m_guideEditSection, !m_guidePlateWorkspace && hasGuide && workflow == GuideWorkflowStep::Complete &&
+                                        !(leFortAssistant && m_guidePlan.assistant));
     showSection(m_guideExportSection, !m_guidePlateWorkspace && hasGuide && workflow == GuideWorkflowStep::Complete);
     updateGuideSculptBar();
     if (m_guideRegionButton) m_guideRegionButton->setEnabled(hasWrap);
@@ -2458,7 +2480,8 @@ void MainWindow::updateGuideUi()
         m_guideWorkflowLabel->setText(text);
     }
     if (m_guideWorkflowBackButton) {
-        m_guideWorkflowBackButton->setVisible(workflow != GuideWorkflowStep::Envelope);
+        m_guideWorkflowBackButton->setVisible(workflow != GuideWorkflowStep::Envelope &&
+                                              !(leFortAssistant && m_guidePlan.assistant));
         m_guideWorkflowBackButton->setEnabled(hasWrap);
     }
     if (m_guideWorkflowNextButton) {
@@ -3661,6 +3684,7 @@ void MainWindow::layoutLeFortGuide(const std::vector<PredictiveHole>& drillSites
     // The plan is replaced by the laid-out guide; everything stays editable afterwards.
     m_guidePlan.contour.clear();
     m_guidePlan.paint = layout.paint;
+    m_guidePlan.assistant = true;
     m_guidePlan.slotPlan = layout.slotPlan;
     m_guidePlan.holes.clear(); // every drill bore is a sleeve at a drill site
     // Regeneration is a fresh automatic cutting-guide layout. Saved projects

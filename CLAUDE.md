@@ -279,11 +279,11 @@ cmake --build build-linux-core --parallel && ctest --test-dir build-linux-core -
   with dabs no larger than their depth in the hull — the printed guides the surgeon showed (2026-10-06); a tall
   nasomaxillary column no longer lifts the whole side. Labels are placed inside the hull first (full size, then
   0.8 and 2/3), never over the nose, and only then on their own strip. `keepOut` (the infraorbital foramina the
-  surgeon marks in the guided steps 5–6, `GuidePlan::foramina`, optional key) is erased last with
+  surgeon marks in the guided steps 5–6 or with «3b · Marcar agujeros infraorbitarios», `GuidePlan::foramina`, optional key) is erased last with
   `keepOutRadiusMm` (5) and positioning screws avoid it (LeFortGuideTests "each guide is the hull of what it
   carries", "the guide keeps clear of the infraorbital foramen"). The screw is the surgeon's choice
   (`SleeveParams::screwDiameterMm`, «Tornillo» in step 4); the guide's hole is `PlateCore::PilotDrillFor` it
-  (2.0 → 1.6 mm); plans saved without it get 2.0 / 1.6. `connectPaint` then guarantees it: the dabs are grouped into components
+  (2.0 → 1.6 mm); plans saved without it get 2.0 / 1.6. A guide the assistant laid out (`GuidePlan::assistant`, optional key) is rebuilt only from step 4: the hand-drawn flow's «Reconstruir guía», its «Anterior» and EDITAR are hidden (user's report, 2026-10-06). `connectPaint` then guarantees it: the dabs are grouped into components
   by real overlap (allowing for the millimetre the region is opened by), and every patch but the largest is
   joined to it by a strap of dabs laid on the surface, nearest points first. A pad round a sleeve that touches
   nothing else is a hole drilled with no material under it, which is what the surgeon got ("que no queden

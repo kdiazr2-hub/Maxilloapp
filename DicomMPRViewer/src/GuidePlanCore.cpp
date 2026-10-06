@@ -173,6 +173,8 @@ QJsonObject ToJson(const GuidePlan& plan)
     }
     if (!plan.caseLabel.isEmpty())
         out[QStringLiteral("caseLabel")] = plan.caseLabel;
+    if (plan.assistant)
+        out[QStringLiteral("assistant")] = true;
     out[QStringLiteral("plate")] = PlateCore::ParamsToJson(plan.plate);
     if (!plan.foramina.empty()) {
         QJsonArray foramina;
@@ -298,6 +300,7 @@ GuidePlan FromJson(const QJsonObject& object)
     for (const QJsonValue& value : object.value(QStringLiteral("bandHeights")).toArray())
         plan.bandHeights.push_back(value.toDouble());
     plan.caseLabel = object.value(QStringLiteral("caseLabel")).toString();
+    plan.assistant = object.value(QStringLiteral("assistant")).toBool(false);
     for (const QJsonValue& value : object.value(QStringLiteral("foramina")).toArray()) {
         const QJsonObject o = value.toObject();
         const QJsonArray center = o.value(QStringLiteral("center")).toArray();

@@ -1541,6 +1541,15 @@ public:
         window.m_guideClearHolesButton->click();
         settle();
         require(window.m_guidePlan.lefortHoles.empty(), "the holes were not cleared");
+        // The foramina can be marked on their own (user's report, 2026-10-06: the step was not to be found).
+        require(window.m_guideMarkForaminaButton->isVisibleTo(&window), "the foramina cannot be marked on their own");
+        window.m_guideMarkForaminaButton->click();
+        settle();
+        require(window.m_guideMarkHolesButton->isChecked() &&
+                    window.m_guideReportLabel->text().contains(QStringLiteral("infraorbitario derecho")),
+                "«Marcar agujeros infraorbitarios» does not ask for the right foramen");
+        window.m_guideMarkHolesButton->setChecked(false);
+        settle();
         window.m_guideMarkHolesButton->click();
         settle();
         require(!window.m_guideShowModelsCheck->isChecked() && window.m_guideShowWrapCheck->isChecked() &&
@@ -1754,9 +1763,13 @@ public:
         require(window.m_guideBuiltFigures.size() ==
                     window.m_guidePlan.figures.size() + 2 * window.m_guidePlan.lefortHoles.size(),
                 "the guide does not carry one sleeve body and one bore per drill site");
-        require(window.m_guideBuildSection->isVisibleTo(&window) &&
-                    window.m_guideBuildButton->text() == QStringLiteral("Reconstruir guía"),
-                "the generated guide cannot be retouched and rebuilt");
+        // One way to rebuild, the assistant's own; no clay editor and no «Anterior» with it (user's report,
+        // 2026-10-06: "tienes dos reconstruir guía").
+        require(window.m_guideAcceptHolesButton->isVisibleTo(&window) &&
+                    window.m_guideAcceptHolesButton->text().contains(QStringLiteral("Reconstruir")) &&
+                    !window.m_guideBuildButton->isVisibleTo(&window) && !window.m_guideEditSection->isVisibleTo(&window) &&
+                    !window.m_guideWorkflowBackButton->isVisibleTo(&window),
+                "the assistant still offers a second rebuild, the editor or «Anterior»");
         window.m_guideShowWrapCheck->setChecked(false); // the guide alone, with its sleeves
         window.m_guideView->setViewAlongDirection({4.0, 0.0, 10.0}, {-0.35, -1.0, -0.25}, {0.0, 0.0, 1.0}, 32.0);
         window.m_guideView->render();

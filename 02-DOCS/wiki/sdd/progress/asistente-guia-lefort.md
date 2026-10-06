@@ -36,3 +36,4 @@ status: in-progress
 | F11 holes in the bone mesh | complete | MeshGeneratorTests thin wall (red: vanished → green with the 0.55 floor) |
 | F12 solid guide, uniform rim, band while marking | complete | LeFortGuideTests "no openwork cells", "uniform rim" (red: 1.5 mm uneven → green); workspace: band on the envelope while marking |
 | F13 hull-shaped guides, foramen keep-out, screw choice | complete | LeFortGuideTests "hull", "infraorbital foramen"; PlateTests pilot drill; GuidePlanTests screw + foramina; workspace guided steps 5–6 |
+| F14 one rebuild, no editor, foramina button | complete | SplintWorkspaceTests: assistant hides EDITAR / second rebuild / «Anterior»; «3b» asks for the right foramen; GuidePlanTests `assistant` round trip |

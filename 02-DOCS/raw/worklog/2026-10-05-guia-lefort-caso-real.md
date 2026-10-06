@@ -68,3 +68,6 @@ Linux core and full app suites. Pending: Windows rebuild and the same real case.
 20. (2026-10-06) "La guía debe tener la estructura de la primera imagen; se mete en el agujero infraorbitario; orificios de 1.6, no 2.0; ¿puedes hacer que elija el diámetro del tornillo?": each guide is the rounded hull of its sleeves, screws, labels and the cut (LeFortGuideTests "hull", red: lateral end as tall as the column → green); infraorbital foramina are marked in guided steps 5–6 and kept 5 mm clear (red: guide 0.9 mm from it, via a positioning screw's boss → green); «Tornillo» spin, hole = pilot drill (PlateTests, GuidePlanTests). Workspace caught a label over the nose standing as a third piece: labels now keep out of the aperture and keep their strip.
 
     Also: a fallback label beside the nose joined the two guides into one (export found one guide); labels now never sit over the aperture in any pass.
+
+21. (2026-10-06) "Quita editar guía; tienes dos reconstruir guía; anterior está de más; no sale marcar agujero infraorbitario": an assistant-built guide (`GuidePlan::assistant`) hides EDITAR, the second «Reconstruir guía» and «Anterior»; «3b · Marcar agujeros infraorbitarios» starts the foramen steps directly (SplintWorkspaceTests, red: edit/rebuild still shown → green).
+

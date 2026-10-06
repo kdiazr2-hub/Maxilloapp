@@ -80,6 +80,9 @@ struct GuidePlan
     // The infraorbital foramina the surgeon marked, which the Le Fort guides keep clear of (user's report,
     // 2026-10-06). Optional key `foramina`.
     std::vector<GuideForamen> foramina;
+    // The Le Fort assistant laid this guide out (step 4): it is rebuilt from there, not by hand. Optional key
+    // `assistant`.
+    bool assistant = false;
 };
 
 namespace GuidePlanCore

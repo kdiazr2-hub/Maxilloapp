@@ -205,12 +205,15 @@ void testTheScrewAndTheForaminaTravelWithThePlan()
     plan.sleeve.boreDiameterMm = 1.1;
     plan.foramina.push_back({{-20.0, 5.0, 30.0}, true});
     plan.foramina.push_back({{21.0, 5.0, 31.0}, false});
+    plan.assistant = true;
     const GuidePlan back = GuidePlanCore::FromJson(GuidePlanCore::ToJson(plan));
     require(std::abs(back.sleeve.screwDiameterMm - 1.5) < 1e-9 && std::abs(back.sleeve.boreDiameterMm - 1.1) < 1e-9,
             "the screw choice did not come back");
     require(back.foramina.size() == 2 && back.foramina[0].right && !back.foramina[1].right &&
                 back.foramina[1].center == std::array<double, 3>{21.0, 5.0, 31.0},
             "the marked foramina did not come back");
+    require(back.assistant && !GuidePlanCore::FromJson(GuidePlanCore::ToJson(GuidePlan{})).assistant,
+            "whether the assistant laid the guide out did not come back");
     QJsonObject older = GuidePlanCore::ToJson(GuidePlan{});
     older[QStringLiteral("sleeve")] = QJsonObject{{QStringLiteral("boreDiameterMm"), 2.0},
                                                  {QStringLiteral("outerDiameterMm"), 4.2},
