@@ -376,9 +376,12 @@ cmake --build build-linux-core --parallel && ctest --test-dir build-linux-core -
   (`design.bone` reset for the build only; user's request 2026-10-06: "sobre el envolvente, no sobre el hueso"),
   and the maxillomalar holes are anchored over the first molar (`LeFortHoleContext::anchors`, the molar's apex on
   the cut; «Proponer» measures the roots first if needed) — the pillar point sits ~19 mm behind it on the real
-  case. «Marcar orificios» (`kModeMarkHoles`, `LeFortHoleCore::AddHole`: a click → manual hole on the bone, nearest
-  pillar, side of the cut, judged; refused clicks are reported) and «Borrar orificios» let the surgeon place the
-  sites; the layout then ends each side `lateralMarginMm` past its outermost hole (`extentFromHoles`, set by the
+  case. The holes are now MARKED BY THE SURGEON, guided (user's request 2026-10-06: «Proponer» hidden, no zone
+  limits, on the envelope): «3 · Marcar orificios (guiado)» shows only the envelope and walks nasomaxilar D →
+  maxilomalar D → nasomaxilar I → maxilomalar I («Siguiente pilar», «Quitar último», `m_guideMarkStep`,
+  `showGuideMarkPrompt`); each click is `LeFortHoleCore::MarkHole` — exactly at the click, envelope normal as
+  axis, never refused (a Support refusal becomes a warning). `AddHole` (nearest pillar, onto the bone) stays in the
+  core. «Borrar orificios» clears them; after building, the guides are shown on the envelope, not the bone; the layout then ends each side `lateralMarginMm` past its outermost hole (`extentFromHoles`, set by the
   UI) — user's request 2026-10-06. The envelope's gap closing defaults to 6.0 mm (was 4.0, 2.5) and
   Le Fort projects saved with less are raised on reopening; the segmentation script thickens bone
   (`thicken_thin_bone`: grow ≤ 1.2 mm into ≥ 100 HU; seal: a non-air voxel with bone within 2.5 mm on BOTH

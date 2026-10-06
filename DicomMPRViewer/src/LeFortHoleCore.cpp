@@ -389,6 +389,22 @@ LeFortProposal Propose(const LeFortHoleContext& context, const std::vector<LeFor
     return proposal;
 }
 
+LeFortProposedHole MarkHole(const std::array<double, 3>& point, const std::array<double, 3>& axis, LeFortPillar pillar,
+                            const LeFortHoleContext& context)
+{
+    LeFortProposedHole hole;
+    hole.center = point;
+    hole.axis = unit(axis, context.anterior);
+    hole.pillar = pillar;
+    hole.origin = LeFortHoleOrigin::Manual;
+    if (const auto field = OsteotomyCore::PreparePathField(context.cut))
+        hole.side = OsteotomyCore::FieldAt(*field, point) >= 0.0 ? LeFortCutSide::Cranial : LeFortCutSide::Segment;
+    hole.support = Support(point, hole.axis, context);
+    if (hole.support.verdict == LeFortSupportVerdict::Rejected)
+        hole.support.verdict = LeFortSupportVerdict::Warning; // the surgeon's choice stands; the reason is kept
+    return hole;
+}
+
 LeFortProposedHole AddHole(const std::array<double, 3>& picked, const LeFortHoleContext& context)
 {
     LeFortProposedHole hole;

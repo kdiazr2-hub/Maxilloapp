@@ -1346,8 +1346,10 @@ public:
         window.m_guideDetailSpin->setValue(0.5); // coarse: this is a wiring test
         window.computeGuideWrap();
         settle();
-        require(window.m_guideGenerateButton->isVisibleTo(&window),
-                "the holes cannot be proposed from the movement once the envelope exists");
+        // The holes are marked by the surgeon, guided pillar by pillar; the automatic proposal is not offered
+        // (user's request, 2026-10-06). It stays callable underneath.
+        require(window.m_guideMarkHolesButton->isVisibleTo(&window) && !window.m_guideGenerateButton->isVisibleTo(&window),
+                "the guided marking is not offered once the envelope exists");
 
         // Step 1 — roots. The segmentation's upper teeth arrive as their own file next to the labelmap: root
         // columns 3 mm wide with cusps at z −10 below the segment's front wall (canines at x ±11 the longest).
@@ -1539,11 +1541,22 @@ public:
         require(window.m_guidePlan.lefortHoles.empty(), "the holes were not cleared");
         window.m_guideMarkHolesButton->click();
         settle();
+        require(!window.m_guideShowModelsCheck->isChecked() && window.m_guideShowWrapCheck->isChecked() &&
+                    window.m_guideReportLabel->text().contains(QStringLiteral("nasomaxilar derecho")),
+                "the guided marking does not start on the envelope at the right nasomaxillary pillar");
         window.onGuidePointPicked(0, site[0], site[1], site[2]);
         settle();
         require(window.m_guidePlan.lefortHoles.size() == 1 &&
-                    window.m_guidePlan.lefortHoles.front().origin == LeFortHoleOrigin::Manual,
-                "a click in «Marcar orificios» did not place a manual hole");
+                    window.m_guidePlan.lefortHoles.front().origin == LeFortHoleOrigin::Manual &&
+                    window.m_guidePlan.lefortHoles.front().pillar == LeFortPillar::PiriformRight &&
+                    window.m_guidePlan.lefortHoles.front().center == site,
+                "a click in the guided marking did not place the hole where it was clicked, for that pillar");
+        for (int step = 0; step < 4; ++step) {
+            window.m_guideNextPillarButton->click();
+            settle();
+        }
+        require(!window.m_guideMarkHolesButton->isChecked() && window.m_guideReportLabel->text().contains(QStringLiteral("Aceptar")),
+                "the guided marking does not end after the fourth pillar");
         std::cout << "Impaction guide from the movement OK\n";
     }
 

@@ -60,3 +60,5 @@ Linux core and full app suites. Pending: Windows rebuild and the same real case.
 16. (2026-10-06) "La guía debe crearse sobre el envolvente": the Le Fort build drops the bone clip; envelope gap closing 4 mm. Holes off the pillars: the maxillomalar anchor is now the first molar on the cut (LeFortHoleTests "the pillar holes follow the first molar").
 
 17. (2026-10-06) "Si quieres yo los marco": «Marcar orificios» (AddHole) and «Borrar orificios"; the guide ends 5 mm past the outermost marked hole of each side (extentFromHoles). Envelope gap closing 6 mm.
+
+18. (2026-10-06) "Con envolvente, sin límites, quita proponer, que sea guiado; la guía también en el envolvente": guided marking on the envelope (MarkHole, never refused), «Proponer» hidden, guides shown on the envelope after building.

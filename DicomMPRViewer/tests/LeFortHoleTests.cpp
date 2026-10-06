@@ -615,6 +615,23 @@ void testAMarkedHoleBelongsToItsPillarAndSide()
             "a click below the left rim was not given to it: " + where(below));
 }
 
+// Guided marking (user's request, 2026-10-06: "si lo voy a hacer manual no pongas límites de zona"): the hole goes
+// exactly where the surgeon clicked on the envelope, for the pillar of the current step, and is never refused —
+// what Support would refuse becomes a warning that says why.
+void testAMarkedHoleIsNeverRefused()
+{
+    const Scene s = scene(pillarCut(), rise(4.0), maxillaWithAperture(false));
+    const Vec3 onEnvelope{-19.0, 0.4, 11.0}; // inside the band: Support refuses it
+    const LeFortProposedHole hole =
+        LeFortHoleCore::MarkHole(onEnvelope, {0.0, 1.0, 0.0}, LeFortPillar::PillarRight, s.context);
+    require(hole.center == onEnvelope, "the marked hole was moved from where it was clicked: " + where(hole));
+    require(hole.pillar == LeFortPillar::PillarRight && hole.origin == LeFortHoleOrigin::Manual &&
+                hole.side == LeFortCutSide::Cranial,
+            "the marked hole lost its pillar, origin or side: " + where(hole));
+    require(hole.support.verdict == LeFortSupportVerdict::Warning && hole.support.reason.contains(QStringLiteral("franja")),
+            "a marked hole in the band was not kept as a warning: " + describe(hole.support));
+}
+
 } // namespace
 
 int main()
@@ -644,6 +661,7 @@ int main()
         {"two holes fit where the bone is short", testTwoHolesFitWhereTheBoneIsShort},
         {"the pillar holes follow the first molar", testThePillarHolesFollowTheFirstMolar},
         {"a marked hole belongs to its pillar and side", testAMarkedHoleBelongsToItsPillarAndSide},
+        {"a marked hole is never refused", testAMarkedHoleIsNeverRefused},
         {"two above and two below in a column on each pillar", testTwoAboveAndTwoBelowInAColumnOnEachPillar},
         {"roots do not leave a pillar without holes below", testRootsDoNotLeaveAPillarWithoutHolesBelow},
     };

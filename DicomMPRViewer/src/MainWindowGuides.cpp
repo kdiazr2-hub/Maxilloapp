@@ -576,13 +576,50 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
     automaticGuideBox->addWidget(m_guideGenerateButton);
     // Or the surgeon marks them: each click on the bone is a drill site, given to the nearest pillar and to its side
     // of the cut, and the guide is built round them (user's request, 2026-10-06).
-    m_guideMarkHolesButton = new QPushButton(tr("Marcar orificios"), panel);
+    // Guided, pillar by pillar, on the envelope; no zone limits (user's request, 2026-10-06: "quita la opción de
+    // proponer orificios, más bien que sea algo guiado").
+    m_guideMarkHolesButton = new QPushButton(tr("3 · Marcar orificios (guiado)"), panel);
     m_guideMarkHolesButton->setCheckable(true);
-    m_guideMarkHolesButton->setToolTip(tr("Haga clic sobre el hueso en cada pilar para colocar un orificio. "
-                                          "La guía se construye desde ellos, con un margen lateral."));
-    connect(m_guideMarkHolesButton, &QPushButton::toggled, this,
-            [this](bool on) { setGuidePointMode(on ? kModeMarkHoles : kModeNone); });
+    m_guideMarkHolesButton->setToolTip(tr("Pilar por pilar: haga clic en la envolvente donde va cada orificio, "
+                                          "arriba y abajo del corte. La guía se construye desde ellos."));
+    connect(m_guideMarkHolesButton, &QPushButton::toggled, this, [this](bool on) {
+        if (on) {
+            m_guideMarkStep = 0;
+            // On the envelope: the bone and the guide hidden, so every click lands on it.
+            for (QCheckBox* check : {m_guideShowModelsCheck, m_guideShowGuideCheck})
+                if (check) {
+                    QSignalBlocker blocker(check);
+                    check->setChecked(false);
+                }
+            if (m_guideShowWrapCheck) {
+                QSignalBlocker blocker(m_guideShowWrapCheck);
+                m_guideShowWrapCheck->setChecked(true);
+            }
+            applyGuideLayers();
+        }
+        setGuidePointMode(on ? kModeMarkHoles : kModeNone);
+        showGuideMarkPrompt();
+    });
     automaticGuideBox->addWidget(m_guideMarkHolesButton);
+    m_guideNextPillarButton = new QPushButton(tr("Siguiente pilar ›"), panel);
+    connect(m_guideNextPillarButton, &QPushButton::clicked, this, [this] {
+        ++m_guideMarkStep;
+        if (m_guideMarkStep >= 4)
+            setGuidePointMode(kModeNone);
+        showGuideMarkPrompt();
+        updateGuideUi();
+    });
+    automaticGuideBox->addWidget(m_guideNextPillarButton);
+    m_guideUndoHoleButton = new QPushButton(tr("Quitar último orificio"), panel);
+    connect(m_guideUndoHoleButton, &QPushButton::clicked, this, [this] {
+        if (m_guidePlan.lefortHoles.empty())
+            return;
+        m_guidePlan.lefortHoles.pop_back();
+        showGuideLeFortHoles();
+        showGuideMarkPrompt();
+        updateGuideUi();
+    });
+    automaticGuideBox->addWidget(m_guideUndoHoleButton);
     m_guideClearHolesButton = new QPushButton(tr("Borrar orificios"), panel);
     connect(m_guideClearHolesButton, &QPushButton::clicked, this, [this] {
         m_guidePlan.lefortHoles.clear();
@@ -1504,21 +1541,23 @@ void MainWindow::onGuidePointPicked(int, double x, double y, double z)
             statusBar()->showMessage(error, 8000);
             return;
         }
-        const LeFortProposedHole hole = LeFortHoleCore::AddHole(point, context);
-        if (hole.support.verdict == LeFortSupportVerdict::Rejected) {
-            statusBar()->showMessage(tr("Orificio no colocado: %1").arg(hole.support.reason), 10000);
-            return;
-        }
+        static const LeFortPillar kOrder[] = {LeFortPillar::PiriformRight, LeFortPillar::PillarRight,
+                                              LeFortPillar::PiriformLeft, LeFortPillar::PillarLeft};
+        const LeFortPillar pillar = kOrder[std::clamp(m_guideMarkStep, 0, 3)];
+        const std::array<double, 3> axis =
+            m_guidePrepared.ok ? GuideDesignCore::SurfaceNormalAt(m_guidePrepared, point) : context.anterior;
+        const LeFortProposedHole hole = LeFortHoleCore::MarkHole(point, axis, pillar, context);
         m_guidePlan.lefortHoles.push_back(hole);
         statusBar()->showMessage(hole.support.verdict == LeFortSupportVerdict::Warning
-                                     ? tr("Orificio %1 colocado con aviso: %2").arg(m_guidePlan.lefortHoles.size()).arg(hole.support.reason)
-                                     : tr("Orificio %1 colocado: %2 mm de hueso.")
-                                           .arg(m_guidePlan.lefortHoles.size())
+                                     ? tr("Orificio colocado (%1, %2) con aviso: %3")
+                                           .arg(LeFortHoleCore::PillarName(hole.pillar), LeFortHoleCore::SideName(hole.side),
+                                                hole.support.reason)
+                                     : tr("Orificio colocado (%1, %2): %3 mm de hueso.")
+                                           .arg(LeFortHoleCore::PillarName(hole.pillar), LeFortHoleCore::SideName(hole.side))
                                            .arg(hole.support.thicknessMm, 0, 'f', 1),
                                  10000);
         showGuideLeFortHoles();
-        if (m_guideReportLabel)
-            m_guideReportLabel->setText(guideLeFortHoleReport());
+        showGuideMarkPrompt();
         updateGuideUi();
         return;
     }
@@ -2230,7 +2269,7 @@ void MainWindow::updateGuideUi()
     showSection(m_guideAdvancedSection, !m_guidePlateWorkspace && workflow == GuideWorkflowStep::Complete);
     showSection(m_guidePlateAdvancedSection, m_guidePlateWorkspace);
     if (m_guideGenerateButton)
-        m_guideGenerateButton->setVisible(!m_guidePlateWorkspace && leFort && hasWrap);
+        m_guideGenerateButton->setVisible(false); // marking is guided now (user's request, 2026-10-06)
     const bool hasSites = leFort && !m_guidePlan.lefortHoles.empty();
     if (m_guideMoveHoleButton)
         m_guideMoveHoleButton->setVisible(!m_guidePlateWorkspace && hasWrap && hasSites);
@@ -2238,6 +2277,11 @@ void MainWindow::updateGuideUi()
         m_guideMarkHolesButton->setVisible(!m_guidePlateWorkspace && leFort && hasWrap);
     if (m_guideClearHolesButton)
         m_guideClearHolesButton->setVisible(!m_guidePlateWorkspace && hasWrap && hasSites);
+    const bool marking = m_guidePointMode == kModeMarkHoles;
+    if (m_guideNextPillarButton)
+        m_guideNextPillarButton->setVisible(!m_guidePlateWorkspace && marking);
+    if (m_guideUndoHoleButton)
+        m_guideUndoHoleButton->setVisible(!m_guidePlateWorkspace && marking && hasSites);
     if (m_guideAcceptHolesButton) {
         // Also after a proposal that found nothing: the surgeon is never left without a way on (user's case,
         // 2026-10-05). Such a guide has only its positioning screws.
@@ -3547,14 +3591,13 @@ void MainWindow::layoutLeFortGuide(const std::vector<PredictiveHole>& drillSites
     repaintGuideWrap();
     rebuildGuideMarkers();
     buildGuideMesh();
-    // Once generated, show the actual product against the bone. Leaving the
-    // opaque envelope on top makes a correct thin guide look like scattered
-    // fragments and hides its fit on the maxilla.
+    // Once generated, the Le Fort guides are shown on the envelope they were built on (user's request,
+    // 2026-10-06: "la guía también debe hacerse en el envolvente"); the bone stays one click away in CAPAS.
     if (m_guideMesh && m_guideMesh->GetNumberOfPolys() > 0) {
         if (m_guideShowModelsCheck)
-            m_guideShowModelsCheck->setChecked(true);
+            m_guideShowModelsCheck->setChecked(false);
         if (m_guideShowWrapCheck)
-            m_guideShowWrapCheck->setChecked(false);
+            m_guideShowWrapCheck->setChecked(true);
         if (m_guideShowGuideCheck)
             m_guideShowGuideCheck->setChecked(true);
         // The figures are the openwork cells subtracted from the guide: on real bone each preview cylinder
@@ -3689,6 +3732,31 @@ void MainWindow::refreshGuideBand()
         return;
     // On the cranial bone before the cut: that is where the band is taken out.
     m_guideBandMesh = LeFortGuideCore::BandOnBone(guideSourceMeshForLabel(kLeFortCranialLabel), guideLeFortPath(), band);
+}
+
+void MainWindow::showGuideMarkPrompt()
+{
+    if (!m_guideReportLabel)
+        return;
+    static const char* kNames[] = {"pilar nasomaxilar derecho", "pilar maxilomalar derecho",
+                                   "pilar nasomaxilar izquierdo", "pilar maxilomalar izquierdo"};
+    if (m_guidePointMode == kModeMarkHoles && m_guideMarkStep < 4) {
+        int here = 0;
+        static const LeFortPillar kOrder[] = {LeFortPillar::PiriformRight, LeFortPillar::PillarRight,
+                                              LeFortPillar::PiriformLeft, LeFortPillar::PillarLeft};
+        for (const LeFortProposedHole& hole : m_guidePlan.lefortHoles)
+            here += hole.pillar == kOrder[m_guideMarkStep] ? 1 : 0;
+        m_guideReportLabel->setText(tr("Pilar %1 de 4 · %2.\nHaga clic en la envolvente donde va cada orificio, "
+                                       "arriba y abajo del corte (%3 marcado(s)). Luego «Siguiente pilar».")
+                                        .arg(m_guideMarkStep + 1)
+                                        .arg(QString::fromUtf8(kNames[m_guideMarkStep]))
+                                        .arg(here));
+    } else {
+        m_guideReportLabel->setText(m_guidePlan.lefortHoles.empty()
+                                        ? tr("Marque los orificios con «3 · Marcar orificios (guiado)».")
+                                        : tr("%1 orificio(s) marcados. Pulse «4 · Aceptar orificios y crear guías».")
+                                              .arg(m_guidePlan.lefortHoles.size()));
+    }
 }
 
 void MainWindow::showGuideLeFortHoles()

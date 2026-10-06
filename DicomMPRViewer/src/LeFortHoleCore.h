@@ -167,6 +167,12 @@ LeFortProposedHole MoveHole(const LeFortProposedHole& hole, const std::array<dou
 // hole, given the pillar whose anchor is nearest seen from above and the side of the cut it lies on, and judged.
 LeFortProposedHole AddHole(const std::array<double, 3>& picked, const LeFortHoleContext& context);
 
+// A hole the surgeon placed in the guided marking: exactly at `point` (on the envelope), drilled along `axis`, for
+// `pillar`, on the side of the cut it lies on. Never refused (user's request, 2026-10-06: no limits when marking by
+// hand): what `Support` would refuse is kept as a warning with the same reason.
+LeFortProposedHole MarkHole(const std::array<double, 3>& point, const std::array<double, 3>& axis, LeFortPillar pillar,
+                            const LeFortHoleContext& context);
+
 // The guide's holes as the drill sites its sleeves are built at (`PlateCore::SleeveFigures`): centre and axis
 // on the bone before the cut, and the bone each one is in. They belong to no plate.
 std::vector<PredictiveHole> DrillSites(const std::vector<LeFortProposedHole>& holes);
