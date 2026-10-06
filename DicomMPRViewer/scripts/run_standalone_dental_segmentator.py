@@ -446,6 +446,28 @@ def thicken_thin_bone(mask, prediction, intensities, spacing_zyx, grow_mm=1.2, g
     return result
 
 
+def cap_canal_openings(labelmap, spacing_zyx, bone_label=6, canal_label=7, cap_mm=1.0):
+    """The mandibular canal reaches the bone's surface at the mental and mandibular foramina, and there the
+    mandible's mesh had a hole the canal showed through (user's report, 2026-10-06: two holes either side of the
+    chin). Canal voxels within `cap_mm` of the outside (at least one voxel) become bone: the canal keeps its
+    course inside the mandible, the bone's surface stays closed. Changes `labelmap` in place."""
+    import scipy.ndimage as ndi
+
+    canal = labelmap == canal_label
+    if not np.any(canal):
+        return 0
+    outside = labelmap == 0
+    if not np.any(outside):
+        return 0
+    reach = max(cap_mm, 1.01 * max(spacing_zyx))
+    depth = ndi.distance_transform_edt(~outside, sampling=spacing_zyx)
+    cap = canal & (depth <= reach)
+    labelmap[cap] = bone_label
+    count = int(np.count_nonzero(cap))
+    log(f"    [Canal mandibular] Salidas cerradas en la superficie del hueso: {count} voxeles.")
+    return count
+
+
 def upper_teeth_sidecar_path(output_path):
     """Where the upper teeth go, next to the labelmap: <name>_dientes_superiores<ext>."""
     path = Path(output_path)
@@ -573,6 +595,8 @@ def remap_prediction(input_path, prediction_path, output_path, target, seed=None
         if arr is not None:
             for source_label, app_label in APP_LABEL_MAP.items():
                 out[conservative_mask(source_label)] = app_label
+            image, _ = source_image()
+            cap_canal_openings(out, image.GetSpacing()[::-1])
 
     if target in ("completo", "segmentacion automatica", "auto", "via aerea", "via_aerea", "airway"):
         log("95% Generando mascaras avanzadas de tejido y via aerea...")

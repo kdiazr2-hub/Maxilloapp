@@ -265,6 +265,17 @@ class BoneRemapTests(unittest.TestCase):
         self.assertEqual(result[10, 10, 33], 6)
         self.assertFalse(np.any(result == 2))
 
+    def test_the_mental_foramen_does_not_open_a_hole_in_the_mandible(self):
+        # User's case, 2026-10-06: two holes either side of the chin, where the mandibular canal leaves the
+        # bone. The canal stays inside the mandible; its exit no longer opens the bone's surface.
+        labels = np.zeros((32, 32, 32), dtype=np.uint8)
+        labels[5:27, 5:27, 5:27] = 2
+        labels[15:18, 15:18, 8:24] = 5   # the canal, along x inside the bone
+        labels[18:27, 13:20, 13:20] = 5  # its exit through the cortex, 7 voxels wide (the orange spots)
+        result = self.remap(labels, "hueso")
+        self.assertTrue(np.all(result[26, 13:20, 13:20] == 6), "the foramen still opens the bone's surface")
+        self.assertTrue(np.all(result[16, 16, 10:20] == 7), "the canal inside the mandible was lost")
+
     def test_mismatched_physical_grids_fail_without_writing_output(self):
         with self.assertRaisesRegex(ValueError, "cuadricula fisica"):
             self.remap(shell(), "completo", shifted_prediction=True)

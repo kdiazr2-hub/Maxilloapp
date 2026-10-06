@@ -375,7 +375,9 @@ cmake --build build-linux-core --parallel && ctest --test-dir build-linux-core -
   Le Fort projects saved with less are raised on reopening; the segmentation script thickens bone
   (`thicken_thin_bone`: grow ≤ 1.2 mm into ≥ 100 HU; seal: a non-air voxel with bone within 2.5 mm on BOTH
   sides along ≥ 2 of the 13 grid axes, up to 4 passes — a ball closing never seals a hole in a one-voxel wall;
-  `DENTALSEGMENTATOR_BONE_GROW_MM/_GROW_HU/_SEAL_MM`; ~6 s per pass on a 400³ head). The band spinboxes are synced whenever the band is recomputed.
+  `DENTALSEGMENTATOR_BONE_GROW_MM/_GROW_HU/_SEAL_MM`; ~6 s per pass on a 400³ head). `cap_canal_openings` turns
+  canal voxels (app label 7) within 1 mm of the outside into mandible: the mental foramina showed the canal
+  through two holes either side of the chin (user's report, 2026-10-06). The band spinboxes are synced whenever the band is recomputed.
   2 · `LeFortMotionCore::BandFromHeights` builds the band from the surgeon's four heights (`GuidePlan::bandHeights`,
   optional key; `guideLeFortBand` prefers them; «Restablecer» clears them). 3 · holes as before. 4 · two guides:
   `LeFortGuideParams::separateSides` (the UI always sets it) — no bridge, `connectPaint` per side, a second

@@ -50,3 +50,5 @@ Linux core and full app suites. Pending: Windows rebuild and the same real case.
     ≥ 2 grid axes", repeated up to 4 passes (Python: a 3 mm perforation sealed, a 110 HU wall recovered).
 
 12. "Mejor, ya casi" (2026-10-06): grow 1.2 mm, seal 2.5 mm — openings of ~5 mm filled with soft tissue (the last spots under the orbits) close; air openings still stay open.
+
+13. "Intenta cerrar esos dos orificios" (2026-10-06): the two holes by the chin were the mental foramina — the canal label reached the surface and sealing never touches other labels. `cap_canal_openings` gives the outer millimetre of the canal to the mandible (Python: canal exit 7 voxels wide closed, canal inside kept).
