@@ -565,6 +565,22 @@ void testRootsDoNotLeaveAPillarWithoutHolesBelow()
                     "a hole near the roots is not flagged: " + where(hole));
 }
 
+// The usable bone at a pillar is often short: a thin or perforated wall leaves a few millimetres. Taking the best
+// site first and then looking for a second one 6.5 mm away left one hole per pillar on the surgeon's case
+// (2026-10-06: "los puntos no salen donde es"). The pair is chosen together.
+void testTwoHolesFitWhereTheBoneIsShort()
+{
+    std::vector<vtkSmartPointer<vtkPolyData>> pieces{boxMesh({-25.0, -6.0, -3.0, 0.0, 10.0, 30.0}, false, false),
+                                                     boxMesh({-6.0, 6.0, -3.0, 0.0, 20.0, 30.0}, false, false),
+                                                     boxMesh({6.0, 14.0, -3.0, 0.0, 10.0, 30.0}, false, false),
+                                                     boxMesh({14.0, 25.0, -3.0, 0.0, 10.0, 25.0}, false, false)};
+    const Scene s = scene(pillarCut(), rise(4.0), pieces); // band z 9..13: the window above it is z 17..25
+    const LeFortProposal proposal = LeFortHoleCore::Propose(s.context);
+    require(count(proposal, LeFortPillar::PillarLeft, LeFortCutSide::Cranial) == 2,
+            "the short pillar got " + std::to_string(count(proposal, LeFortPillar::PillarLeft, LeFortCutSide::Cranial)) +
+                " hole(s) above the cut instead of 2");
+}
+
 } // namespace
 
 int main()
@@ -591,6 +607,7 @@ int main()
         {"piriform holes stay lateral of the rim", testPiriformHolesStayLateralOfTheRim},
         {"a wall facing sideways is not proposed", testAWallFacingSidewaysIsNotProposed},
         {"a drill near a root is a warning that names it", testADrillNearARootIsAWarningThatNamesIt},
+        {"two holes fit where the bone is short", testTwoHolesFitWhereTheBoneIsShort},
         {"two above and two below in a column on each pillar", testTwoAboveAndTwoBelowInAColumnOnEachPillar},
         {"roots do not leave a pillar without holes below", testRootsDoNotLeaveAPillarWithoutHolesBelow},
     };

@@ -71,6 +71,9 @@ struct LeFortGuideParams
     double fixationOffsetMm = 6.0;    // above and below the cut
     double minFixationToHoleMm = 5.0; // keep them clear of the predictive holes
     double bridgeSpacingMm = 15.0;    // a bridge across the slit every so often, one at the midline
+    // How far the slits run on each side, as a fraction of the way from the medial end (the piriform rim) to the
+    // lateral end: the anterior and middle part only, the lateral end left whole (user's report, 2026-10-06).
+    double slitLateralFraction = 0.65;
     double bridgeWidthMm = 3.0;
     double sleeveOuterDiameterMm = 4.2;
     // With an impaction band: no band where the rise is under this (as LeFortBandParams), and the guide is

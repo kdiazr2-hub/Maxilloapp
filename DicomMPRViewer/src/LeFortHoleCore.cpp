@@ -310,6 +310,48 @@ LeFortProposal Propose(const LeFortHoleContext& context, const std::vector<LeFor
                 return a.fromWindow < b.fromWindow;
             });
             int placed = manualCount(kPillars[index], side);
+            const auto apartFromChosen = [&](const Vec3& p) {
+                for (const Vec3& other : chosen)
+                    if (norm(sub(p, other)) < params.pairSpacingMm)
+                        return false;
+                return true;
+            };
+            // Two to place: the best PAIR, not the best site and then whatever is left 6.5 mm from it. Where the
+            // usable bone is short (a thin or perforated wall), the best single site took the middle and no second
+            // one fitted (user's case, 2026-10-06: one hole per pillar). Pairs are ranked by their worse tier, then
+            // both tiers, then nearness to the pillar's line, thickness and nearness to the cut — the order the
+            // candidates are already sorted in, so a lower index is better.
+            if (params.holesPerSide - placed == 2 && candidates.size() >= 2) {
+                int bestA = -1, bestB = -1;
+                std::array<double, 5> bestScore{};
+                for (size_t a = 0; a < candidates.size(); ++a) {
+                    if (!apartFromChosen(candidates[a].hole.center))
+                        continue;
+                    for (size_t b = a + 1; b < candidates.size(); ++b) {
+                        if (!apartFromChosen(candidates[b].hole.center) ||
+                            norm(sub(candidates[a].hole.center, candidates[b].hole.center)) < params.pairSpacingMm)
+                            continue;
+                        const Candidate& x = candidates[a];
+                        const Candidate& y = candidates[b];
+                        const std::array<double, 5> score{
+                            double(std::max(x.tier, y.tier)), double(x.tier + y.tier),
+                            std::round(x.lateralOffset) + std::round(y.lateralOffset),
+                            -(x.rankThickness + y.rankThickness), x.fromWindow + y.fromWindow};
+                        if (bestA < 0 || score < bestScore) {
+                            bestScore = score;
+                            bestA = static_cast<int>(a);
+                            bestB = static_cast<int>(b);
+                        }
+                    }
+                }
+                if (bestA >= 0) {
+                    for (const int pick : {bestA, bestB}) {
+                        chosen.push_back(candidates[static_cast<size_t>(pick)].hole.center);
+                        proposal.holes.push_back(candidates[static_cast<size_t>(pick)].hole);
+                        ++placed;
+                    }
+                }
+            }
             for (const Candidate& candidate : candidates) {
                 if (placed >= params.holesPerSide)
                     break;

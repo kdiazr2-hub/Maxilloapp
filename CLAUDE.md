@@ -368,7 +368,8 @@ cmake --build build-linux-core --parallel && ctest --test-dir build-linux-core -
   proposes thin bone (Warning) after sound bone instead of nothing, and an empty pillar's reason is the refusal
   most of its sites got; «Aceptar» also shows after an empty proposal (guide with positioning screws only);
   holes are 2 above + 2 below ON each pillar (user's rule, 2026-10-05): ±5 mm, ranked tier (Ok, thin, near a
-  root) → nearest the pillar line → thickest; a drill path within 1 mm of `LeFortHoleContext::teeth`
+  root) → nearest the pillar line → thickest, and the two are chosen as the best PAIR ≥ 6.5 mm apart (greedy
+  left one per pillar where the usable bone was short, 2026-10-06); a drill path within 1 mm of `LeFortHoleContext::teeth`
   (BakeMeshField of label 3) to 6 mm deep is a WARNING naming the root (`nearRoot`), not a refusal.
   The aperture is only the wall-less gaps whose middle lies inside the piriform points (a perforation in a
   lateral wall cut the left guide back short of the pillar). The envelope's gap closing defaults to 2.5 mm and
@@ -383,7 +384,9 @@ cmake --build build-linux-core --parallel && ctest --test-dir build-linux-core -
   through two holes either side of the chin (user's report, 2026-10-06). The band spinboxes are synced whenever the band is recomputed.
   2 · `LeFortMotionCore::BandFromHeights` builds the band from the surgeon's four heights (`GuidePlan::bandHeights`,
   optional key; `guideLeFortBand` prefers them; «Restablecer» clears them). 3 · holes as before. 4 · two guides:
-  `LeFortGuideParams::separateSides` (the UI always sets it) — no bridge, `connectPaint` per side, a second
+  `LeFortGuideParams::separateSides` (the UI always sets it) — slits only over `slitLateralFraction` (0.65) of
+  each guide from the piriform rim, the lateral end left whole so the guide cannot split along them (user's
+  report, 2026-10-06) — no bridge, `connectPaint` per side, a second
   positioning screw at each guide's inner end, `SplitBySide` → `guia_der.stl` / `guia_izq.stl`
   (`exportLeFortGuideFiles`); `GuideEngraveCore` engraves `caseLabel` (optional key) above the cranial screws and
   DER / IZQ below the caudal ones: VTK's font rasterised, strokes thickened to print, stacked into a closed solid

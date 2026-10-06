@@ -871,14 +871,28 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
     const double halfBridge = 0.5 * std::max(0.5, params.bridgeWidthMm);
     const double period = std::max(4.0 * halfBridge, params.bridgeSpacingMm);
     const auto atLateral = [&](double s) { return add(center, scale(lateral, s)); };
-    const int firstBridge = static_cast<int>(std::floor((lowest + 0.5 * period) / period));
-    const int lastBridge = static_cast<int>(std::ceil((highest + 0.5 * period) / period));
-    double pieceStart = lowest;
+    // Only over the anterior and middle part of each guide: from the medial end (the piriform rim, or the
+    // midline) the slits cover `slitLateralFraction` of the way to the lateral end, and the rest of the guide is
+    // left whole, so it cannot come apart along its two slits (user's report, 2026-10-06). The surgeon finishes
+    // the cut laterally along the same line.
+    double slitLow = lowest, slitHigh = highest;
+    {
+        const double fraction = std::clamp(params.slitLateralFraction, 0.1, 1.0);
+        const double medialLow = hasAperture ? rimLow : 0.0;
+        const double medialHigh = hasAperture ? rimHigh : 0.0;
+        if (lowest < medialLow)
+            slitLow = medialLow - fraction * (medialLow - lowest);
+        if (highest > medialHigh)
+            slitHigh = medialHigh + fraction * (highest - medialHigh);
+    }
+    const int firstBridge = static_cast<int>(std::floor((slitLow + 0.5 * period) / period));
+    const int lastBridge = static_cast<int>(std::ceil((slitHigh + 0.5 * period) / period));
+    double pieceStart = slitLow;
     for (int index = firstBridge; index <= lastBridge + 1; ++index) {
         // Each bridge is a `bridgeWidthMm` band of uncut guide centred on `index * period`; the midline
         // (lateral 0, index 0) always has one.
         const double bridgeAt = period * index;
-        const double pieceEnd = std::min(highest, bridgeAt - halfBridge);
+        const double pieceEnd = std::min(slitHigh, bridgeAt - halfBridge);
         if (pieceEnd - pieceStart >= 3.0) {
             GuideSlot slot;
             slot.path = path;
@@ -919,7 +933,7 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
             }
         }
         pieceStart = std::max(pieceStart, bridgeAt + halfBridge);
-        if (pieceStart >= highest)
+        if (pieceStart >= slitHigh)
             break;
     }
 

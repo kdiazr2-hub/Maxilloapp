@@ -223,7 +223,10 @@ void testTheGuideIsOnePieceWithAnOpenSlit()
 {
     const auto holes = predictiveHoles();
     const Prepared bone = preoperativeBone();
-    const LeFortGuideLayout layout = LeFortGuideCore::Layout(bone.preparation, bone.wrap.mesh, leFortCut(), holes);
+    LeFortGuideParams fullSlit; // the carving itself, along the whole cut ("the slits leave the lateral end solid")
+    fullSlit.slitLateralFraction = 1.0;
+    const LeFortGuideLayout layout =
+        LeFortGuideCore::Layout(bone.preparation, bone.wrap.mesh, leFortCut(), holes, fullSlit);
     require(layout.ok, layout.error.toStdString());
     const GuideRegion region =
         GuideBaseCore::MakeBrushRegion(bone.preparation.wrapField, layout.paint, bone.design.base);
@@ -436,8 +439,10 @@ void testTheGuideWithABandIsOnePieceWithBothSlitsOpen()
     const auto holes = predictiveHoles();
     const Prepared bone = preoperativeBone();
     const LeFortBandProfile band = bandFor(3.0); // upper edge at z = 12
+    LeFortGuideParams fullSlit;
+    fullSlit.slitLateralFraction = 1.0;
     const LeFortGuideLayout layout =
-        LeFortGuideCore::Layout(bone.preparation, bone.wrap.mesh, leFortCut(), holes, {}, &band);
+        LeFortGuideCore::Layout(bone.preparation, bone.wrap.mesh, leFortCut(), holes, fullSlit, &band);
     require(layout.ok, layout.error.toStdString());
     const GuideRegion region =
         GuideBaseCore::MakeBrushRegion(bone.preparation.wrapField, layout.paint, bone.design.base);
@@ -746,6 +751,35 @@ void testAPerforationIsNotTheAperture()
                                                         std::to_string(leftInner) + ".." + std::to_string(leftOuter));
 }
 
+// The slits run over the anterior and middle part of each guide and stop short of its lateral end, so the guide
+// cannot come apart along them (user's report, 2026-10-06: both slits ran the whole guide and nearly split it).
+void testTheSlitsLeaveTheLateralEndSolid()
+{
+    const Prepared bone = preoperativeBone(true);
+    LeFortGuideParams params;
+    params.separateSides = true;
+    const LeFortGuideLayout layout =
+        LeFortGuideCore::Layout(bone.preparation, bone.wrap.mesh, leFortCut(), {}, params, nullptr);
+    require(layout.ok, "the guides were not laid out: " + layout.error.toStdString());
+    for (const double side : {-1.0, 1.0}) {
+        double guideOuter = 0.0, slitOuter = 0.0, slitInner = 1e9;
+        for (const GuideBrushStroke& dab : layout.paint)
+            if (side * dab.center[0] > 0.0)
+                guideOuter = std::max(guideOuter, side * dab.center[0]);
+        for (const GuideSlot& slot : layout.slotPlan)
+            for (const auto& end : {slot.start, slot.end})
+                if (side * end[0] > 0.0) {
+                    slitOuter = std::max(slitOuter, side * end[0]);
+                    slitInner = std::min(slitInner, side * end[0]);
+                }
+        require(slitOuter > 0.0, "a guide has no slit");
+        require(slitInner < 10.0, "the slit does not start at the anterior part of the guide");
+        // The aperture's rim is at |x| = 6: the slit covers at most 70 % of the guide from there outwards.
+        require(slitOuter - 6.0 <= 0.7 * (guideOuter - 6.0) + 0.5, "the slit runs to the lateral end of the guide: slit to x " +
+                                                   std::to_string(slitOuter) + ", guide to " + std::to_string(guideOuter));
+    }
+}
+
 // The engraving is a solid of the text: as wide as `TextWidth` says, standing `reliefMm` proud of its base.
 void testTextIsASolidOfItsMeasuredWidth()
 {
@@ -860,6 +894,7 @@ int main()
         {"the guide stays out of the nose and clear of the spine", testTheGuideStaysOutOfTheNoseAndClearOfTheSpine},
         {"two guides, one each side", testTwoGuidesOneEachSide},
         {"a perforation is not the aperture", testAPerforationIsNotTheAperture},
+        {"the slits leave the lateral end solid", testTheSlitsLeaveTheLateralEndSolid},
         {"text is a solid of its measured width", testTextIsASolidOfItsMeasuredWidth},
         {"each guide is engraved with the case and its side", testEachGuideIsEngravedWithTheCaseAndItsSide},
     };
