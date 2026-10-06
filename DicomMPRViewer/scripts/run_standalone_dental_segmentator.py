@@ -374,8 +374,8 @@ def fill_bone_interiors(mask, prediction, intensities, spacing_zyx, source_label
     return result
 
 
-def thicken_thin_bone(mask, prediction, intensities, spacing_zyx, grow_mm=1.0, grow_hu=100.0,
-                      seal_mm=2.0, seal_min_hu=-200.0):
+def thicken_thin_bone(mask, prediction, intensities, spacing_zyx, grow_mm=1.2, grow_hu=100.0,
+                      seal_mm=2.5, seal_min_hu=-200.0):
     """Recover the thin walls DentalSegmentator under-segments and seal the pinholes they leave.
 
     The anterior maxilla and the sinus walls are often under a millimetre thick, so partial volume keeps them
@@ -550,9 +550,9 @@ def remap_prediction(input_path, prediction_path, output_path, target, seed=None
                     return default_value
 
             mask = thicken_thin_bone(mask, arr, intensities, image.GetSpacing()[::-1],
-                                     grow_mm=mm_env("DENTALSEGMENTATOR_BONE_GROW_MM", 1.0),
+                                     grow_mm=mm_env("DENTALSEGMENTATOR_BONE_GROW_MM", 1.2),
                                      grow_hu=float(os.environ.get("DENTALSEGMENTATOR_BONE_GROW_HU", "100")),
-                                     seal_mm=mm_env("DENTALSEGMENTATOR_BONE_SEAL_MM", 2.0))
+                                     seal_mm=mm_env("DENTALSEGMENTATOR_BONE_SEAL_MM", 2.5))
             mask = fill_bone_interiors(mask, arr, intensities, image.GetSpacing()[::-1], label_value)
         return mask
 

@@ -157,6 +157,19 @@ class ThinBoneTests(unittest.TestCase):
         result = self.thicken(labels, intensities)
         self.assertTrue(np.all(result[12, 9:15, 9:15]), "a 3 mm perforation was left open")
 
+    def test_a_foramen_sized_perforation_is_sealed(self):
+        # User's case, 2026-10-06 ("ya casi"): the last spots were openings of about 4-5 mm under the orbits,
+        # filled with soft tissue, not air.
+        shape = (29, 29, 29)
+        labels = np.zeros(shape, dtype=np.uint8)
+        labels[14, 2:-2, 2:-2] = 1
+        labels[14, 10:19, 10:19] = 0  # 9 voxels = 4.5 mm
+        intensities = np.full(shape, 30.0, dtype=np.float32)
+        intensities[14, 2:-2, 2:-2] = 250.0
+        intensities[14, 10:19, 10:19] = 40.0
+        result = self.thicken(labels, intensities)
+        self.assertTrue(np.all(result[14, 10:19, 10:19]), "a 4.5 mm opening was left open")
+
     def test_a_wall_at_100_hu_is_recovered(self):
         labels, intensities = self.wall(250.0)
         intensities[9, 2:-2, 2:-2] = 110.0  # thin cortex, partial volume

@@ -48,3 +48,5 @@ Linux core and full app suites. Pending: Windows rebuild and the same real case.
 11. "Mejoró pero aún sale con orificios": grow 1.0 mm into ≥ 100 HU; the ball closing could never seal a hole in
     a one-voxel wall (the ball reaches past the wall), so the seal is now "bone on both sides within 2 mm along
     ≥ 2 grid axes", repeated up to 4 passes (Python: a 3 mm perforation sealed, a 110 HU wall recovered).
+
+12. "Mejor, ya casi" (2026-10-06): grow 1.2 mm, seal 2.5 mm — openings of ~5 mm filled with soft tissue (the last spots under the orbits) close; air openings still stay open.

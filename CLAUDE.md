@@ -373,7 +373,7 @@ cmake --build build-linux-core --parallel && ctest --test-dir build-linux-core -
   The aperture is only the wall-less gaps whose middle lies inside the piriform points (a perforation in a
   lateral wall cut the left guide back short of the pillar). The envelope's gap closing defaults to 2.5 mm and
   Le Fort projects saved with less are raised on reopening; the segmentation script thickens bone
-  (`thicken_thin_bone`: grow ≤ 1.0 mm into ≥ 100 HU; seal: a non-air voxel with bone within 2.0 mm on BOTH
+  (`thicken_thin_bone`: grow ≤ 1.2 mm into ≥ 100 HU; seal: a non-air voxel with bone within 2.5 mm on BOTH
   sides along ≥ 2 of the 13 grid axes, up to 4 passes — a ball closing never seals a hole in a one-voxel wall;
   `DENTALSEGMENTATOR_BONE_GROW_MM/_GROW_HU/_SEAL_MM`; ~6 s per pass on a 400³ head). The band spinboxes are synced whenever the band is recomputed.
   2 · `LeFortMotionCore::BandFromHeights` builds the band from the surgeon's four heights (`GuidePlan::bandHeights`,
