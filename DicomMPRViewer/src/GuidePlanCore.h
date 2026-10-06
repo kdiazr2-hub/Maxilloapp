@@ -40,6 +40,12 @@ enum class GuideWorkflowStep
     Complete
 };
 
+struct GuideForamen
+{
+    std::array<double, 3> center{0.0, 0.0, 0.0};
+    bool right = true;
+};
+
 struct GuidePlan
 {
     GuideType type = GuideType::LeFort;
@@ -71,6 +77,9 @@ struct GuidePlan
     std::vector<double> bandHeights;
     // The case number engraved on the guides. Optional key `caseLabel`.
     QString caseLabel;
+    // The infraorbital foramina the surgeon marked, which the Le Fort guides keep clear of (user's report,
+    // 2026-10-06). Optional key `foramina`.
+    std::vector<GuideForamen> foramina;
 };
 
 namespace GuidePlanCore

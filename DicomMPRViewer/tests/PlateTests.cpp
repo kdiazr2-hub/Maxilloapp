@@ -240,6 +240,25 @@ void testPredictiveHolesGoBackWithTheSegment()
     require(confused[0].wrongSide, "a segment hole above the cut was not flagged");
 }
 
+// The surgeon chooses the screw; the guide's hole is the pilot drill for it (user's request, 2026-10-06: "el
+// orificio debe ser de 1.6, no de 2.0, para que el tornillo entre mejor" — a 2.0 mm screw is drilled at 1.6).
+void testTheGuideHoleIsThePilotDrillOfTheScrew()
+{
+    require(std::abs(PlateCore::PilotDrillFor(2.0) - 1.6) < 1e-9, "a 2.0 mm screw is not drilled at 1.6 mm");
+    require(std::abs(PlateCore::PilotDrillFor(1.5) - 1.1) < 1e-9, "a 1.5 mm screw is not drilled at 1.1 mm");
+    require(std::abs(PlateCore::PilotDrillFor(2.3) - 1.8) < 1e-9, "a 2.3 mm screw is not drilled at 1.8 mm");
+    double previous = 0.0;
+    for (double screw = 1.0; screw <= 3.0 + 1e-9; screw += 0.1) {
+        const double drill = PlateCore::PilotDrillFor(screw);
+        require(drill > previous - 1e-9 && drill < screw, "the pilot drill does not grow with the screw below its size");
+        previous = drill;
+    }
+    SleeveParams sleeve;
+    require(std::abs(sleeve.screwDiameterMm - 2.0) < 1e-9 &&
+                std::abs(sleeve.boreDiameterMm - PlateCore::PilotDrillFor(sleeve.screwDiameterMm)) < 1e-9,
+            "the default sleeve is not drilled for its default screw");
+}
+
 void testSleevesSitOnThePreoperativeHoles()
 {
     const std::array<double, 16> motion = plannedMotion();
@@ -729,6 +748,7 @@ int main()
         {"the keep-out is closed bone", testTheKeepOutIsClosedBone},
         {"a screw may not sit on a margin", testAScrewMayNotSitOnAMargin},
         {"plates travel with the project", testPlatesTravelWithTheProject},
+        {"the guide hole is the pilot drill of the screw", testTheGuideHoleIsThePilotDrillOfTheScrew},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {

@@ -832,64 +832,119 @@ void testTheGuideHasNoOpenworkCells()
     }
 }
 
-// Each guide's rim runs parallel to the cut at one height above it and one below, over the whole side, instead of
-// bulging round every sleeve, screw and label (user's report, 2026-10-06: "que la orilla de la guía sea más
-// uniforme, mira que tiene irregularidades"). Whatever was painted stays covered.
-void testEachGuideHasAUniformRim()
+std::vector<PredictiveHole> pillarHoles(double x, double above, double below)
 {
-    const Prepared bone = preoperativeBone(true);
     std::vector<PredictiveHole> marked;
-    for (const double x : {-16.0, 16.0})
-        for (const double z : {17.0, 3.0}) {
+    for (const double side : {-1.0, 1.0})
+        for (const double z : {above, below}) {
             PredictiveHole hole;
             hole.bone = z > 9.0 ? PlateBone::Cranial : PlateBone::Segment;
-            hole.preopCenter = {x, 0.0, z};
+            hole.preopCenter = {side * x, 0.0, z};
+            hole.preopAxis = {0.0, 1.0, 0.0};
+            marked.push_back(hole);
+        }
+    return marked;
+}
+
+// The paint's upper and lower edge over the wall (the plane y = 0) at lateral x.
+std::pair<double, double> paintSpan(const GuideBrushPaint& paint, double x)
+{
+    double top = -1e9, bottom = 1e9;
+    for (const GuideBrushStroke& dab : paint) {
+        const double dx = x - dab.center[0];
+        if (dab.erase || std::abs(dx) >= dab.radiusMm)
+            continue;
+        const double half = std::sqrt(dab.radiusMm * dab.radiusMm - dx * dx);
+        top = std::max(top, dab.center[2] + half);
+        bottom = std::min(bottom, dab.center[2] - half);
+    }
+    return {top, bottom};
+}
+
+// Each guide is shaped like the printed ones the surgeon showed (2026-10-06, after "la guía debe tener la
+// estructura parecida a la primera imagen"): the rounded hull of its holes, screws, labels and the cut, with a
+// rim that runs straight from one to the next instead of a band of one height, and nothing past them. A sleeve
+// high on the nasomaxillary pillar no longer lifts the whole guide.
+void testEachGuideIsTheHullOfWhatItCarries()
+{
+    const Prepared bone = preoperativeBone(true);
+    // A tall nasomaxillary column (x 9, up to z 21) and a low lateral end (x 18, up to z 13).
+    std::vector<PredictiveHole> marked;
+    for (const double side : {-1.0, 1.0})
+        for (const auto& [x, z] : std::vector<std::pair<double, double>>{{9.0, 21.0}, {9.0, 3.0}, {18.0, 13.0}, {18.0, 3.0}}) {
+            PredictiveHole hole;
+            hole.bone = z > 9.0 ? PlateBone::Cranial : PlateBone::Segment;
+            hole.preopCenter = {side * x, 0.0, z};
             hole.preopAxis = {0.0, 1.0, 0.0};
             marked.push_back(hole);
         }
     LeFortGuideParams params;
     params.separateSides = true;
     params.extentFromHoles = true;
-    params.uniformRim = true;
-    params.caseLabel = QStringLiteral("20406");
+    params.hullOutline = true;
     const LeFortGuideLayout layout = LeFortGuideCore::Layout(bone.preparation, bone.wrap.mesh, leFortCut(), marked, params);
     require(layout.ok, "the guides were not laid out: " + layout.error.toStdString());
     const double pad = 0.5 * params.sleeveOuterDiameterMm + params.holePadMm;
     for (const double side : {-1.0, 1.0}) {
-        // Where the band has full-size dabs, the paint's upper and lower edge (the wall is the plane y = 0).
-        double inner = 1e9, outer = -1e9;
-        for (const GuideBrushStroke& dab : layout.paint)
-            if (side * dab.center[0] > 0.0 && dab.radiusMm >= params.bandRadiusMm - 1e-6 && std::abs(dab.center[2] - 9.0) < 1.0) {
-                inner = std::min(inner, side * dab.center[0]);
-                outer = std::max(outer, side * dab.center[0]);
-            }
-        require(outer > inner + 4.0, "the band of a side is missing");
-        double topMin = 1e9, topMax = -1e9, bottomMin = 1e9, bottomMax = -1e9;
-        for (double s = inner; s <= outer + 1e-9; s += 0.5) {
-            double top = -1e9, bottom = 1e9;
-            for (const GuideBrushStroke& dab : layout.paint) {
-                const double dx = side * s - dab.center[0];
-                if (dab.erase || std::abs(dx) >= dab.radiusMm)
-                    continue;
-                const double half = std::sqrt(dab.radiusMm * dab.radiusMm - dx * dx);
-                top = std::max(top, dab.center[2] + half);
-                bottom = std::min(bottom, dab.center[2] - half);
-            }
-            topMin = std::min(topMin, top);
-            topMax = std::max(topMax, top);
-            bottomMin = std::min(bottomMin, bottom);
-            bottomMax = std::max(bottomMax, bottom);
+        // Every sleeve has its pad.
+        for (const PredictiveHole& hole : marked) {
+            if (side * hole.preopCenter[0] < 0.0)
+                continue;
+            const auto [top, bottom] = paintSpan(layout.paint, hole.preopCenter[0]);
+            require(top >= hole.preopCenter[2] + pad - 0.75 && bottom <= hole.preopCenter[2] - pad + 0.75,
+                    "a sleeve at z " + std::to_string(hole.preopCenter[2]) + " is not covered");
         }
-        require(topMax - topMin <= 1.0, "the upper rim is uneven by " + std::to_string(topMax - topMin) + " mm");
-        require(bottomMax - bottomMin <= 1.0, "the lower rim is uneven by " + std::to_string(bottomMax - bottomMin) + " mm");
-        require(topMin >= 17.0 + pad - 0.75 && bottomMax <= 3.0 - pad + 0.75,
-                "the rim does not cover the sleeves: z " + std::to_string(bottomMax) + ".." + std::to_string(topMin));
+        // The column is tall and the lateral end is not: the rim comes down from one to the other.
+        const double columnTop = paintSpan(layout.paint, side * 9.0).first;
+        const double lateralTop = paintSpan(layout.paint, side * 20.0).first;
+        require(columnTop >= 21.0 + pad - 0.75, "the nasomaxillary column is cut short");
+        require(lateralTop <= columnTop - 4.0, "the lateral end is as tall as the column: z " + std::to_string(lateralTop));
+        // A straight rim between them, not a ragged one: the upper edge is concave (a hull), the lower convex.
+        std::vector<std::pair<double, double>> edge;
+        for (double x = 9.0; x <= 18.0 + 1e-9; x += 0.5)
+            edge.push_back({x, paintSpan(layout.paint, side * x).first});
+        for (size_t i = 1; i + 1 < edge.size(); ++i) {
+            const double chord = 0.5 * (edge[i - 1].second + edge[i + 1].second);
+            require(edge[i].second >= chord - 0.6, "the upper rim has a notch at x " + std::to_string(edge[i].first));
+        }
     }
     const GuideRegion region = GuideBaseCore::MakeBrushRegion(bone.preparation.wrapField, layout.paint, bone.design.base);
     require(region.valid, "the region is not valid: " + region.error.toStdString());
     const GuideDesignResult guides =
         GuideDesignCore::Build(bone.preparation, region, layout.slotPlan, layout.fixation, layout.figures, bone.design);
     require(guides.ok && guides.pieces == 2, "two guides were expected, the build gave " + std::to_string(guides.pieces));
+}
+
+// The guide keeps clear of the infraorbital foramen the surgeon marked (user's report, 2026-10-06: "la guía se
+// mete en el agujero infraorbitario, no debería tocarlo").
+void testTheGuideKeepsClearOfTheInfraorbitalForamen()
+{
+    const Prepared bone = preoperativeBone(true);
+    LeFortGuideParams params;
+    params.separateSides = true;
+    params.extentFromHoles = true;
+    params.hullOutline = true;
+    const std::vector<PredictiveHole> marked = pillarHoles(14.0, 20.0, 3.0);
+    // Right in the guide: between the two upper sleeves' column and the cut.
+    const Vec3 foramen{-14.0, 0.0, 15.0};
+    params.keepOut = {foramen};
+    const LeFortGuideLayout layout = LeFortGuideCore::Layout(bone.preparation, bone.wrap.mesh, leFortCut(), marked, params);
+    require(layout.ok, "the guides were not laid out: " + layout.error.toStdString());
+    const GuideRegion region = GuideBaseCore::MakeBrushRegion(bone.preparation.wrapField, layout.paint, bone.design.base);
+    require(region.valid, "the region is not valid: " + region.error.toStdString());
+    const GuideDesignResult guides =
+        GuideDesignCore::Build(bone.preparation, region, layout.slotPlan, layout.fixation, layout.figures, bone.design);
+    require(guides.ok, "the guides were not built");
+    double nearest = 1e9;
+    for (vtkIdType id = 0; id < guides.mesh->GetNumberOfPoints(); ++id) {
+        double q[3];
+        guides.mesh->GetPoint(id, q);
+        nearest = std::min(nearest, std::hypot(q[0] - foramen[0], q[2] - foramen[2]));
+    }
+    require(nearest >= params.keepOutRadiusMm - 0.75, "the guide reaches the foramen: " + std::to_string(nearest) + " mm");
+    // The other side, with no foramen marked, is untouched there.
+    const auto [top, bottom] = paintSpan(layout.paint, 14.0);
+    require(top >= 20.0 && bottom <= 3.0, "the left guide lost material");
 }
 
 // The engraving is a solid of the text: as wide as `TextWidth` says, standing `reliefMm` proud of its base.
@@ -1009,7 +1064,8 @@ int main()
         {"the slits leave the lateral end solid", testTheSlitsLeaveTheLateralEndSolid},
         {"the guide ends a margin past the marked holes", testTheGuideEndsAMarginPastTheMarkedHoles},
         {"the guide has no openwork cells", testTheGuideHasNoOpenworkCells},
-        {"each guide has a uniform rim", testEachGuideHasAUniformRim},
+        {"each guide is the hull of what it carries", testEachGuideIsTheHullOfWhatItCarries},
+        {"the guide keeps clear of the infraorbital foramen", testTheGuideKeepsClearOfTheInfraorbitalForamen},
         {"text is a solid of its measured width", testTextIsASolidOfItsMeasuredWidth},
         {"each guide is engraved with the case and its side", testEachGuideIsEngravedWithTheCaseAndItsSide},
     };

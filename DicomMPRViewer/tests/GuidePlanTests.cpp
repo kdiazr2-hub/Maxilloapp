@@ -196,6 +196,32 @@ void testOlderPlansLoadWithoutHoles()
             "a plan without holes writes an empty key");
 }
 
+// The screw the surgeon chose and the foramina marked travel with the plan; a plan saved before the choice gets a
+// 2.0 mm screw and its 1.6 mm pilot hole, whatever bore it had (user's request, 2026-10-06).
+void testTheScrewAndTheForaminaTravelWithThePlan()
+{
+    GuidePlan plan;
+    plan.sleeve.screwDiameterMm = 1.5;
+    plan.sleeve.boreDiameterMm = 1.1;
+    plan.foramina.push_back({{-20.0, 5.0, 30.0}, true});
+    plan.foramina.push_back({{21.0, 5.0, 31.0}, false});
+    const GuidePlan back = GuidePlanCore::FromJson(GuidePlanCore::ToJson(plan));
+    require(std::abs(back.sleeve.screwDiameterMm - 1.5) < 1e-9 && std::abs(back.sleeve.boreDiameterMm - 1.1) < 1e-9,
+            "the screw choice did not come back");
+    require(back.foramina.size() == 2 && back.foramina[0].right && !back.foramina[1].right &&
+                back.foramina[1].center == std::array<double, 3>{21.0, 5.0, 31.0},
+            "the marked foramina did not come back");
+    QJsonObject older = GuidePlanCore::ToJson(GuidePlan{});
+    older[QStringLiteral("sleeve")] = QJsonObject{{QStringLiteral("boreDiameterMm"), 2.0},
+                                                 {QStringLiteral("outerDiameterMm"), 4.2},
+                                                 {QStringLiteral("heightMm"), 4.0}};
+    const GuidePlan reopened = GuidePlanCore::FromJson(older);
+    require(std::abs(reopened.sleeve.screwDiameterMm - 2.0) < 1e-9 && std::abs(reopened.sleeve.boreDiameterMm - 1.6) < 1e-9,
+            "an older plan keeps a 2.0 mm hole for a 2.0 mm screw");
+    require(reopened.foramina.empty() && !GuidePlanCore::ToJson(GuidePlan{}).contains(QStringLiteral("foramina")),
+            "a plan without foramina writes an empty key");
+}
+
 // A hole whose pillar or side the file does not name is skipped, not guessed.
 void testAnUnreadableHoleIsSkipped()
 {
@@ -237,6 +263,7 @@ int main()
         {"Le Fort holes travel with the plan", testLeFortHolesTravelWithThePlan},
         {"older plans load without holes", testOlderPlansLoadWithoutHoles},
         {"an unreadable hole is skipped", testAnUnreadableHoleIsSkipped},
+        {"the screw and the foramina travel with the plan", testTheScrewAndTheForaminaTravelWithThePlan},
         {"band heights and case number travel with the plan", testBandHeightsAndCaseNumberTravelWithThePlan},
     };
     int failures = 0;

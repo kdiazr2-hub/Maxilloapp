@@ -95,6 +95,8 @@ constexpr int kModeMoveHoles = 9;  // drag the Le Fort guide's drill sites over 
 constexpr int kModeMarkHoles = 10; // click the Le Fort guide's drill sites on the bone
 // Editable-point groups of the guide's drill sites, one per support verdict (Ok, Warning, Rejected).
 constexpr int kHoleGroupBase = 10;
+constexpr int kForamenGroup = 20; // the infraorbital foramina the guide keeps clear of
+const QColor kForamenColor(255, 160, 0);
 constexpr int kPlateDesignConventional = 0;
 constexpr int kPlateDesignThreePsi = 1;
 constexpr int kPlateDesignSplintless = 2;
@@ -604,7 +606,7 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
     m_guideNextPillarButton = new QPushButton(tr("Siguiente pilar ›"), panel);
     connect(m_guideNextPillarButton, &QPushButton::clicked, this, [this] {
         ++m_guideMarkStep;
-        if (m_guideMarkStep >= 4)
+        if (m_guideMarkStep >= 6) // four pillars, then the two infraorbital foramina
             setGuidePointMode(kModeNone);
         showGuideMarkPrompt();
         updateGuideUi();
@@ -612,6 +614,17 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
     automaticGuideBox->addWidget(m_guideNextPillarButton);
     m_guideUndoHoleButton = new QPushButton(tr("Quitar último orificio"), panel);
     connect(m_guideUndoHoleButton, &QPushButton::clicked, this, [this] {
+        if (m_guideMarkStep >= 4 && m_guideMarkStep < 6) { // a foramen step: take that side's mark back
+            const bool right = m_guideMarkStep == 4;
+            auto& foramina = m_guidePlan.foramina;
+            foramina.erase(std::remove_if(foramina.begin(), foramina.end(),
+                                          [right](const GuideForamen& f) { return f.right == right; }),
+                           foramina.end());
+            showGuideLeFortHoles();
+            showGuideMarkPrompt();
+            updateGuideUi();
+            return;
+        }
         if (m_guidePlan.lefortHoles.empty())
             return;
         m_guidePlan.lefortHoles.pop_back();
@@ -640,6 +653,34 @@ QWidget* MainWindow::buildGuideControlPanel(QWidget* parent)
     m_guideAcceptHolesButton = new QPushButton(tr("Aceptar orificios y crear guía"), panel);
     m_guideAcceptHolesButton->setToolTip(tr("Coloca los orificios en la guía como camisas de broca y la construye."));
     connect(m_guideAcceptHolesButton, &QPushButton::clicked, this, &MainWindow::acceptLeFortHoles);
+    // The surgeon chooses the screw; the guide's holes are its pilot drill (user's request, 2026-10-06).
+    {
+        auto* screwRow = new QHBoxLayout();
+        screwRow->addWidget(new QLabel(tr("Tornillo:"), panel));
+        m_guideScrewSpin = new QDoubleSpinBox(panel);
+        m_guideScrewSpin->setRange(1.0, 3.0);
+        m_guideScrewSpin->setSingleStep(0.1);
+        m_guideScrewSpin->setDecimals(1);
+        m_guideScrewSpin->setSuffix(tr(" mm"));
+        m_guideScrewSpin->setValue(m_guidePlan.sleeve.screwDiameterMm);
+        m_guideScrewSpin->setToolTip(tr("Diámetro del tornillo. Los orificios de la guía son la broca piloto."));
+        screwRow->addWidget(m_guideScrewSpin);
+        m_guideScrewBoreLabel = new QLabel(panel);
+        screwRow->addWidget(m_guideScrewBoreLabel, 1);
+        m_guideScrewRow = new QWidget(panel);
+        m_guideScrewRow->setLayout(screwRow);
+        screwRow->setContentsMargins(0, 0, 0, 0);
+        automaticGuideBox->addWidget(m_guideScrewRow);
+        connect(m_guideScrewSpin, &QDoubleSpinBox::valueChanged, this, [this](double screw) {
+            m_guidePlan.sleeve.screwDiameterMm = screw;
+            m_guidePlan.sleeve.boreDiameterMm = PlateCore::PilotDrillFor(screw);
+            if (m_guideSleeveBoreSpin) {
+                QSignalBlocker blocker(m_guideSleeveBoreSpin);
+                m_guideSleeveBoreSpin->setValue(m_guidePlan.sleeve.boreDiameterMm);
+            }
+            showGuideScrewBore();
+        });
+    }
     automaticGuideBox->addWidget(m_guideAcceptHolesButton);
 
     // ── Custom plates: define the definitive holes before the pre-operative guide ──
@@ -1548,6 +1589,23 @@ void MainWindow::onGuidePointPicked(int, double x, double y, double z)
             statusBar()->showMessage(error, 8000);
             return;
         }
+        if (m_guideMarkStep >= 4) {
+            // The infraorbital foramen of this side: one mark, replaced by the next click.
+            const bool right = m_guideMarkStep == 4;
+            auto& foramina = m_guidePlan.foramina;
+            foramina.erase(std::remove_if(foramina.begin(), foramina.end(),
+                                          [right](const GuideForamen& f) { return f.right == right; }),
+                           foramina.end());
+            foramina.push_back({point, right});
+            statusBar()->showMessage(tr("Agujero infraorbitario %1 marcado: la guía queda a %2 mm de él.")
+                                         .arg(right ? tr("derecho") : tr("izquierdo"))
+                                         .arg(LeFortGuideParams{}.keepOutRadiusMm, 0, 'f', 0),
+                                     8000);
+            showGuideLeFortHoles();
+            showGuideMarkPrompt();
+            updateGuideUi();
+            return;
+        }
         static const LeFortPillar kOrder[] = {LeFortPillar::PiriformRight, LeFortPillar::PillarRight,
                                               LeFortPillar::PiriformLeft, LeFortPillar::PillarLeft};
         const LeFortPillar pillar = kOrder[std::clamp(m_guideMarkStep, 0, 3)];
@@ -2294,7 +2352,7 @@ void MainWindow::updateGuideUi()
     if (m_guideNextPillarButton)
         m_guideNextPillarButton->setVisible(!m_guidePlateWorkspace && marking);
     if (m_guideUndoHoleButton)
-        m_guideUndoHoleButton->setVisible(!m_guidePlateWorkspace && marking && hasSites);
+        m_guideUndoHoleButton->setVisible(!m_guidePlateWorkspace && marking && (hasSites || !m_guidePlan.foramina.empty()));
     if (m_guideAcceptHolesButton) {
         // Also after a proposal that found nothing: the surgeon is never left without a way on (user's case,
         // 2026-10-05). Such a guide has only its positioning screws.
@@ -2311,6 +2369,8 @@ void MainWindow::updateGuideUi()
         m_guideRootsLabel->setVisible(leFortAssistant && !m_guideRootsLabel->text().isEmpty());
     if (m_guideBandBox)
         m_guideBandBox->setVisible(leFortAssistant);
+    if (m_guideScrewRow)
+        m_guideScrewRow->setVisible(leFortAssistant);
     if (m_guideCaseEdit) {
         m_guideCaseEdit->setVisible(leFortAssistant);
         if (!m_guideCaseEdit->hasFocus() && m_guideCaseEdit->text() != m_guidePlan.caseLabel)
@@ -2519,6 +2579,11 @@ void MainWindow::restoreGuidePlan(const ProjectState& state)
     if (m_guidePlateThicknessSpin) m_guidePlateThicknessSpin->setValue(m_guidePlan.plate.thicknessMm);
     if (m_guidePlateMinCutSpin) m_guidePlateMinCutSpin->setValue(m_guidePlan.plate.minCutDistanceMm);
     if (m_guideSleeveBoreSpin) m_guideSleeveBoreSpin->setValue(m_guidePlan.sleeve.boreDiameterMm);
+    if (m_guideScrewSpin) {
+        QSignalBlocker blocker(m_guideScrewSpin);
+        m_guideScrewSpin->setValue(m_guidePlan.sleeve.screwDiameterMm);
+    }
+    showGuideScrewBore();
     if (m_guideSleeveOuterSpin) m_guideSleeveOuterSpin->setValue(m_guidePlan.sleeve.outerDiameterMm);
     if (m_guideSleeveHeightSpin) m_guideSleeveHeightSpin->setValue(m_guidePlan.sleeve.heightMm);
     // The cuts the saved slots follow are offered again in the list.
@@ -2946,9 +3011,18 @@ PlateParams MainWindow::guidePlateParams() const
     return params;
 }
 
+void MainWindow::showGuideScrewBore()
+{
+    if (m_guideScrewBoreLabel)
+        m_guideScrewBoreLabel->setText(tr("orificio de la guía %1 mm")
+                                           .arg(guideSleeveParams().boreDiameterMm, 0, 'f', 1));
+}
+
 SleeveParams MainWindow::guideSleeveParams() const
 {
     SleeveParams params = m_guidePlan.sleeve;
+    if (m_guideScrewSpin)
+        params.screwDiameterMm = m_guideScrewSpin->value();
     if (m_guideSleeveBoreSpin)
         params.boreDiameterMm = m_guideSleeveBoreSpin->value();
     if (m_guideSleeveOuterSpin)
@@ -3568,8 +3642,10 @@ void MainWindow::layoutLeFortGuide(const std::vector<PredictiveHole>& drillSites
     params.sleeveOuterDiameterMm = guideSleeveParams().outerDiameterMm;
     // Two guides, right and left, engraved with the case number and their side (user's case, 2026-10-05).
     params.separateSides = true;
-    params.uniformRim = true;
+    params.hullOutline = true;
     params.extentFromHoles = true; // each guide ends a margin past its outermost hole (user's request, 2026-10-06)
+    for (const GuideForamen& foramen : m_guidePlan.foramina) // never over the infraorbital foramen (2026-10-06)
+        params.keepOut.push_back(foramen.center);
     if (m_guideCaseEdit)
         m_guidePlan.caseLabel = m_guideCaseEdit->text().trimmed();
     params.caseLabel = m_guidePlan.caseLabel;
@@ -3782,6 +3858,15 @@ void MainWindow::showGuideMarkPrompt()
                                         .arg(m_guideMarkStep + 1)
                                         .arg(QString::fromUtf8(kNames[m_guideMarkStep]))
                                         .arg(here));
+    } else if (m_guidePointMode == kModeMarkHoles && m_guideMarkStep < 6) {
+        const bool right = m_guideMarkStep == 4;
+        const bool marked = std::any_of(m_guidePlan.foramina.begin(), m_guidePlan.foramina.end(),
+                                        [right](const GuideForamen& f) { return f.right == right; });
+        m_guideReportLabel->setText(tr("%1 de 2 · Agujero infraorbitario %2 (opcional).\nHaga clic en él sobre la "
+                                       "envolvente: la guía no lo tocará%3. Luego «Siguiente».")
+                                        .arg(m_guideMarkStep - 3)
+                                        .arg(right ? tr("derecho") : tr("izquierdo"))
+                                        .arg(marked ? tr(" (ya marcado)") : QString()));
     } else {
         m_guideReportLabel->setText(m_guidePlan.lefortHoles.empty()
                                         ? tr("Marque los orificios con «3 · Marcar orificios (guiado)».")
@@ -3798,6 +3883,7 @@ void MainWindow::showGuideLeFortHoles()
         m_guideHoleGroups[static_cast<size_t>(group)].clear();
         m_guideView->setEditablePoints(kHoleGroupBase + group, {}, CranioPalette::holeSound());
     }
+    m_guideView->setEditablePoints(kForamenGroup, {}, kForamenColor);
     // Until they are accepted the proposed sites are always on show; once the guide carries them, only while
     // they are being moved.
     const bool guideBuilt = m_guideMesh && m_guideMesh->GetNumberOfPolys() > 0;
@@ -3821,6 +3907,10 @@ void MainWindow::showGuideLeFortHoles()
     m_guideView->setEditablePoints(kHoleGroupBase, centres[0], CranioPalette::holeSound(), 1.2);
     m_guideView->setEditablePoints(kHoleGroupBase + 1, centres[1], CranioPalette::holeWarning(), 1.2);
     m_guideView->setEditablePoints(kHoleGroupBase + 2, centres[2], CranioPalette::holeRefused(), 1.2);
+    std::vector<std::array<double, 3>> foramina;
+    for (const GuideForamen& foramen : m_guidePlan.foramina)
+        foramina.push_back(foramen.center);
+    m_guideView->setEditablePoints(kForamenGroup, foramina, kForamenColor, 1.6);
     m_guideView->render();
 }
 

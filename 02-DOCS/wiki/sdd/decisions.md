@@ -152,3 +152,11 @@ Context  — the surgeon rejected the openwork cells ("orificios de más"), foun
 Decision — cells off by default (supersedes the 2026-09-20 openwork frame); with two guides each side's rim is
            uniform (rows of band dabs from the lowest to the highest painted reach); the band is also drawn on the
            envelope and shown whenever the bone models are hidden.
+
+## 2026-10-06 — Guide = hull of what it carries; foramina marked; screw chosen  (feature: asistente-guia-lefort)
+Context  — reference image of printed guides; the guide reached the infraorbital foramen; holes came out 2.0 mm.
+Decision — each guide is the rounded convex hull of sleeves, screws, labels and the cut ±5 mm (supersedes the
+           uniform rim); the surgeon marks each infraorbital foramen (optional guided step) and the guide keeps
+           5 mm clear; the surgeon picks the screw and the hole is its pilot drill (2.0 → 1.6). Foramen detection
+           is manual: on segmented bone a foramen and a perforation of the sinus wall look alike.
+

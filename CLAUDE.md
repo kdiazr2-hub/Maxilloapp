@@ -274,9 +274,16 @@ cmake --build build-linux-core --parallel && ctest --test-dir build-linux-core -
   one at each lateral end, above the cut only when there are plates (the cranial side does not move), four above and
   below without them. The band is 16 mm wide and SOLID: the openwork cells (`latticeCellMm`, subtracted `GuideFigure`s) of
   2026-09-20 are off by default since the surgeon rejected them on the real case (2026-10-06: "esos orificios que hay
-  de más, no me gustan"); with two guides `uniformRim` (the UI sets it) adds rows of band dabs per side from the lowest
-  to the highest reach of anything painted there, so the rim runs parallel to the cut instead of bulging round each
-  sleeve pad, screw and label (LeFortGuideTests "each guide has a uniform rim"). `connectPaint` then guarantees it: the dabs are grouped into components
+  de más, no me gustan"); with two guides `hullOutline` (the UI sets it) shapes each guide as the rounded convex hull of its sleeves
+  (pads), positioning screws, labels and the cut ± `slitMarginMm` (5), seen as lateral × height above the cut, filled
+  with dabs no larger than their depth in the hull — the printed guides the surgeon showed (2026-10-06); a tall
+  nasomaxillary column no longer lifts the whole side. Labels are placed inside the hull first (full size, then
+  0.8 and 2/3), never over the nose, and only then on their own strip. `keepOut` (the infraorbital foramina the
+  surgeon marks in the guided steps 5–6, `GuidePlan::foramina`, optional key) is erased last with
+  `keepOutRadiusMm` (5) and positioning screws avoid it (LeFortGuideTests "each guide is the hull of what it
+  carries", "the guide keeps clear of the infraorbital foramen"). The screw is the surgeon's choice
+  (`SleeveParams::screwDiameterMm`, «Tornillo» in step 4); the guide's hole is `PlateCore::PilotDrillFor` it
+  (2.0 → 1.6 mm); plans saved without it get 2.0 / 1.6. `connectPaint` then guarantees it: the dabs are grouped into components
   by real overlap (allowing for the millimetre the region is opened by), and every patch but the largest is
   joined to it by a strap of dabs laid on the surface, nearest points first. A pad round a sleeve that touches
   nothing else is a hole drilled with no material under it, which is what the surgeon got ("que no queden

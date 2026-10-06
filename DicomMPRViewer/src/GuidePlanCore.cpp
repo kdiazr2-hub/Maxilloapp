@@ -174,7 +174,15 @@ QJsonObject ToJson(const GuidePlan& plan)
     if (!plan.caseLabel.isEmpty())
         out[QStringLiteral("caseLabel")] = plan.caseLabel;
     out[QStringLiteral("plate")] = PlateCore::ParamsToJson(plan.plate);
-    out[QStringLiteral("sleeve")] = QJsonObject{{QStringLiteral("boreDiameterMm"), plan.sleeve.boreDiameterMm},
+    if (!plan.foramina.empty()) {
+        QJsonArray foramina;
+        for (const GuideForamen& foramen : plan.foramina)
+            foramina.append(QJsonObject{{QStringLiteral("center"), pointJson(foramen.center)},
+                                        {QStringLiteral("side"), foramen.right ? QStringLiteral("right") : QStringLiteral("left")}});
+        out[QStringLiteral("foramina")] = foramina;
+    }
+    out[QStringLiteral("sleeve")] = QJsonObject{{QStringLiteral("screwDiameterMm"), plan.sleeve.screwDiameterMm},
+                                                {QStringLiteral("boreDiameterMm"), plan.sleeve.boreDiameterMm},
                                                 {QStringLiteral("outerDiameterMm"), plan.sleeve.outerDiameterMm},
                                                 {QStringLiteral("heightMm"), plan.sleeve.heightMm}};
     return out;
@@ -290,9 +298,25 @@ GuidePlan FromJson(const QJsonObject& object)
     for (const QJsonValue& value : object.value(QStringLiteral("bandHeights")).toArray())
         plan.bandHeights.push_back(value.toDouble());
     plan.caseLabel = object.value(QStringLiteral("caseLabel")).toString();
+    for (const QJsonValue& value : object.value(QStringLiteral("foramina")).toArray()) {
+        const QJsonObject o = value.toObject();
+        const QJsonArray center = o.value(QStringLiteral("center")).toArray();
+        if (center.size() != 3)
+            continue;
+        plan.foramina.push_back({pointFromJson(center, {0.0, 0.0, 0.0}),
+                                 o.value(QStringLiteral("side")).toString() != QStringLiteral("left")});
+    }
     plan.plate = PlateCore::ParamsFromJson(object.value(QStringLiteral("plate")).toObject());
     const QJsonObject sleeve = object.value(QStringLiteral("sleeve")).toObject();
     plan.sleeve.boreDiameterMm = sleeve.value(QStringLiteral("boreDiameterMm")).toDouble(plan.sleeve.boreDiameterMm);
+    // Saved before the screw was chosen: a 2.0 mm screw and its pilot drill, whatever bore the plan had (it came
+    // out at 2.0 mm on the real case and the screw did not bite; user's request, 2026-10-06).
+    if (sleeve.contains(QStringLiteral("screwDiameterMm"))) {
+        plan.sleeve.screwDiameterMm = sleeve.value(QStringLiteral("screwDiameterMm")).toDouble(2.0);
+    } else {
+        plan.sleeve.screwDiameterMm = 2.0;
+        plan.sleeve.boreDiameterMm = PlateCore::PilotDrillFor(2.0);
+    }
     plan.sleeve.outerDiameterMm = sleeve.value(QStringLiteral("outerDiameterMm")).toDouble(plan.sleeve.outerDiameterMm);
     plan.sleeve.heightMm = sleeve.value(QStringLiteral("heightMm")).toDouble(plan.sleeve.heightMm);
     return plan;

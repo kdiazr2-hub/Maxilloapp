@@ -128,7 +128,8 @@ struct PredictiveHole
 // A drill sleeve on the guide, built as two figures: a solid cylinder added and its bore subtracted.
 struct SleeveParams
 {
-    double boreDiameterMm = 1.6;  // pilot drill for 2.0 mm screws (or a metal sleeve's outer diameter)
+    double screwDiameterMm = 2.0; // the screw the surgeon chose (user's request, 2026-10-06)
+    double boreDiameterMm = 1.6;  // its pilot drill (`PlateCore::PilotDrillFor`), or a metal sleeve's outer diameter
     double outerDiameterMm = 4.2;
     double heightMm = 4.0;        // above the bone surface: longer sleeves steer the drill better
 };
@@ -262,5 +263,8 @@ PlateBuildResult Build(const GuidePreparation& planned, const PlateDesign& plate
 QJsonObject ToJson(const PlateDesign& plate);
 PlateDesign FromJson(const QJsonObject& object);
 QJsonObject ParamsToJson(const PlateParams& params);
+// The pilot drill for a screw: 1.5 → 1.1, 1.7 → 1.3, 2.0 → 1.6, 2.3 → 1.8, 2.5 → 2.0, 2.7 → 2.0 mm, linear
+// between them and 0.4 mm under the screw outside the table.
+double PilotDrillFor(double screwDiameterMm);
 PlateParams ParamsFromJson(const QJsonObject& object);
 }

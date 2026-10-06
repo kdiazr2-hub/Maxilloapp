@@ -652,6 +652,9 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
         for (const GuideFixationHole& other : layout.fixation)
             if (norm(sub(p, other.center)) < params.minFixationToHoleMm)
                 return false;
+        for (const Vec3& place : params.keepOut) // its boss and pad would stand over the foramen
+            if (norm(sub(p, place)) < params.keepOutRadiusMm + 3.5)
+                return false;
         return true;
     };
     {
@@ -793,13 +796,166 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
         }
     }
 
+    // Each guide as the printed ones are (user's reference image, 2026-10-06: "la guía debe tener la estructura
+    // parecida a la primera imagen"): the rounded convex hull of what it carries — its sleeves with their pads,
+    // its positioning screws and the cut with `slitMarginMm` either side — seen as lateral × height
+    // above the cut, and nothing else. The rim runs straight from one to the next: a tall nasomaxillary column
+    // no longer lifts the whole guide, which on the real case reached the infraorbital foramen. The hull is
+    // filled with dabs no larger than their distance to its edge, so none pokes out of it.
+    // Shaped twice: first to place the labels inside it, then, with any label that did not fit taken into the
+    // hull, to fill it.
+    std::array<std::function<double(double, double)>, 2> hullInside;
+    const bool shapeByHull = params.hullOutline && params.separateSides && hasAperture;
+    const auto shapeSides = [&](bool fillIt) {
+        const double middle = 0.5 * (rimLow + rimHigh);
+        const double screwPad = 3.5;
+        GuideBrushPaint rebuilt;
+        for (const int side : {-1, 1}) {
+            const auto onSide = [&](double s) { return side < 0 ? s < middle : s >= middle; };
+            struct Disc { double s, f, r; };
+            std::vector<Disc> discs;
+            const auto discAt = [&](const Vec3& p, double r) {
+                if (onSide(lateralOf(p)))
+                    discs.push_back({lateralOf(p), OsteotomyCore::FieldAt(*cut, p), r});
+            };
+            for (const PredictiveHole& hole : holes)
+                discAt(hole.preopCenter, pad);
+            for (const GuideFixationHole& screw : layout.fixation)
+                discAt(screw.center, screwPad);
+            for (const LeFortGuideLabel& label : layout.labels) {
+                const double strip = 0.5 * label.heightMm + 1.5;
+                for (const double t : {-1.0, 0.0, 1.0})
+                    discAt(add(label.onBone, scale(label.reading, t * (0.5 * label.widthMm + 1.0))), strip);
+            }
+            for (const BandPoint& b : band) {
+                if (!b.onCut)
+                    continue;
+                discAt(b.point, params.slitMarginMm);
+                const double rise = bandAt(b.lateral);
+                if (rise > 0.0 && onSide(b.lateral))
+                    discs.push_back({b.lateral, OsteotomyCore::FieldAt(*cut, b.point) + rise, params.slitMarginMm});
+            }
+            if (discs.empty())
+                continue;
+            // The hull of the discs, each sampled round its circle (Andrew's monotone chain).
+            std::vector<std::array<double, 2>> pts;
+            for (const Disc& d : discs)
+                for (int k = 0; k < 32; ++k) {
+                    const double angle = 2.0 * 3.14159265358979323846 * k / 32.0;
+                    pts.push_back({d.s + d.r * std::cos(angle), d.f + d.r * std::sin(angle)});
+                }
+            std::sort(pts.begin(), pts.end());
+            const auto cross = [](const std::array<double, 2>& o, const std::array<double, 2>& p, const std::array<double, 2>& q) {
+                return (p[0] - o[0]) * (q[1] - o[1]) - (p[1] - o[1]) * (q[0] - o[0]);
+            };
+            std::vector<std::array<double, 2>> hull(2 * pts.size());
+            size_t k = 0;
+            for (size_t i = 0; i < pts.size(); ++i) {
+                while (k >= 2 && cross(hull[k - 2], hull[k - 1], pts[i]) <= 0.0)
+                    --k;
+                hull[k++] = pts[i];
+            }
+            for (size_t i = pts.size() - 1, lower = k + 1; i-- > 0;) {
+                while (k >= lower && cross(hull[k - 2], hull[k - 1], pts[i]) <= 0.0)
+                    --k;
+                hull[k++] = pts[i];
+            }
+            hull.resize(k > 0 ? k - 1 : 0); // counter-clockwise, the first point not repeated
+            if (hull.size() < 3)
+                continue;
+            // Signed distance inside the hull (positive inside), and the vertical span at a lateral position.
+            const auto inside = [hull](double s, double f) {
+                double best = 1e30;
+                for (size_t i = 0; i < hull.size(); ++i) {
+                    const auto& p = hull[i];
+                    const auto& q = hull[(i + 1) % hull.size()];
+                    const double ex = q[0] - p[0], ey = q[1] - p[1];
+                    const double len = std::hypot(ex, ey);
+                    if (len < 1e-9)
+                        continue;
+                    best = std::min(best, (ex * (f - p[1]) - ey * (s - p[0])) / len); // left of a CCW edge
+                }
+                return best;
+            };
+            double sMin = 1e30, sMax = -1e30, fMin = 1e30, fMax = -1e30;
+            for (const auto& p : hull) {
+                sMin = std::min(sMin, p[0]);
+                sMax = std::max(sMax, p[0]);
+                fMin = std::min(fMin, p[1]);
+                fMax = std::max(fMax, p[1]);
+            }
+            hullInside[side < 0 ? 0 : 1] = inside;
+            if (!fillIt)
+                continue;
+            GuideBrushPaint sidePaint;
+            const double fill = std::max(1.5, params.fillRadiusMm);
+            for (int bin = 0; bin < bins; ++bin) {
+                const double s = lowest + (bin + 0.5) * spacing;
+                if (s < sMin || s > sMax || !onSide(s))
+                    continue;
+                const auto found = byBin.find(bin);
+                if (found == byBin.end())
+                    continue;
+                const double cap = clearOfNose(s, fill);
+                if (cap < 1.0)
+                    continue;
+                // The rows: from the lowest point of the hull at this lateral to the highest, `cap` inside it.
+                double lo = 1e30, hi = -1e30;
+                for (double f = fMin; f <= fMax; f += 0.25)
+                    if (inside(s, f) >= std::min(cap, 0.5 * (fMax - fMin)) - 1e-9) {
+                        lo = std::min(lo, f);
+                        hi = std::max(hi, f);
+                    }
+                if (lo > hi)
+                    continue;
+                const int steps = std::max(1, static_cast<int>(std::ceil((hi - lo) / cap)));
+                for (int row = 0; row <= steps; ++row) {
+                    const double level = lo + (hi - lo) * row / steps;
+                    // The envelope vertex nearest that spot; its dab is no larger than its depth in the hull.
+                    const Candidate* pick = nullptr;
+                    double pickDistance = 1.5;
+                    for (const Candidate* c : found->second) {
+                        const double d = std::hypot(c->lateral - s, c->field - level);
+                        if (d < pickDistance) {
+                            pickDistance = d;
+                            pick = c;
+                        }
+                    }
+                    if (!pick)
+                        continue;
+                    const double radius = std::min(cap, inside(pick->lateral, pick->field));
+                    if (radius >= 1.0)
+                        sidePaint.push_back({pick->point, radius, false});
+                }
+            }
+            for (const PredictiveHole& hole : holes)
+                if (onSide(lateralOf(hole.preopCenter)))
+                    sidePaint.push_back({hole.preopCenter, pad, false});
+            for (const GuideFixationHole& screw : layout.fixation)
+                if (onSide(lateralOf(screw.center)))
+                    sidePaint.push_back({screw.center, screwPad, false});
+            // The labels keep their own strip: one that had to sit by the rim stands where the hull is not filled.
+            for (const LeFortGuideLabel& label : layout.labels) {
+                if (!onSide(lateralOf(label.onBone)))
+                    continue;
+                const double strip = 0.5 * label.heightMm + 1.5;
+                const double half = 0.5 * label.widthMm;
+                for (double t = -half - 1.0; t <= half + 1.0 + 1e-9; t += 1.5)
+                    sidePaint.push_back({ontoSurface(field, add(label.onBone, scale(label.reading, t))), strip, false});
+            }
+            connectors += connectPaint(field, sidePaint);
+            rebuilt.insert(rebuilt.end(), sidePaint.begin(), sidePaint.end());
+        }
+        if (fillIt && !rebuilt.empty())
+            layout.paint = rebuilt;
+    };
+    if (shapeByHull)
+        shapeSides(false);
     // The engraving (spec asistente-guia-lefort, after the user's printed guides): on each guide the case number
     // above its cranial positioning screws and DER / IZQ below the caudal ones, at the middle of the side, clear
     // of every screw hole and sleeve. Each label brings its own material — a strip of dabs under it, joined to
     // the band — as the printed guides are taller where the number is; the openwork cells under it go.
     if (params.separateSides && hasAperture && !params.caseLabel.trimmed().isEmpty()) {
-        const double textHeight = std::max(1.0, params.labelHeightMm);
-        const double pad = 0.5 * textHeight + 1.5;
         const Vec3 upAxis = unit(path.upAxis, {0.0, 0.0, 1.0});
         const Vec3 towardLeft = path.points.size() >= 2 ? sub(path.points.back(), path.points.front()) : lateral;
         const double middle = 0.5 * (rimLow + rimHigh);
@@ -816,16 +972,27 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
             const QString sideName = lowSide == lowIsRight ? QStringLiteral("DER") : QStringLiteral("IZQ");
             const std::pair<QString, bool> lines[] = {{params.caseLabel.trimmed(), true}, {sideName, false}};
             for (const auto& [text, cranial] : lines) {
-                const double half = 0.5 * GuideEngraveCore::TextWidth(text, textHeight);
                 const double mid = 0.5 * (low + high);
                 bool placed = false;
-                // Row by row away from the cut, and along each row from the middle of the side outwards.
-                for (int row = 0; row <= 8 && !placed; ++row)
+                // Row by row away from the cut, and along each row from the middle of the side outwards. In a
+                // hull-shaped guide first inside it, at full height and then smaller (down to two thirds), so the
+                // text does not stretch the outline; only where it fits nowhere, at full height on its own strip.
+                const auto& hullSide = hullInside[lowSide ? 0 : 1];
+                const std::vector<std::pair<bool, double>> passes =
+                    hullSide ? std::vector<std::pair<bool, double>>{{true, 1.0}, {true, 0.8}, {true, 2.0 / 3.0}, {false, 1.0}}
+                             : std::vector<std::pair<bool, double>>{{false, 1.0}};
+                for (size_t pass = 0; pass < passes.size() && !placed; ++pass) {
+                const double textHeight = std::max(1.0, params.labelHeightMm * passes[pass].second);
+                const double pad = 0.5 * textHeight + 1.5;
+                const double half = 0.5 * GuideEngraveCore::TextWidth(text, textHeight);
+                for (int row = 0; row <= (passes[pass].first ? 8 : 13) && !placed; ++row)
                 for (int k = 0; k <= static_cast<int>(std::ceil(high - low)) && !placed; ++k) {
                     const double s = mid + ((k % 2) ? 1.0 : -1.0) * std::ceil(0.5 * k);
                     if (s - half < low || s + half > high)
                         continue;
-                    const double beyond = params.fixationOffsetMm + pad + 0.5 + row;
+                    // In a hull-shaped guide the text sits where the guide already is, from just clear of the slit.
+                    const std::function<double(double, double)> hullHere = passes[pass].first ? hullSide : nullptr;
+                    const double beyond = (hullSide ? pad + 1.5 : params.fixationOffsetMm + pad + 0.5) + row;
                     const double wanted = cranial ? bandAt(s) + beyond : -beyond;
                     const int bin = std::clamp(static_cast<int>(std::floor((s - lowest) / spacing)), 0, bins - 1);
                     const auto found = byBin.find(bin);
@@ -853,6 +1020,13 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
                         clear = clear && offText(hole.preopCenter, pick->point, reading, half) >= 0.5 * textHeight + sleeveBore + 1.0;
                     for (const LeFortGuideLabel& other : layout.labels)
                         clear = clear && norm(sub(other.center, pick->point)) >= half + 0.5 * other.widthMm + 1.0;
+                    for (const double t : {-1.0, 0.0, 1.0}) {
+                        const Vec3 p = add(pick->point, scale(reading, t * (half + 1.0)));
+                        // Never over the nose: its strip would bridge the two guides (or stand alone).
+                        clear = clear && clearOfNose(lateralOf(p), pad) >= pad - 0.25;
+                        if (hullHere)
+                            clear = clear && hullHere(lateralOf(p), OsteotomyCore::FieldAt(*cut, p)) >= pad - 0.25;
+                    }
                     if (!clear)
                         continue;
                     const double cellClear = pad + cellRadius + 0.6;
@@ -870,8 +1044,9 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
                     const Vec3 onFace = add(pick->point, scale(outward, std::max(0.0, params.labelWallMm)));
                     layout.figures.push_back(GuideEngraveCore::TextFigure(text, onFace, reading, outward, textHeight,
                                                                           params.labelReliefMm));
-                    layout.labels.push_back({text, onFace, pick->point, reading, 2.0 * half});
+                    layout.labels.push_back({text, onFace, pick->point, reading, 2.0 * half, textHeight});
                     placed = true;
+                }
                 }
                 if (!placed)
                     layout.report += QStringLiteral(" No cabe el texto «%1» en la guía %2.").arg(text, sideName);
@@ -879,54 +1054,15 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
         }
     }
 
-    // A uniform rim: on each guide, rows of band dabs from the lowest reach of anything painted on that side to
-    // the highest, at every bin of the band, so the rim runs parallel to the cut instead of bulging round each
-    // sleeve pad, screw and label strip (user's report, 2026-10-06). Only with two guides: one guide carries the
-    // bridge below the aperture, which would drag the whole lower rim down to it.
-    if (params.uniformRim && params.separateSides && hasAperture) {
-        const double middle = 0.5 * (rimLow + rimHigh);
-        for (const int side : {-1, 1}) {
-            const auto onSide = [&](double s) { return side < 0 ? s < middle : s >= middle; };
-            double top = -1e30, bottom = 1e30;
-            for (const GuideBrushStroke& dab : layout.paint) {
-                if (dab.erase || !onSide(lateralOf(dab.center)))
-                    continue;
-                const double f = OsteotomyCore::FieldAt(*cut, dab.center);
-                top = std::max(top, f + dab.radiusMm);
-                bottom = std::min(bottom, f - dab.radiusMm);
-            }
-            if (top < bottom)
-                continue;
-            GuideBrushPaint rows;
-            for (const BandPoint& b : band) {
-                if (!b.onCut || !onSide(b.lateral))
-                    continue;
-                const double radius = clearOfNose(b.lateral, bandRadius);
-                if (radius < 1.5 || top - bottom <= 2.0 * radius + 0.25)
-                    continue;
-                const int bin = std::clamp(static_cast<int>(std::floor((b.lateral - lowest) / spacing)), 0, bins - 1);
-                const auto found = byBin.find(bin);
-                if (found == byBin.end())
-                    continue;
-                // Rows no further apart than a radius, the outer two touching the rim from inside.
-                const double low = bottom + radius, high = top - radius;
-                const int steps = std::max(1, static_cast<int>(std::ceil((high - low) / radius)));
-                for (int k = 0; k <= steps; ++k) {
-                    const double level = low + (high - low) * k / steps;
-                    const Candidate* pick = nullptr;
-                    for (const double tolerance : {0.5, 1.0}) {
-                        for (const Candidate* c : found->second)
-                            if (std::abs(c->field - level) < tolerance && (!pick || c->depth > pick->depth))
-                                pick = c;
-                        if (pick)
-                            break;
-                    }
-                    if (pick)
-                        rows.push_back({pick->point, radius, false});
-                }
-            }
-            layout.paint.insert(layout.paint.end(), rows.begin(), rows.end());
-        }
+    if (shapeByHull)
+        shapeSides(true);
+    // Places the guide must not touch (the infraorbital foramina the surgeon marked): erased last, so whatever
+    // was painted over them goes. A sleeve beside one is reported, never moved.
+    for (const Vec3& place : params.keepOut) {
+        layout.paint.push_back({place, std::max(0.5, params.keepOutRadiusMm), true});
+        for (const PredictiveHole& hole : holes)
+            if (norm(sub(hole.preopCenter, place)) < params.keepOutRadiusMm + 0.5 * params.sleeveOuterDiameterMm)
+                layout.report += QStringLiteral(" Un orificio queda junto al agujero infraorbitario: muévalo.");
     }
 
     // The slit, in pieces between bridges: one at the midline (lateral 0 is the middle of the plates) and
@@ -1011,8 +1147,12 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
                         .arg(holes.size())
                         .arg(layout.slotPlan.size())
                         .arg(layout.fixation.size())
-                        .arg(params.fixationDiameterMm, 0, 'f', 1) +
-                    QStringLiteral(" Celdas del entramado: %1.").arg(layout.figures.size());
+                        .arg(params.fixationDiameterMm, 0, 'f', 1);
+    const auto cells = std::count_if(layout.figures.begin(), layout.figures.end(), [](const GuideFigure& f) {
+        return f.operation == GuideFigureOperation::Subtract;
+    });
+    if (cells > 0)
+        layout.report += QStringLiteral(" Celdas del entramado: %1.").arg(cells);
     if (connectors > 0)
         layout.report += QStringLiteral(" Se añadieron %1 trazo(s) de unión para que ninguna camisa quede suelta.")
                              .arg(connectors);

@@ -1477,7 +1477,9 @@ public:
         require(labels == 4, "the guides are not engraved with the case number and their side: " + std::to_string(labels));
         QTemporaryDir stlDir;
         QString exportReport;
-        require(stlDir.isValid() && window.exportLeFortGuideFiles(stlDir.path(), &exportReport), exportReport.toStdString());
+        const bool exported = stlDir.isValid() && window.exportLeFortGuideFiles(stlDir.path(), &exportReport);
+        require(exported, "the guides were not exported (" + std::to_string(stlDir.isValid()) + "): " +
+                              exportReport.toStdString());
         require(QFileInfo::exists(QDir(stlDir.path()).filePath(QStringLiteral("guia_der.stl"))) &&
                     QFileInfo::exists(QDir(stlDir.path()).filePath(QStringLiteral("guia_izq.stl"))),
                 "the two guides were not written");
@@ -1560,8 +1562,31 @@ public:
             window.m_guideNextPillarButton->click();
             settle();
         }
+        // Then the infraorbital foramina, which the guide keeps clear of (user's report, 2026-10-06).
+        require(window.m_guideMarkHolesButton->isChecked() &&
+                    window.m_guideReportLabel->text().contains(QStringLiteral("infraorbitario derecho")),
+                "the guided marking does not ask for the right infraorbital foramen after the pillars");
+        const std::array<double, 3> foramen{site[0], site[1], site[2] + 10.0};
+        window.onGuidePointPicked(0, foramen[0], foramen[1], foramen[2]);
+        settle();
+        require(window.m_guidePlan.lefortHoles.size() == 1 && window.m_guidePlan.foramina.size() == 1 &&
+                    window.m_guidePlan.foramina.front().right && window.m_guidePlan.foramina.front().center == foramen,
+                "the click did not mark the right infraorbital foramen");
+        for (int step = 0; step < 2; ++step) {
+            window.m_guideNextPillarButton->click();
+            settle();
+        }
         require(!window.m_guideMarkHolesButton->isChecked() && window.m_guideReportLabel->text().contains(QStringLiteral("Aceptar")),
-                "the guided marking does not end after the fourth pillar");
+                "the guided marking does not end after the foramina");
+        // The screw is the surgeon's choice and the guide's hole its pilot drill (user's request, 2026-10-06).
+        require(window.m_guideScrewSpin->isVisibleTo(&window) && std::abs(window.m_guideScrewSpin->value() - 2.0) < 1e-9 &&
+                    std::abs(window.guideSleeveParams().boreDiameterMm - 1.6) < 1e-9,
+                "the guide is not drilled at 1.6 mm for a 2.0 mm screw");
+        window.m_guideScrewSpin->setValue(1.5);
+        require(std::abs(window.guideSleeveParams().boreDiameterMm - 1.1) < 1e-9 &&
+                    window.m_guideScrewBoreLabel->text().contains(QStringLiteral("1.1")),
+                "choosing a 1.5 mm screw does not drill the guide at 1.1 mm");
+        window.m_guideScrewSpin->setValue(2.0);
         std::cout << "Impaction guide from the movement OK\n";
     }
 

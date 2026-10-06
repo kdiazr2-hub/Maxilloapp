@@ -66,10 +66,16 @@ struct LeFortGuideParams
     // Two guides, right and left, each from the nasomaxillary to the maxillomalar pillar, with no bridge
     // between them (user's real case, 2026-10-05). Each gets its own positioning screws at both ends.
     bool separateSides = false;
-    // With two guides: each runs at one height above the cut and one below over its whole side, tall enough for
-    // everything painted on it (sleeve pads, screws, labels), so its rim is parallel to the cut instead of bulging
-    // round each of them (user's report, 2026-10-06: "que la orilla de la guía sea más uniforme").
-    bool uniformRim = false;
+    // With two guides: each is the rounded convex hull of its sleeves, screws, labels and the cut (±
+    // `slitMarginMm`), like the printed guides the surgeon showed (2026-10-06), filled with dabs of up to
+    // `fillRadiusMm`.
+    bool hullOutline = false;
+    double slitMarginMm = 5.0;
+    double fillRadiusMm = 4.0;
+    // Places the guide keeps clear of, by `keepOutRadiusMm` (the infraorbital foramina: about 2 mm of foramen and
+    // 3 mm of clearance).
+    std::vector<std::array<double, 3>> keepOut;
+    double keepOutRadiusMm = 5.0;
     // Engraved on each guide when not empty: the case number above the upper slit, DER / IZQ below the cut.
     QString caseLabel;
     double labelHeightMm = 3.0;
@@ -98,6 +104,7 @@ struct LeFortGuideLabel
     std::array<double, 3> onBone{0.0, 0.0, 0.0};  // the same place on the bone
     std::array<double, 3> reading{1.0, 0.0, 0.0}; // the direction the text reads in
     double widthMm = 0.0;
+    double heightMm = 3.0; // smaller than `labelHeightMm` where the full size did not fit in the guide
 };
 
 struct LeFortGuideLayout
