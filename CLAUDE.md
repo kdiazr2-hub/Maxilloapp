@@ -376,6 +376,9 @@ cmake --build build-linux-core --parallel && ctest --test-dir build-linux-core -
   (`thicken_thin_bone`: grow ≤ 1.2 mm into ≥ 100 HU; seal: a non-air voxel with bone within 2.5 mm on BOTH
   sides along ≥ 2 of the 13 grid axes, up to 4 passes — a ball closing never seals a hole in a one-voxel wall;
   `DENTALSEGMENTATOR_BONE_GROW_MM/_GROW_HU/_SEAL_MM`; ~6 s per pass on a 400³ head). `cap_canal_openings` turns
+  `bone_thickening_params(label)` gives the maxilla its own seal (3.5 mm, down to −700 HU: its anterior wall over the
+  sinus is so thin that a gap reads as half air, ~−400 HU; user's report 2026-10-06 "enfócate en el maxilar"); the
+  mandible keeps 2.5 mm / −200 HU. `cap_canal_openings` turns
   canal voxels (app label 7) within 1 mm of the outside into mandible: the mental foramina showed the canal
   through two holes either side of the chin (user's report, 2026-10-06). The band spinboxes are synced whenever the band is recomputed.
   2 · `LeFortMotionCore::BandFromHeights` builds the band from the surgeon's four heights (`GuidePlan::bandHeights`,

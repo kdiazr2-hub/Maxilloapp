@@ -52,3 +52,5 @@ Linux core and full app suites. Pending: Windows rebuild and the same real case.
 12. "Mejor, ya casi" (2026-10-06): grow 1.2 mm, seal 2.5 mm — openings of ~5 mm filled with soft tissue (the last spots under the orbits) close; air openings still stay open.
 
 13. "Intenta cerrar esos dos orificios" (2026-10-06): the two holes by the chin were the mental foramina — the canal label reached the surface and sealing never touches other labels. `cap_canal_openings` gives the outer millimetre of the canal to the mandible (Python: canal exit 7 voxels wide closed, canal inside kept).
+
+14. "No, me refiero a los orificios del maxilar" (2026-10-06): the anterior maxillary wall over the sinus reads around -400 HU in its gaps (partial volume with the sinus air), below the -200 HU "not air" limit. The maxilla now seals down to -700 HU and up to ~6 mm (3.5 mm reach); -1000 HU openings stay open; the mandible keeps its rule (Python 36 OK; ~18 s on a 400^3 head).

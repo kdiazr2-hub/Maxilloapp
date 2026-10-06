@@ -176,6 +176,41 @@ class ThinBoneTests(unittest.TestCase):
         result = self.thicken(labels, intensities)
         self.assertTrue(result[9, 5, 5], "a faint wall at 110 HU was not recovered")
 
+    def maxilla_wall(self, hole_hu):
+        # The anterior wall of the maxilla over the sinus: one voxel of bone, sinus air behind it, cheek in front;
+        # a 6 mm hole whose voxels are a mix of the thin bone and the air (partial volume).
+        shape = (31, 31, 31)
+        labels = np.zeros(shape, dtype=np.uint8)
+        labels[15, 2:-2, 2:-2] = 1
+        labels[15, 9:21, 9:21] = 0  # 12 voxels = 6 mm
+        intensities = np.full(shape, 40.0, dtype=np.float32)
+        intensities[:15] = -1000.0          # the sinus
+        intensities[15, 2:-2, 2:-2] = 250.0
+        intensities[15, 9:21, 9:21] = hole_hu
+        return labels, intensities
+
+    def test_a_maxillary_wall_hole_over_the_sinus_is_sealed(self):
+        # User's case, 2026-10-06: the last holes are in the anterior maxilla, where the wall is so thin that the
+        # CT reads the gap as half air (about -450 HU), which the general rule took for an opening.
+        labels, intensities = self.maxilla_wall(-450.0)
+        result = segmentator.thicken_thin_bone(labels == 1, labels, intensities, (0.5, 0.5, 0.5),
+                                               **segmentator.bone_thickening_params(1))
+        self.assertTrue(np.all(result[15, 9:21, 9:21]), "the hole in the maxillary wall was left open")
+        self.assertFalse(np.any(result[10]), "the bone grew into the sinus")
+
+    def test_a_true_opening_of_the_maxilla_stays_open(self):
+        labels, intensities = self.maxilla_wall(-950.0)
+        result = segmentator.thicken_thin_bone(labels == 1, labels, intensities, (0.5, 0.5, 0.5),
+                                               **segmentator.bone_thickening_params(1))
+        self.assertFalse(np.any(result[15, 9:21, 9:21]), "an air opening of the maxilla was sealed")
+
+    def test_the_mandible_keeps_its_own_rule(self):
+        labels, intensities = self.maxilla_wall(-450.0)
+        labels[labels == 1] = 2
+        result = segmentator.thicken_thin_bone(labels == 2, labels, intensities, (0.5, 0.5, 0.5),
+                                               **segmentator.bone_thickening_params(2))
+        self.assertFalse(np.all(result[15, 9:21, 9:21]), "the mandible took the maxilla's stronger rule")
+
     def test_an_opening_into_air_stays_open(self):
         labels, intensities = self.wall(-900.0)
         result = self.thicken(labels, intensities)

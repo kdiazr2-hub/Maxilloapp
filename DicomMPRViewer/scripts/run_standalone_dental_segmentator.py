@@ -374,6 +374,36 @@ def fill_bone_interiors(mask, prediction, intensities, spacing_zyx, source_label
     return result
 
 
+def bone_thickening_params(source_label):
+    """`thicken_thin_bone` settings per bone, each overridable by environment variable.
+
+    The maxilla gets a stronger seal (user's report, 2026-10-06: "enfócate en el maxilar, la mandíbula está bien"):
+    its anterior wall over the sinus is so thin that the CT reads a gap in it as half bone, half sinus air —
+    around -400 HU — which the general rule took for an opening. Its holes are filled down to -700 HU and up to
+    about 6 mm across; a real opening into air (-1000) still stays open. The mandible keeps the general rule.
+    """
+    def env_float(name, default_value, minimum=None):
+        try:
+            value = float(os.environ.get(name, str(default_value)).strip())
+        except Exception:
+            value = default_value
+        return value if minimum is None else max(minimum, value)
+
+    if source_label == 1:
+        return {
+            "grow_mm": env_float("DENTALSEGMENTATOR_MAXILLA_GROW_MM", env_float("DENTALSEGMENTATOR_BONE_GROW_MM", 1.2, 0.0), 0.0),
+            "grow_hu": env_float("DENTALSEGMENTATOR_MAXILLA_GROW_HU", env_float("DENTALSEGMENTATOR_BONE_GROW_HU", 100.0)),
+            "seal_mm": env_float("DENTALSEGMENTATOR_MAXILLA_SEAL_MM", 3.5, 0.0),
+            "seal_min_hu": env_float("DENTALSEGMENTATOR_MAXILLA_SEAL_MIN_HU", -700.0),
+        }
+    return {
+        "grow_mm": env_float("DENTALSEGMENTATOR_BONE_GROW_MM", 1.2, 0.0),
+        "grow_hu": env_float("DENTALSEGMENTATOR_BONE_GROW_HU", 100.0),
+        "seal_mm": env_float("DENTALSEGMENTATOR_BONE_SEAL_MM", 2.5, 0.0),
+        "seal_min_hu": env_float("DENTALSEGMENTATOR_BONE_SEAL_MIN_HU", -200.0),
+    }
+
+
 def thicken_thin_bone(mask, prediction, intensities, spacing_zyx, grow_mm=1.2, grow_hu=100.0,
                       seal_mm=2.5, seal_min_hu=-200.0):
     """Recover the thin walls DentalSegmentator under-segments and seal the pinholes they leave.
@@ -565,16 +595,8 @@ def remap_prediction(input_path, prediction_path, output_path, target, seed=None
         if label_value in (1, 2):
             image, intensities = source_image()
 
-            def mm_env(name, default_value):
-                try:
-                    return max(0.0, float(os.environ.get(name, str(default_value)).strip()))
-                except Exception:
-                    return default_value
-
             mask = thicken_thin_bone(mask, arr, intensities, image.GetSpacing()[::-1],
-                                     grow_mm=mm_env("DENTALSEGMENTATOR_BONE_GROW_MM", 1.2),
-                                     grow_hu=float(os.environ.get("DENTALSEGMENTATOR_BONE_GROW_HU", "100")),
-                                     seal_mm=mm_env("DENTALSEGMENTATOR_BONE_SEAL_MM", 2.5))
+                                     **bone_thickening_params(label_value))
             mask = fill_bone_interiors(mask, arr, intensities, image.GetSpacing()[::-1], label_value)
         return mask
 
