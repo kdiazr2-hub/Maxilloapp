@@ -375,6 +375,22 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
         lowest = std::min(lowest, lateralOf(hole.preopCenter));
         highest = std::max(highest, lateralOf(hole.preopCenter));
     }
+    // From the surgeon's holes: each side ends a margin past its outermost hole, not at the cut's end.
+    if (params.extentFromHoles && !holes.empty() && path.points.size() == 4) {
+        const double middle = 0.5 * (lateralOf(path.points[1]) + lateralOf(path.points[2]));
+        double lowHole = 1e30, highHole = -1e30;
+        for (const PredictiveHole& hole : holes) {
+            const double s = lateralOf(hole.preopCenter);
+            if (s < middle)
+                lowHole = std::min(lowHole, s);
+            else
+                highHole = std::max(highHole, s);
+        }
+        if (lowHole < 1e29)
+            lowest = lowHole;
+        if (highHole > -1e29)
+            highest = highHole;
+    }
     lowest -= params.lateralMarginMm;
     highest += params.lateralMarginMm;
 

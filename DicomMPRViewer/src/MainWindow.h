@@ -390,6 +390,8 @@ private:
     QPushButton* m_guidePlateExportButton = nullptr;
     QPushButton* m_guideGenerateButton = nullptr;
     QPushButton* m_guideMoveHoleButton = nullptr;
+    QPushButton* m_guideMarkHolesButton = nullptr;  // «Marcar orificios»: each click adds a drill site
+    QPushButton* m_guideClearHolesButton = nullptr; // «Borrar orificios»
     QPushButton* m_guideAcceptHolesButton = nullptr;
     QPushButton* m_guideRootsButton = nullptr;
     QLabel* m_guideRootsLabel = nullptr;

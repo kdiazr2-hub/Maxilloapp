@@ -58,3 +58,5 @@ Linux core and full app suites. Pending: Windows rebuild and the same real case.
 15. (2026-10-06) Slits ran the whole guide and nearly split it: they now cover 65% of each guide from the piriform rim, the lateral end whole (LeFortGuideTests "the slits leave the lateral end solid", red: slit to x 25 → green). Holes came one per pillar: greedy took the middle of short bone; now the best pair (LeFortHoleTests "two holes fit where the bone is short", red → green).
 
 16. (2026-10-06) "La guía debe crearse sobre el envolvente": the Le Fort build drops the bone clip; envelope gap closing 4 mm. Holes off the pillars: the maxillomalar anchor is now the first molar on the cut (LeFortHoleTests "the pillar holes follow the first molar").
+
+17. (2026-10-06) "Si quieres yo los marco": «Marcar orificios» (AddHole) and «Borrar orificios"; the guide ends 5 mm past the outermost marked hole of each side (extentFromHoles). Envelope gap closing 6 mm.

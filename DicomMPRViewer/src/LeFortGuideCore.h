@@ -54,6 +54,10 @@ struct LeFortGuideParams
     double latticeMarginMm = 1.1;     // material left round every cell
     double latticeSlitClearMm = 2.0;  // material left between a cell and the slit
     double lateralMarginMm = 5.0;     // the band runs this far past the cut's ends or the outermost hole
+    // Each side ends `lateralMarginMm` past its outermost hole instead of at the cut's end: the surgeon marked the
+    // holes on the pillars and the guide is built from them (user's request, 2026-10-06). A side without holes
+    // keeps the cut's end.
+    bool extentFromHoles = false;
     // Across the piriform aperture the two sides are joined by a bridge on the alveolar wall below it; its
     // upper edge stays this far below the anterior nasal spine (user's rule, 2026-10-05: no guide in the nose
     // nor on the spine).

@@ -780,6 +780,42 @@ void testTheSlitsLeaveTheLateralEndSolid()
     }
 }
 
+// The surgeon marks the holes on each pillar and the guide is built from them: it ends a lateral margin past the
+// outermost hole of its side instead of running on to the end of the cut (user's request, 2026-10-06: "yo los
+// marco y luego tú construyes la guía desde donde yo los coloque en cada pilar con un margen lateral").
+void testTheGuideEndsAMarginPastTheMarkedHoles()
+{
+    const Prepared bone = preoperativeBone(true);
+    std::vector<PredictiveHole> marked;
+    for (const double x : {-13.0, 13.0})
+        for (const double z : {16.0, 3.0}) {
+            PredictiveHole hole;
+            hole.bone = z > 9.0 ? PlateBone::Cranial : PlateBone::Segment;
+            hole.preopCenter = {x, 0.0, z};
+            hole.preopAxis = {0.0, 1.0, 0.0};
+            marked.push_back(hole);
+        }
+    LeFortGuideParams params;
+    params.separateSides = true;
+    params.extentFromHoles = true;
+    const LeFortGuideLayout layout = LeFortGuideCore::Layout(bone.preparation, bone.wrap.mesh, leFortCut(), marked, params);
+    require(layout.ok, "the guides were not laid out: " + layout.error.toStdString());
+    for (const double side : {-1.0, 1.0}) {
+        double outer = 0.0;
+        for (const GuideSlot& slot : layout.slotPlan)
+            for (const auto& end : {slot.start, slot.end})
+                if (side * end[0] > 0.0)
+                    outer = std::max(outer, side * end[0]);
+        double band = 0.0;
+        for (const GuideBrushStroke& dab : layout.paint)
+            if (side * dab.center[0] > 0.0 && std::abs(dab.center[2] - 9.0) < 3.0 && dab.radiusMm >= 5.0)
+                band = std::max(band, side * dab.center[0]);
+        require(band >= 13.0 && band <= 13.0 + params.lateralMarginMm + 1.5,
+                "the band does not end a margin past the marked holes: x " + std::to_string(band));
+        require(outer <= 13.0 + params.lateralMarginMm + 1.5, "a slit runs past the guide: x " + std::to_string(outer));
+    }
+}
+
 // The engraving is a solid of the text: as wide as `TextWidth` says, standing `reliefMm` proud of its base.
 void testTextIsASolidOfItsMeasuredWidth()
 {
@@ -895,6 +931,7 @@ int main()
         {"two guides, one each side", testTwoGuidesOneEachSide},
         {"a perforation is not the aperture", testAPerforationIsNotTheAperture},
         {"the slits leave the lateral end solid", testTheSlitsLeaveTheLateralEndSolid},
+        {"the guide ends a margin past the marked holes", testTheGuideEndsAMarginPastTheMarkedHoles},
         {"text is a solid of its measured width", testTextIsASolidOfItsMeasuredWidth},
         {"each guide is engraved with the case and its side", testEachGuideIsEngravedWithTheCaseAndItsSide},
     };

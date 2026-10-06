@@ -599,6 +599,22 @@ void testThePillarHolesFollowTheFirstMolar()
     require(onMolar == 4, "the maxillomalar pillar did not get its four holes: " + std::to_string(onMolar));
 }
 
+// «Marcar orificios»: the surgeon clicks each hole (user's request, 2026-10-06). A click becomes a manual hole on the
+// bone, of the pillar it is nearest to and the side of the cut it lies on, judged like any other.
+void testAMarkedHoleBelongsToItsPillarAndSide()
+{
+    const Scene s = scene(pillarCut(), rise(4.0), maxillaWithAperture(false));
+    const LeFortProposedHole above = LeFortHoleCore::AddHole({-19.0, 1.5, 19.0}, s.context);
+    require(above.pillar == LeFortPillar::PillarRight && above.side == LeFortCutSide::Cranial,
+            "a click above the right pillar was not given to it: " + where(above));
+    require(above.origin == LeFortHoleOrigin::Manual && std::abs(above.center[1]) < 0.3,
+            "the marked hole is not a manual hole on the bone: " + where(above));
+    require(above.support.verdict != LeFortSupportVerdict::Rejected, "a sound marked hole was refused: " + describe(above.support));
+    const LeFortProposedHole below = LeFortHoleCore::AddHole({11.0, 2.0, 2.0}, s.context);
+    require(below.pillar == LeFortPillar::PiriformLeft && below.side == LeFortCutSide::Segment,
+            "a click below the left rim was not given to it: " + where(below));
+}
+
 } // namespace
 
 int main()
@@ -627,6 +643,7 @@ int main()
         {"a drill near a root is a warning that names it", testADrillNearARootIsAWarningThatNamesIt},
         {"two holes fit where the bone is short", testTwoHolesFitWhereTheBoneIsShort},
         {"the pillar holes follow the first molar", testThePillarHolesFollowTheFirstMolar},
+        {"a marked hole belongs to its pillar and side", testAMarkedHoleBelongsToItsPillarAndSide},
         {"two above and two below in a column on each pillar", testTwoAboveAndTwoBelowInAColumnOnEachPillar},
         {"roots do not leave a pillar without holes below", testRootsDoNotLeaveAPillarWithoutHolesBelow},
     };

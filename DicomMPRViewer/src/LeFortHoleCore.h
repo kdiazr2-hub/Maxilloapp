@@ -163,6 +163,10 @@ LeFortProposal Propose(const LeFortHoleContext& context, const std::vector<LeFor
 LeFortProposedHole MoveHole(const LeFortProposedHole& hole, const std::array<double, 3>& picked,
                             const LeFortHoleContext& context);
 
+// A hole the surgeon marked with a click (`picked`, on the bone or the envelope): brought onto the bone like a moved
+// hole, given the pillar whose anchor is nearest seen from above and the side of the cut it lies on, and judged.
+LeFortProposedHole AddHole(const std::array<double, 3>& picked, const LeFortHoleContext& context);
+
 // The guide's holes as the drill sites its sleeves are built at (`PlateCore::SleeveFigures`): centre and axis
 // on the bone before the cut, and the bone each one is in. They belong to no plate.
 std::vector<PredictiveHole> DrillSites(const std::vector<LeFortProposedHole>& holes);

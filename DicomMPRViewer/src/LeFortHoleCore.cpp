@@ -389,6 +389,31 @@ LeFortProposal Propose(const LeFortHoleContext& context, const std::vector<LeFor
     return proposal;
 }
 
+LeFortProposedHole AddHole(const std::array<double, 3>& picked, const LeFortHoleContext& context)
+{
+    LeFortProposedHole hole;
+    hole.center = picked;
+    hole.axis = context.anterior;
+    // The pillar whose anchor is nearest, seen from above.
+    static const LeFortPillar kPillars[] = {LeFortPillar::PillarRight, LeFortPillar::PiriformRight,
+                                            LeFortPillar::PiriformLeft, LeFortPillar::PillarLeft};
+    const Vec3 up = unit(context.cut.upAxis, {0.0, 0.0, 1.0});
+    double nearest = 1e30;
+    for (size_t i = 0; i < 4 && i < context.cut.points.size(); ++i) {
+        const Vec3 anchor = context.hasAnchor[i] ? context.anchors[i] : context.cut.points[i];
+        const Vec3 d = sub(picked, anchor);
+        const double away = norm(sub(d, scale(up, dot(d, up))));
+        if (away < nearest) {
+            nearest = away;
+            hole.pillar = kPillars[i];
+        }
+    }
+    // Above or below the cut until the bone says which.
+    if (const auto field = OsteotomyCore::PreparePathField(context.cut))
+        hole.side = OsteotomyCore::FieldAt(*field, picked) >= 0.0 ? LeFortCutSide::Cranial : LeFortCutSide::Segment;
+    return MoveHole(hole, picked, context);
+}
+
 LeFortProposedHole MoveHole(const LeFortProposedHole& hole, const std::array<double, 3>& picked,
                             const LeFortHoleContext& context)
 {

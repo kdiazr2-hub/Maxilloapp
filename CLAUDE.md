@@ -376,7 +376,10 @@ cmake --build build-linux-core --parallel && ctest --test-dir build-linux-core -
   (`design.bone` reset for the build only; user's request 2026-10-06: "sobre el envolvente, no sobre el hueso"),
   and the maxillomalar holes are anchored over the first molar (`LeFortHoleContext::anchors`, the molar's apex on
   the cut; «Proponer» measures the roots first if needed) — the pillar point sits ~19 mm behind it on the real
-  case. The envelope's gap closing defaults to 4.0 mm (was 2.5) and
+  case. «Marcar orificios» (`kModeMarkHoles`, `LeFortHoleCore::AddHole`: a click → manual hole on the bone, nearest
+  pillar, side of the cut, judged; refused clicks are reported) and «Borrar orificios» let the surgeon place the
+  sites; the layout then ends each side `lateralMarginMm` past its outermost hole (`extentFromHoles`, set by the
+  UI) — user's request 2026-10-06. The envelope's gap closing defaults to 6.0 mm (was 4.0, 2.5) and
   Le Fort projects saved with less are raised on reopening; the segmentation script thickens bone
   (`thicken_thin_bone`: grow ≤ 1.2 mm into ≥ 100 HU; seal: a non-air voxel with bone within 2.5 mm on BOTH
   sides along ≥ 2 of the 13 grid axes, up to 4 passes — a ball closing never seals a hole in a one-voxel wall;

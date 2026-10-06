@@ -1529,6 +1529,21 @@ public:
         require(kept.origin == LeFortHoleOrigin::Manual && std::abs(kept.center[0] - moved.center[0]) < 1e-6 &&
                     std::abs(kept.center[2] - moved.center[2]) < 1e-6,
                 "the moved site did not come back where it was");
+
+        // «Marcar orificios»: the surgeon clears the proposal and clicks the sites (user's request, 2026-10-06).
+        const std::array<double, 3> site = window.m_guidePlan.lefortHoles.front().center;
+        require(window.m_guideClearHolesButton->isVisibleTo(&window) && window.m_guideMarkHolesButton->isVisibleTo(&window),
+                "the holes cannot be cleared and marked by hand");
+        window.m_guideClearHolesButton->click();
+        settle();
+        require(window.m_guidePlan.lefortHoles.empty(), "the holes were not cleared");
+        window.m_guideMarkHolesButton->click();
+        settle();
+        window.onGuidePointPicked(0, site[0], site[1], site[2]);
+        settle();
+        require(window.m_guidePlan.lefortHoles.size() == 1 &&
+                    window.m_guidePlan.lefortHoles.front().origin == LeFortHoleOrigin::Manual,
+                "a click in «Marcar orificios» did not place a manual hole");
         std::cout << "Impaction guide from the movement OK\n";
     }
 
