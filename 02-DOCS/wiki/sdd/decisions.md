@@ -145,3 +145,10 @@ Context  — the surgeon wants two holes above and two below the cut at each nas
 Decision — holes ranked by nearness to the pillar line within ±5 mm; root proximity becomes a warning
            (supersedes "refused, not warned"); the aperture is only gaps inside the piriform points; envelope
            closing 2.5 mm; the segmentation grows thin walls into ≥ 150 HU and seals non-air pinholes (1.5 mm).
+
+## 2026-10-06 — Solid guide with a uniform rim; band visible while marking  (feature: asistente-guia-lefort, real case)
+Context  — the surgeon rejected the openwork cells ("orificios de más"), found the rim irregular, and lost sight of
+           the band while marking holes on the envelope.
+Decision — cells off by default (supersedes the 2026-09-20 openwork frame); with two guides each side's rim is
+           uniform (rows of band dabs from the lowest to the highest painted reach); the band is also drawn on the
+           envelope and shown whenever the bone models are hidden.
