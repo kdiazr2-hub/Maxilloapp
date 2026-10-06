@@ -1544,6 +1544,11 @@ public:
         require(!window.m_guideShowModelsCheck->isChecked() && window.m_guideShowWrapCheck->isChecked() &&
                     window.m_guideReportLabel->text().contains(QStringLiteral("nasomaxilar derecho")),
                 "the guided marking does not start on the envelope at the right nasomaxillary pillar");
+        // The band stays in sight on the envelope, so no hole goes where the bone is taken out (user's request,
+        // 2026-10-06: "debes dejar la franja roja para saber dónde no colocarlos").
+        require(window.m_guideView->isMeshVisible(kGuideBandWrapActorKey) &&
+                    window.m_guideView->meshData(kGuideBandWrapActorKey)->GetNumberOfPolys() > 0,
+                "the band is not shown on the envelope while the holes are marked");
         window.onGuidePointPicked(0, site[0], site[1], site[2]);
         settle();
         require(window.m_guidePlan.lefortHoles.size() == 1 &&
@@ -1715,7 +1720,7 @@ public:
         require(!window.m_guidePlan.paint.empty() && window.m_guidePlan.slotPlan.size() >= 2 &&
                     window.m_guidePlan.holes.empty(),
                 "the guide lost its band or kept unrelated drill holes");
-        // The legacy sphere is gone; what figures remain are the lattice cells, every one of them subtracted.
+        // The legacy sphere is gone; no openwork cells either (user's report, 2026-10-06), so nothing is left.
         for (const GuideFigure& figure : window.m_guidePlan.figures)
             require(figure.operation == GuideFigureOperation::Subtract &&
                         figure.shape == GuideFigureShape::Cylinder,
@@ -1723,7 +1728,7 @@ public:
         require(window.m_guideMesh && window.m_guideMesh->GetNumberOfPolys() > 0, "the guide was not built");
         require(window.m_guideBuiltFigures.size() ==
                     window.m_guidePlan.figures.size() + 2 * window.m_guidePlan.lefortHoles.size(),
-                "the guide does not carry one sleeve body and one bore per drill site, plus its cells");
+                "the guide does not carry one sleeve body and one bore per drill site");
         require(window.m_guideBuildSection->isVisibleTo(&window) &&
                     window.m_guideBuildButton->text() == QStringLiteral("Reconstruir guía"),
                 "the generated guide cannot be retouched and rebuilt");

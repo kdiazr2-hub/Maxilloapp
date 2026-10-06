@@ -404,6 +404,7 @@ private:
     QLineEdit* m_guideCaseEdit = nullptr;
     RootAnalysis m_guideRootAnalysis;
     vtkSmartPointer<vtkPolyData> m_guideBandMesh;          // the band drawn red on the wall
+    vtkSmartPointer<vtkPolyData> m_guideBandWrapMesh;      // the same band on the envelope
     // The upper teeth as a distance field, so a proposed screw keeps clear of the roots; rebaked when the mesh changes.
     mutable std::shared_ptr<const ImplicitCore::BakedField> m_guideTeethField;
     mutable vtkPolyData* m_guideTeethFieldSource = nullptr;

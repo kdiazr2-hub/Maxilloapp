@@ -879,6 +879,56 @@ LeFortGuideLayout Layout(const GuidePreparation& preop, vtkPolyData* wrapMesh, c
         }
     }
 
+    // A uniform rim: on each guide, rows of band dabs from the lowest reach of anything painted on that side to
+    // the highest, at every bin of the band, so the rim runs parallel to the cut instead of bulging round each
+    // sleeve pad, screw and label strip (user's report, 2026-10-06). Only with two guides: one guide carries the
+    // bridge below the aperture, which would drag the whole lower rim down to it.
+    if (params.uniformRim && params.separateSides && hasAperture) {
+        const double middle = 0.5 * (rimLow + rimHigh);
+        for (const int side : {-1, 1}) {
+            const auto onSide = [&](double s) { return side < 0 ? s < middle : s >= middle; };
+            double top = -1e30, bottom = 1e30;
+            for (const GuideBrushStroke& dab : layout.paint) {
+                if (dab.erase || !onSide(lateralOf(dab.center)))
+                    continue;
+                const double f = OsteotomyCore::FieldAt(*cut, dab.center);
+                top = std::max(top, f + dab.radiusMm);
+                bottom = std::min(bottom, f - dab.radiusMm);
+            }
+            if (top < bottom)
+                continue;
+            GuideBrushPaint rows;
+            for (const BandPoint& b : band) {
+                if (!b.onCut || !onSide(b.lateral))
+                    continue;
+                const double radius = clearOfNose(b.lateral, bandRadius);
+                if (radius < 1.5 || top - bottom <= 2.0 * radius + 0.25)
+                    continue;
+                const int bin = std::clamp(static_cast<int>(std::floor((b.lateral - lowest) / spacing)), 0, bins - 1);
+                const auto found = byBin.find(bin);
+                if (found == byBin.end())
+                    continue;
+                // Rows no further apart than a radius, the outer two touching the rim from inside.
+                const double low = bottom + radius, high = top - radius;
+                const int steps = std::max(1, static_cast<int>(std::ceil((high - low) / radius)));
+                for (int k = 0; k <= steps; ++k) {
+                    const double level = low + (high - low) * k / steps;
+                    const Candidate* pick = nullptr;
+                    for (const double tolerance : {0.5, 1.0}) {
+                        for (const Candidate* c : found->second)
+                            if (std::abs(c->field - level) < tolerance && (!pick || c->depth > pick->depth))
+                                pick = c;
+                        if (pick)
+                            break;
+                    }
+                    if (pick)
+                        rows.push_back({pick->point, radius, false});
+                }
+            }
+            layout.paint.insert(layout.paint.end(), rows.begin(), rows.end());
+        }
+    }
+
     // The slit, in pieces between bridges: one at the midline (lateral 0 is the middle of the plates) and
     // every `bridgeSpacingMm` from it. The slit runs the whole length of the band, because the slab it is cut
     // with IS the planned osteotomy and `GuideDesignCore` clips it to the guide's own material: where there is

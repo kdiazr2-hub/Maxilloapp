@@ -887,6 +887,12 @@ void Mesh3DView::setMeshVisible(int label, bool visible)
     render();
 }
 
+bool Mesh3DView::isMeshVisible(int label) const
+{
+    const auto it = m_meshActors.find(label);
+    return it != m_meshActors.end() && it->second->GetVisibility() != 0;
+}
+
 void Mesh3DView::setMeshScalarColoring(int label, bool enabled)
 {
     auto it = m_meshActors.find(label);

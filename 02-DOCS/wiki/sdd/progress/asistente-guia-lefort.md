@@ -34,3 +34,4 @@ status: in-progress
 | F9 guide to the pillar past a perforation | complete | LeFortGuideTests "a perforation is not the aperture" (red: left guide x 22–25 only → green) |
 | F10 thicker segmented bone | complete | Python ThinBoneTests 4/4 (pinhole sealed at 1.5 mm, air opening kept, other labels untouched) |
 | F11 holes in the bone mesh | complete | MeshGeneratorTests thin wall (red: vanished → green with the 0.55 floor) |
+| F12 solid guide, uniform rim, band while marking | complete | LeFortGuideTests "no openwork cells", "uniform rim" (red: 1.5 mm uneven → green); workspace: band on the envelope while marking |

@@ -62,3 +62,5 @@ Linux core and full app suites. Pending: Windows rebuild and the same real case.
 17. (2026-10-06) "Si quieres yo los marco": «Marcar orificios» (AddHole) and «Borrar orificios"; the guide ends 5 mm past the outermost marked hole of each side (extentFromHoles). Envelope gap closing 6 mm.
 
 18. (2026-10-06) "Con envolvente, sin límites, quita proponer, que sea guiado; la guía también en el envolvente": guided marking on the envelope (MarkHole, never refused), «Proponer» hidden, guides shown on the envelope after building.
+
+19. (2026-10-06) "Deja la franja roja para saber dónde no colocarlos; esos orificios de más no me gustan; bordes más uniformes": the band is drawn on the envelope while marking (SplintWorkspaceTests), the openwork cells are off by default (LeFortGuideTests "the guide has no openwork cells", red → green), and each guide gets a uniform rim — rows of band dabs from the lowest to the highest reach of its pads, screws and labels (LeFortGuideTests "each guide has a uniform rim": lower rim uneven by 1.5 mm without it → green).

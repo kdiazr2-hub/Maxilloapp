@@ -1082,6 +1082,7 @@ void MainWindow::setGuideType(GuideType type)
     }
     // A different guide sits on different models: its envelope and region start again.
     m_guideWrapMesh = nullptr;
+    m_guideBandWrapMesh = nullptr;
     m_guidePrepared = GuidePreparation{};
     m_guideMesh = nullptr;
     m_guidePlan.contour.clear();
@@ -1521,7 +1522,13 @@ void MainWindow::applyGuideLayers()
     m_guideView->setMeshVisible(kGuideWrapActorKey, on(m_guideShowWrapCheck));
     m_guideView->setMeshOpacity(kGuideWrapActorKey, m_guideWrapOpacitySpin ? m_guideWrapOpacitySpin->value() : 0.6);
     m_guideView->setMeshVisible(objectActorKey(kGuideMeshLabel), on(m_guideShowGuideCheck));
-    m_guideView->setMeshVisible(kGuideBandActorKey, on(m_guideShowModelsCheck) || on(m_guideShowGuideCheck));
+    // The band where the surgeon is looking: on the bone with the models, on the envelope otherwise — the holes
+    // are marked on the envelope and must stay out of the band (user's request, 2026-10-06).
+    const bool bandOnWrap = m_guideBandWrapMesh && m_guideBandWrapMesh->GetNumberOfPolys() > 0;
+    m_guideView->setMeshVisible(kGuideBandActorKey, on(m_guideShowModelsCheck) ||
+                                                        (!bandOnWrap && on(m_guideShowGuideCheck)));
+    m_guideView->setMeshVisible(kGuideBandWrapActorKey, bandOnWrap && !on(m_guideShowModelsCheck) &&
+                                                            (on(m_guideShowWrapCheck) || on(m_guideShowGuideCheck)));
     for (size_t i = 0; i < m_guidePlan.figures.size(); ++i)
         m_guideView->setMeshVisible(figureActorKey(i), on(m_guideShowFiguresCheck));
     m_guideView->render();
@@ -2226,6 +2233,12 @@ void MainWindow::syncGuideView()
         m_guideView->setMeshDisplayOptions(kGuideBandActorKey, 0.85, true);
         m_guideView->setMeshPickable(kGuideBandActorKey, false);
     }
+    if (m_guidePlan.type == GuideType::LeFort && m_guideBandWrapMesh && m_guideBandWrapMesh->GetNumberOfPolys() > 0) {
+        m_guideView->addMesh(kGuideBandWrapActorKey, m_guideBandWrapMesh, tr("Franja a quitar (envolvente)"));
+        m_guideView->setMeshColor(kGuideBandWrapActorKey, CranioPalette::resection());
+        m_guideView->setMeshDisplayOptions(kGuideBandWrapActorKey, 0.85, true);
+        m_guideView->setMeshPickable(kGuideBandWrapActorKey, false); // clicks go through to the envelope
+    }
     for (size_t i = 0; i < m_guidePlan.figures.size(); ++i) {
         GuideFigure& figure = m_guidePlan.figures[i];
         resolveGuideFigureMesh(figure);
@@ -2483,6 +2496,7 @@ void MainWindow::restoreGuidePlan(const ProjectState& state)
     if (state.guidesPlan.isEmpty()) {
         m_guidePlan = GuidePlan{};
         m_guideWrapMesh = nullptr;
+        m_guideBandWrapMesh = nullptr;
         m_guideMesh = nullptr;
         m_guidePrepared = GuidePreparation{};
         refreshGuideSources();
@@ -2493,6 +2507,7 @@ void MainWindow::restoreGuidePlan(const ProjectState& state)
     }
     m_guidePlan = GuidePlanCore::FromJson(state.guidesPlan);
     m_guideWrapMesh = nullptr;
+    m_guideBandWrapMesh = nullptr;
     m_guideMesh = nullptr;
     m_guidePrepared = GuidePreparation{};
     // Plates reload as plans; their meshes are rebuilt on the planned bone when they are next shown.
@@ -3553,6 +3568,7 @@ void MainWindow::layoutLeFortGuide(const std::vector<PredictiveHole>& drillSites
     params.sleeveOuterDiameterMm = guideSleeveParams().outerDiameterMm;
     // Two guides, right and left, engraved with the case number and their side (user's case, 2026-10-05).
     params.separateSides = true;
+    params.uniformRim = true;
     params.extentFromHoles = true; // each guide ends a margin past its outermost hole (user's request, 2026-10-06)
     if (m_guideCaseEdit)
         m_guidePlan.caseLabel = m_guideCaseEdit->text().trimmed();
@@ -3722,6 +3738,7 @@ QString MainWindow::guideLeFortHoleReport() const
 void MainWindow::refreshGuideBand()
 {
     m_guideBandMesh = nullptr;
+    m_guideBandWrapMesh = nullptr;
     // The heights shown are always the band drawn: the spins read 0.0 until «Proponer» before (user's case,
     // 2026-10-05), though the envelope had already given the band.
     syncGuideBandSpins();
@@ -3732,6 +3749,20 @@ void MainWindow::refreshGuideBand()
         return;
     // On the cranial bone before the cut: that is where the band is taken out.
     m_guideBandMesh = LeFortGuideCore::BandOnBone(guideSourceMeshForLabel(kLeFortCranialLabel), guideLeFortPath(), band);
+    // And on the envelope, a quarter of a millimetre proud of it: the holes are marked there.
+    if (m_guideWrapMesh && m_guideWrapMesh->GetNumberOfPolys() > 0) {
+        m_guideBandWrapMesh = LeFortGuideCore::BandOnBone(m_guideWrapMesh, guideLeFortPath(), band);
+        if (m_guidePrepared.ok && m_guidePrepared.wrapField && m_guideBandWrapMesh->GetPoints()) {
+            vtkPoints* points = m_guideBandWrapMesh->GetPoints();
+            for (vtkIdType i = 0; i < points->GetNumberOfPoints(); ++i) {
+                double p[3];
+                points->GetPoint(i, p);
+                const auto n = GuideBaseCore::NormalAt(*m_guidePrepared.wrapField, {p[0], p[1], p[2]});
+                points->SetPoint(i, p[0] + 0.25 * n[0], p[1] + 0.25 * n[1], p[2] + 0.25 * n[2]);
+            }
+            points->Modified();
+        }
+    }
 }
 
 void MainWindow::showGuideMarkPrompt()

@@ -48,8 +48,9 @@ struct LeFortGuideParams
 {
     double bandRadiusMm = 8.0;        // brush radius along the cut: the band covers ±8 mm around it
     double holePadMm = 1.8;           // material round each sleeve, past its outer radius
-    // The band is an openwork frame, not a solid plate: a row of cells above and below the slit.
-    double latticeCellMm = 2.6;       // cell diameter; 0 turns the lattice off
+    // Optional openwork: a row of cells above and below the slit. Off: the surgeon did not want the extra holes
+    // in the guide (user's report, 2026-10-06: "esos orificios que hay de más, no me gustan").
+    double latticeCellMm = 0.0;       // cell diameter; 0 turns the lattice off (it was 2.6)
     double latticeSpacingMm = 4.4;    // between cell centres along the cut
     double latticeMarginMm = 1.1;     // material left round every cell
     double latticeSlitClearMm = 2.0;  // material left between a cell and the slit
@@ -65,6 +66,10 @@ struct LeFortGuideParams
     // Two guides, right and left, each from the nasomaxillary to the maxillomalar pillar, with no bridge
     // between them (user's real case, 2026-10-05). Each gets its own positioning screws at both ends.
     bool separateSides = false;
+    // With two guides: each runs at one height above the cut and one below over its whole side, tall enough for
+    // everything painted on it (sleeve pads, screws, labels), so its rim is parallel to the cut instead of bulging
+    // round each of them (user's report, 2026-10-06: "que la orilla de la guía sea más uniforme").
+    bool uniformRim = false;
     // Engraved on each guide when not empty: the case number above the upper slit, DER / IZQ below the cut.
     QString caseLabel;
     double labelHeightMm = 3.0;
@@ -103,7 +108,7 @@ struct LeFortGuideLayout
     GuideBrushPaint paint;                 // the support region
     std::vector<GuideSlot> slotPlan;       // slit pieces between the bridges, each with its ends
     std::vector<GuideFixationHole> fixation;
-    std::vector<GuideFigure> figures;      // the lattice cells, subtracted
+    std::vector<GuideFigure> figures;      // the engraved labels (added) and, if enabled, the lattice cells (subtracted)
     std::vector<std::array<double, 3>> cutLine; // where the slit meets the anterior wall
     int dippedBins = 0;                    // bins where the band went below the aperture
     int upperSlitPieces = 0;               // slit pieces along the band's upper edge (impaction)

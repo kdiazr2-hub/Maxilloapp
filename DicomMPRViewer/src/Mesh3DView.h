@@ -56,6 +56,7 @@ public:
     // User overrides survive workspace mesh rebuilds; negative opacity clears them.
     void setMeshDisplayOptions(int label, double opacity, bool alwaysOnTop);
     void setMeshVisible(int label, bool visible);
+    bool isMeshVisible(int label) const; // false when there is no such mesh
     // Colors the mesh with its RGB point scalars instead of the actor color.
     void setMeshScalarColoring(int label, bool enabled);
     // Opacity changes make meshes pickable again; call after them.

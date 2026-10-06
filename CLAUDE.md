@@ -272,14 +272,11 @@ cmake --build build-linux-core --parallel && ctest --test-dir build-linux-core -
   Positioning screws of 1.5 mm hold the guide while the holes are drilled and the cut is made, as both published
   protocols do (Gander 2015 "fixed with two 1.5-mm screws"; Ho 2025 "two or four monocortical positioning screws"):
   one at each lateral end, above the cut only when there are plates (the cranial side does not move), four above and
-  below without them. The band is 16 mm wide and laid out as an OPENWORK FRAME, as the published guides are (user's
-  side-by-side, 2026-09-20): a row of `latticeCellMm` cells above and below the slit, staggered along the cut, each
-  taken at the envelope vertex nearest its place and kept clear of the slit, of every sleeve and screw, and of the
-  rim. They are subtracted `GuideFigure`s in `LeFortGuideLayout::figures`, so `GuideDesignCore::Build` carves them
-  with everything else and `KeepOutNode` stops an edit filling them in. A solid band of the same height would be a
-  slab; the frame grips more of the wall, stays light and flexes onto the bone, which is what makes a printed guide
-  seat passively. With a narrow solid band the far sleeves of a splintless plan came out as rings floating off the
-  guide (the build reported 2 pieces). `connectPaint` then guarantees it: the dabs are grouped into components
+  below without them. The band is 16 mm wide and SOLID: the openwork cells (`latticeCellMm`, subtracted `GuideFigure`s) of
+  2026-09-20 are off by default since the surgeon rejected them on the real case (2026-10-06: "esos orificios que hay
+  de más, no me gustan"); with two guides `uniformRim` (the UI sets it) adds rows of band dabs per side from the lowest
+  to the highest reach of anything painted there, so the rim runs parallel to the cut instead of bulging round each
+  sleeve pad, screw and label (LeFortGuideTests "each guide has a uniform rim"). `connectPaint` then guarantees it: the dabs are grouped into components
   by real overlap (allowing for the millimetre the region is opened by), and every patch but the largest is
   joined to it by a strap of dabs laid on the surface, nearest points first. A pad round a sleeve that touches
   nothing else is a hole drilled with no material under it, which is what the surgeon got ("que no queden
@@ -377,7 +374,7 @@ cmake --build build-linux-core --parallel && ctest --test-dir build-linux-core -
   and the maxillomalar holes are anchored over the first molar (`LeFortHoleContext::anchors`, the molar's apex on
   the cut; «Proponer» measures the roots first if needed) — the pillar point sits ~19 mm behind it on the real
   case. The holes are now MARKED BY THE SURGEON, guided (user's request 2026-10-06: «Proponer» hidden, no zone
-  limits, on the envelope): «3 · Marcar orificios (guiado)» shows only the envelope and walks nasomaxilar D →
+  limits, on the envelope): «3 · Marcar orificios (guiado)» shows only the envelope, with the band drawn on it (`kGuideBandWrapActorKey`, 0.25 mm proud), and walks nasomaxilar D →
   maxilomalar D → nasomaxilar I → maxilomalar I («Siguiente pilar», «Quitar último», `m_guideMarkStep`,
   `showGuideMarkPrompt`); each click is `LeFortHoleCore::MarkHole` — exactly at the click, envelope normal as
   axis, never refused (a Support refusal becomes a warning). `AddHole` (nearest pillar, onto the bone) stays in the

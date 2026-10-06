@@ -816,6 +816,82 @@ void testTheGuideEndsAMarginPastTheMarkedHoles()
     }
 }
 
+// The guide is a plain band: no openwork cells (user's report, 2026-10-06: "esos orificios que hay de más, no me
+// gustan"). The only subtracted figures a layout may carry are none at all.
+void testTheGuideHasNoOpenworkCells()
+{
+    const Prepared bone = preoperativeBone(true);
+    for (const bool separate : {false, true}) {
+        LeFortGuideParams params;
+        params.separateSides = separate;
+        const LeFortGuideLayout layout =
+            LeFortGuideCore::Layout(bone.preparation, bone.wrap.mesh, leFortCut(), predictiveHoles(), params);
+        require(layout.ok, "the guide was not laid out: " + layout.error.toStdString());
+        for (const GuideFigure& figure : layout.figures)
+            require(figure.operation != GuideFigureOperation::Subtract, "the guide still has openwork cells");
+    }
+}
+
+// Each guide's rim runs parallel to the cut at one height above it and one below, over the whole side, instead of
+// bulging round every sleeve, screw and label (user's report, 2026-10-06: "que la orilla de la guía sea más
+// uniforme, mira que tiene irregularidades"). Whatever was painted stays covered.
+void testEachGuideHasAUniformRim()
+{
+    const Prepared bone = preoperativeBone(true);
+    std::vector<PredictiveHole> marked;
+    for (const double x : {-16.0, 16.0})
+        for (const double z : {17.0, 3.0}) {
+            PredictiveHole hole;
+            hole.bone = z > 9.0 ? PlateBone::Cranial : PlateBone::Segment;
+            hole.preopCenter = {x, 0.0, z};
+            hole.preopAxis = {0.0, 1.0, 0.0};
+            marked.push_back(hole);
+        }
+    LeFortGuideParams params;
+    params.separateSides = true;
+    params.extentFromHoles = true;
+    params.uniformRim = true;
+    params.caseLabel = QStringLiteral("20406");
+    const LeFortGuideLayout layout = LeFortGuideCore::Layout(bone.preparation, bone.wrap.mesh, leFortCut(), marked, params);
+    require(layout.ok, "the guides were not laid out: " + layout.error.toStdString());
+    const double pad = 0.5 * params.sleeveOuterDiameterMm + params.holePadMm;
+    for (const double side : {-1.0, 1.0}) {
+        // Where the band has full-size dabs, the paint's upper and lower edge (the wall is the plane y = 0).
+        double inner = 1e9, outer = -1e9;
+        for (const GuideBrushStroke& dab : layout.paint)
+            if (side * dab.center[0] > 0.0 && dab.radiusMm >= params.bandRadiusMm - 1e-6 && std::abs(dab.center[2] - 9.0) < 1.0) {
+                inner = std::min(inner, side * dab.center[0]);
+                outer = std::max(outer, side * dab.center[0]);
+            }
+        require(outer > inner + 4.0, "the band of a side is missing");
+        double topMin = 1e9, topMax = -1e9, bottomMin = 1e9, bottomMax = -1e9;
+        for (double s = inner; s <= outer + 1e-9; s += 0.5) {
+            double top = -1e9, bottom = 1e9;
+            for (const GuideBrushStroke& dab : layout.paint) {
+                const double dx = side * s - dab.center[0];
+                if (dab.erase || std::abs(dx) >= dab.radiusMm)
+                    continue;
+                const double half = std::sqrt(dab.radiusMm * dab.radiusMm - dx * dx);
+                top = std::max(top, dab.center[2] + half);
+                bottom = std::min(bottom, dab.center[2] - half);
+            }
+            topMin = std::min(topMin, top);
+            topMax = std::max(topMax, top);
+            bottomMin = std::min(bottomMin, bottom);
+            bottomMax = std::max(bottomMax, bottom);
+        }
+        require(topMax - topMin <= 1.0, "the upper rim is uneven by " + std::to_string(topMax - topMin) + " mm");
+        require(bottomMax - bottomMin <= 1.0, "the lower rim is uneven by " + std::to_string(bottomMax - bottomMin) + " mm");
+        require(topMin >= 17.0 + pad - 0.75 && bottomMax <= 3.0 - pad + 0.75,
+                "the rim does not cover the sleeves: z " + std::to_string(bottomMax) + ".." + std::to_string(topMin));
+    }
+    const GuideRegion region = GuideBaseCore::MakeBrushRegion(bone.preparation.wrapField, layout.paint, bone.design.base);
+    require(region.valid, "the region is not valid: " + region.error.toStdString());
+    const GuideDesignResult guides =
+        GuideDesignCore::Build(bone.preparation, region, layout.slotPlan, layout.fixation, layout.figures, bone.design);
+    require(guides.ok && guides.pieces == 2, "two guides were expected, the build gave " + std::to_string(guides.pieces));
+}
+
 // The engraving is a solid of the text: as wide as `TextWidth` says, standing `reliefMm` proud of its base.
 void testTextIsASolidOfItsMeasuredWidth()
 {
@@ -932,6 +1008,8 @@ int main()
         {"a perforation is not the aperture", testAPerforationIsNotTheAperture},
         {"the slits leave the lateral end solid", testTheSlitsLeaveTheLateralEndSolid},
         {"the guide ends a margin past the marked holes", testTheGuideEndsAMarginPastTheMarkedHoles},
+        {"the guide has no openwork cells", testTheGuideHasNoOpenworkCells},
+        {"each guide has a uniform rim", testEachGuideHasAUniformRim},
         {"text is a solid of its measured width", testTextIsASolidOfItsMeasuredWidth},
         {"each guide is engraved with the case and its side", testEachGuideIsEngravedWithTheCaseAndItsSide},
     };
