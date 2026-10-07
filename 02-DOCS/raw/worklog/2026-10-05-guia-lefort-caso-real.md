@@ -71,3 +71,5 @@ Linux core and full app suites. Pending: Windows rebuild and the same real case.
 
 21. (2026-10-06) "Quita editar guía; tienes dos reconstruir guía; anterior está de más; no sale marcar agujero infraorbitario": an assistant-built guide (`GuidePlan::assistant`) hides EDITAR, the second «Reconstruir guía» and «Anterior»; «3b · Marcar agujeros infraorbitarios» starts the foramen steps directly (SplintWorkspaceTests, red: edit/rebuild still shown → green).
 
+
+22. (2026-10-07) "¿Una librería mejor que VTK para mejores guías?" → experiment, not a change: OpenVDB narrow band at 0.10 mm vs today's 0.25 mm + 70 sinc on the same solid (`GuideDesignCore::SolidNode`, split out of `Build`). Bore 1.60 vs 1.53 mm, crisp sleeves and legible text; 15.8 vs 3.0 s, 785 k vs 123 k triangles. Report and renders in `02-DOCS/raw/experiments/openvdb-2026-10-07/`. Decision pending with the user.

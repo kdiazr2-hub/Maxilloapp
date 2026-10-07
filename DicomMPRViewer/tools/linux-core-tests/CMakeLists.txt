@@ -65,3 +65,25 @@ add_core_test(ProjectSerializerTests tests/ProjectSerializerTests.cpp
     src/SplintDesignCore.cpp src/SplintHeightmapGenerator.cpp
     src/GuidePlanCore.cpp src/PlateCore.cpp ${GUIDE_CORE})
 target_link_libraries(ProjectSerializerTests PRIVATE Qt6::Gui)
+
+# GuideResolutionProbe (not a CTest): today's guide contour against OpenVDB's sparse narrow band at 0.1 mm, with
+# side-by-side renders. Only when OpenVDB is installed (Ubuntu: libopenvdb-dev); it also needs VTK's rendering.
+find_library(OPENVDB_LIBRARY openvdb)
+find_library(TBB_LIBRARY tbb)
+find_library(IMATH_LIBRARY NAMES Imath-3_1 Imath)
+find_path(OPENVDB_INCLUDE_DIR openvdb/openvdb.h)
+if(OPENVDB_LIBRARY AND TBB_LIBRARY AND OPENVDB_INCLUDE_DIR)
+    find_package(VTK 9.5 REQUIRED COMPONENTS CommonCore CommonDataModel CommonMath CommonTransforms
+        FiltersCore FiltersGeneral FiltersSources FiltersModeling FiltersGeometry IOGeometry IOXML IOImage
+        ImagingCore ImagingGeneral ImagingMath ImagingMorphological ImagingStencil RenderingFreeType
+        RenderingCore RenderingOpenGL2 InteractionStyle)
+    add_executable(GuideResolutionProbe ${APP}/tools/GuideResolutionProbe.cpp ${APP}/src/LeFortGuideCore.cpp
+        ${APP}/src/GuideEngraveCore.cpp ${APP}/src/LeFortMotionCore.cpp ${APP}/src/PlateCore.cpp)
+    foreach(f ${GUIDE_CORE})
+        target_sources(GuideResolutionProbe PRIVATE ${APP}/${f})
+    endforeach()
+    target_include_directories(GuideResolutionProbe PRIVATE ${APP}/src ${APP}/tests ${OPENVDB_INCLUDE_DIR})
+    target_compile_definitions(GuideResolutionProbe PRIVATE QT_NO_EMIT QT_NO_FOREACH)
+    target_link_libraries(GuideResolutionProbe PRIVATE Qt6::Core Qt6::Concurrent ${OPENVDB_LIBRARY} ${TBB_LIBRARY} ${IMATH_LIBRARY} ${VTK_LIBRARIES})
+    vtk_module_autoinit(TARGETS GuideResolutionProbe MODULES ${VTK_LIBRARIES})
+endif()

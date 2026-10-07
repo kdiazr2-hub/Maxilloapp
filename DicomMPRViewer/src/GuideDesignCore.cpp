@@ -380,28 +380,17 @@ GuideDesignResult Build(const GuidePreparation& prepared, const GuideContour& co
                  figures, params, cancel);
 }
 
-GuideDesignResult Build(const GuidePreparation& prepared, const GuideRegion& region,
-                        const std::vector<GuideSlot>& slotPlan, const std::vector<GuideFixationHole>& holes,
-                        const std::vector<GuideFigure>& figures, const GuideDesignParams& params,
-                        const std::atomic<bool>* cancel)
+ImplicitCore::NodePtr SolidNode(const GuidePreparation& prepared, const GuideRegion& region,
+                                const std::vector<GuideSlot>& slotPlan, const std::vector<GuideFixationHole>& holes,
+                                const std::vector<GuideFigure>& figures, const GuideDesignParams& params, double detail,
+                                double bounds[6], int* addedOut, int* subtractedOut, QString* error,
+                                const std::atomic<bool>* cancel)
 {
-    GuideDesignResult result;
-    if (!prepared.ok || !prepared.wrapField) {
-        result.error = prepared.error.isEmpty() ? QStringLiteral("La envolvente no está preparada.") : prepared.error;
-        return result;
-    }
-    // Guides are inspected and printed at close range. Keep their final contour finer than the preview/wrap,
-    // including projects saved with the older 0.30 mm default.
-    const double detail = std::min(0.25, std::clamp(params.base.smallestDetailMm, 0.05, 2.0));
-    if (!region.valid) {
-        result.error = region.error.isEmpty() ? QStringLiteral("Marque la zona de apoyo de la guía.") : region.error;
-        return result;
-    }
-    result.projectionAxis = region.axis;
     const auto base = GuideBaseCore::BaseNode(prepared.wrapField, region, params.base, prepared.spanMm);
     if (!base) {
-        result.error = QStringLiteral("No se pudo construir la base de la guía.");
-        return result;
+        if (error)
+            *error = QStringLiteral("No se pudo construir la base de la guía.");
+        return nullptr;
     }
 
     // Added figures grow the guide before anything is cut from it.
@@ -415,8 +404,9 @@ GuideDesignResult Build(const GuidePreparation& prepared, const GuideRegion& reg
         QString figureError;
         const auto node = FigureNode(figure, detail, &figureError);
         if (!node) {
-            result.error = figureError.isEmpty() ? QStringLiteral("Una figura no tiene geometría.") : figureError;
-            return result;
+            if (error)
+                *error = figureError.isEmpty() ? QStringLiteral("Una figura no tiene geometría.") : figureError;
+            return nullptr;
         }
         solids.push_back(node);
         ++added;
@@ -442,10 +432,10 @@ GuideDesignResult Build(const GuidePreparation& prepared, const GuideRegion& reg
         }
     }
     const auto grown = ImplicitCore::Union(solids);
-    double bounds[6] = {};
     if (!ImplicitCore::Bounds(grown, bounds)) {
-        result.error = QStringLiteral("La base de la guía no está acotada.");
-        return result;
+        if (error)
+            *error = QStringLiteral("La base de la guía no está acotada.");
+        return nullptr;
     }
 
     // Slots, holes and subtracted figures are carved into the same field as the base, and the whole guide
@@ -454,8 +444,9 @@ GuideDesignResult Build(const GuidePreparation& prepared, const GuideRegion& reg
     const auto cutters =
         cutterNodes(region, prepared.spanMm, slotPlan, holes, figures, params, bounds, cancel, &cutterError);
     if (!cutterError.isEmpty()) {
-        result.error = cutterError;
-        return result;
+        if (error)
+            *error = cutterError;
+        return nullptr;
     }
 
     auto solid = cutters.empty() ? grown : ImplicitCore::Subtract(grown, ImplicitCore::Union(cutters));
@@ -468,6 +459,37 @@ GuideDesignResult Build(const GuidePreparation& prepared, const GuideRegion& reg
         const double off = std::max(params.base.clearanceMm, 0.5 * detail + 0.1);
         solid = ImplicitCore::Intersect(solid, ImplicitCore::Negate(ImplicitCore::Offset(ImplicitCore::Field(params.bone), off)));
     }
+    if (addedOut)
+        *addedOut = added;
+    if (subtractedOut)
+        *subtractedOut = subtracted;
+    return solid;
+}
+
+GuideDesignResult Build(const GuidePreparation& prepared, const GuideRegion& region,
+                        const std::vector<GuideSlot>& slotPlan, const std::vector<GuideFixationHole>& holes,
+                        const std::vector<GuideFigure>& figures, const GuideDesignParams& params,
+                        const std::atomic<bool>* cancel)
+{
+    GuideDesignResult result;
+    if (!prepared.ok || !prepared.wrapField) {
+        result.error = prepared.error.isEmpty() ? QStringLiteral("La envolvente no está preparada.") : prepared.error;
+        return result;
+    }
+    // Guides are inspected and printed at close range. Keep their final contour finer than the preview/wrap,
+    // including projects saved with the older 0.30 mm default.
+    const double detail = std::min(0.25, std::clamp(params.base.smallestDetailMm, 0.05, 2.0));
+    if (!region.valid) {
+        result.error = region.error.isEmpty() ? QStringLiteral("Marque la zona de apoyo de la guía.") : region.error;
+        return result;
+    }
+    result.projectionAxis = region.axis;
+    double bounds[6] = {};
+    int added = 0, subtracted = 0;
+    const auto solid = SolidNode(prepared, region, slotPlan, holes, figures, params, detail, bounds, &added, &subtracted,
+                                 &result.error, cancel);
+    if (!solid)
+        return result;
     ImplicitCore::PolygonizeOptions options;
     options.smoothingIterations = std::max(params.base.smoothingIterations, 70);
     options.passBand = 0.02; // smoother support and rim while the implicit cutters retain slots and collars

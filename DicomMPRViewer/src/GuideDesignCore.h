@@ -140,6 +140,13 @@ GuideDesignResult Build(const GuidePreparation& prepared, const GuideRegion& reg
                         const std::vector<GuideSlot>& slotPlan, const std::vector<GuideFixationHole>& holes,
                         const std::vector<GuideFigure>& figures, const GuideDesignParams& params = {},
                         const std::atomic<bool>* cancel = nullptr);
+// The finished guide as one implicit solid, before it is contoured: what `Build` polygonises at `detail`. `bounds`
+// receives the box to contour over. Null with `error` set when the plan cannot be built.
+ImplicitCore::NodePtr SolidNode(const GuidePreparation& prepared, const GuideRegion& region,
+                                const std::vector<GuideSlot>& slotPlan, const std::vector<GuideFixationHole>& holes,
+                                const std::vector<GuideFigure>& figures, const GuideDesignParams& params, double detail,
+                                double bounds[6], int* added = nullptr, int* subtracted = nullptr,
+                                QString* error = nullptr, const std::atomic<bool>* cancel = nullptr);
 // Without figures.
 GuideDesignResult Build(const GuidePreparation& prepared, const GuideContour& contour,
                         const std::vector<GuideSlot>& slotPlan, const std::vector<GuideFixationHole>& holes,
