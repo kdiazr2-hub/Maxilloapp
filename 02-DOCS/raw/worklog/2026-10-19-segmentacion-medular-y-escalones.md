@@ -24,3 +24,12 @@ TotalSegmentator glue. No inference, no GPU, no change to the label map.
 **Next step.** The user pushes the TotalSegmentator integration; it should call `refine_coarse_bone_mask` on the
 TotalSegmentator bone before `thicken_thin_bone` (or set `DENTALSEGMENTATOR_REFINE_COARSE_BONE=1`), and the
 result is validated on the real CT with the acceptance list of `medical-image-segmentation` §4.
+
+**Merge with the user's Cursor work (2026-10-19).** `cursor-totalsegmentator` (TotalSegmentator bone,
+`fillBetweenCortices` in C++, GPU temperature pause at 80 °C, tooth sidecars) merged. `MeshGenerator.cpp`
+conflict: their marrow fill runs first (`contourSource`), then `smoothBoneField`. With TotalSegmentator bone
+`conservative_mask` returns the mask as is (their choice); `refine_coarse_bone_mask` is applied there only with
+`DENTALSEGMENTATOR_REFINE_COARSE_BONE=1`, because carving < 100 HU could open the thinnest maxillary walls.
+Python 56 OK, Linux core 11/11, app 30/32: `RepositionWorkspaceTests` ("Hiding the objects left their masks
+hidden in 3D") and `SplintWorkspaceTests` ("teeth and gingiva are not the default composite method") fail on
+their branch alone too — behaviour changes from the Cursor work, pending the user's answer.

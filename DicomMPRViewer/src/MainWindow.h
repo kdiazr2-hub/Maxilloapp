@@ -282,7 +282,8 @@ private:
     void removeGuidePlate();
     void refreshGuidePlates();
     void exportGuidePlates();
-    void importUpperTeethSidecar(const QString& outputSegmentationPath); // hidden «Dientes superiores» object
+    void importUpperTeethSidecar(const QString& outputSegmentationPath); // hidden upper and lower teeth
+    void importToothSidecar(const QString& outputSegmentationPath, const QString& suffix, int label);
     void generateLeFortGuide(); // the band and the proposed drill sites, from the Le Fort's movement
     void acceptLeFortHoles();   // puts the sites in the guide and builds it
     // The Le Fort guide assistant's other steps (spec asistente-guia-lefort): roots, editable band.
@@ -693,6 +694,7 @@ private:
 
     OsteotomyWizardPanel* m_osteotomyWizard = nullptr;
     OsteotomyWizardState m_ostWizard;
+    QVector<int> m_osteotomyLandmarkUndo;
     std::array<OsteotomyTypeProperties, 3> m_ostProperties{};
     std::vector<vtkSmartPointer<vtkPolyData>> m_ostGuideMeshes;
     bool m_ostShowContour = true;
@@ -864,6 +866,7 @@ private:
     int                               m_fillBoneCavityLabel = -1;
 
     DentalPointSet                    m_dentalPointSet = DentalPointSet::None;
+    QVector<DentalPointSet>           m_dentalPointUndo;
     BitePointSet                      m_bitePointSet = BitePointSet::None;
     vtkSmartPointer<vtkPolyData>      m_upperArchOriginalMesh;
     vtkSmartPointer<vtkPolyData>      m_lowerArchOriginalMesh;
@@ -1332,13 +1335,21 @@ private:
     void closeSegmentationProgress();
     void onSegmentationCancelled();
     QPointer<SegmentationProgressDialog> m_segmentationProgressDialog;
-    // Composite region drawn with points around the scan (default method).
+    // Composite region drawn with points around the scan. The default keeps teeth plus a little gingiva.
     bool compositePointsMethodActive() const;
+    bool compositeGingivalMethodActive() const;
+    bool compositeArchMethodActive() const;
     void onCompositeContourPointAdded(int group, double x, double y, double z);
     void onCompositeContourPointMoved(int group, int index, double x, double y, double z);
     void onCompositeContourPointRemoved(int group, int index);
     void clearCompositeContour();
     void updateCompositeContourDisplay();
+    void onCompositeScanScreenMoved(int x, int y, Qt::KeyboardModifiers modifiers);
+    void flushCompositeScanErase();
+    void onCompositeScanBrushFinished();
+    void onCompositeEraseRadiusDragged(double deltaY);
+    void refreshCompositeScanMesh();
+    void showCompositeEraseBrush();
     std::array<CompositeBlockCore::CompositeContour, 2> m_compositeContours; // 0 upper, 1 lower
     QPushButton* m_compositeClearPointsButton = nullptr;
 
@@ -1362,6 +1373,26 @@ private:
     QPushButton*                 m_compositeAcceptGizmoButton = nullptr;
     QPushButton*                 m_compositeResetButton = nullptr;
     QPushButton*                 m_compositeCalculateButton = nullptr;
+    QWidget*                     m_compositeLegacyControls = nullptr;
+    QWidget*                     m_compositeEraseControls = nullptr;
+    QDoubleSpinBox*              m_compositeEraseRadiusSpin = nullptr;
+    struct ScanEraseSnapshot
+    {
+        int step = 0;
+        vtkSmartPointer<vtkPolyData> mesh;
+    };
+    QVector<ScanEraseSnapshot>   m_scanEraseUndo;
+    bool                         m_scanEraseStrokeOpen = false;
+    bool                         m_scanErasePressing = false;
+    bool                         m_scanEraseHasHit = false;
+    bool                         m_scanEraseQueued = false;
+    QVector<QPoint>              m_scanErasePending;
+    QVector<float>               m_scanEraseDisplayX;
+    QVector<float>               m_scanEraseDisplayY;
+    int                          m_scanEraseCacheStep = -1;
+    vtkMTimeType                 m_scanEraseCacheMeshTime = 0;
+    vtkMTimeType                 m_scanEraseCacheCameraTime = 0;
+    std::array<double, 3>        m_scanEraseLastHit{};
     vtkSmartPointer<vtkPolyData> m_contourUpperArchMesh;
     vtkSmartPointer<vtkPolyData> m_contourLowerArchMesh;
     vtkMTimeType                 m_contourUpperArchTime = 0;

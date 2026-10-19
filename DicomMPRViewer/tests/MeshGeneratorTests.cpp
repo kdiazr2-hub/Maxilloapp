@@ -1,5 +1,7 @@
 #include "MeshGenerator.h"
 
+#include <vtkCellArray.h>
+#include <vtkPoints.h>
 #include <vtkActor.h>
 #include <vtkCamera.h>
 #include <vtkDataArray.h>
@@ -122,7 +124,7 @@ void checkScanBoundary(int label, bool hollow, int iterations, bool oriented)
                   << " open/non-manifold edges=" << boundaries << '\n';
     require(boundaries == 0, "Surface is open at the scan boundary");
     require(contains(image, mesh, 11, 7, 13), "Bone wall is not a solid region");
-    require(contains(image, mesh, 19, 7, 13) == !hollow, "Anatomical lumen was filled");
+    require(contains(image, mesh, 19, 7, 13), "The space between the cortices stayed hollow");
     require(!contains(image, mesh, 19, 7, 0), "Surface extends beyond scan footprint");
     require(image->GetMTime() == inputTime, "Input labelmap was modified");
     require(image->GetExtent()[0] == 4 && image->GetExtent()[5] == 23, "Input extent changed");
@@ -209,7 +211,41 @@ void renderComparison(const std::filesystem::path& path)
     require(std::filesystem::exists(path), "Comparison image was not written");
     window->Finalize();
 }
+
+void checkToothSmoothingFlattensASpike()
+{
+    constexpr int n = 11;
+    auto points = vtkSmartPointer<vtkPoints>::New();
+    auto polys = vtkSmartPointer<vtkCellArray>::New();
+    for (int y = 0; y < n; ++y) {
+        for (int x = 0; x < n; ++x)
+            points->InsertNextPoint(x, y, (x == 5 && y == 5) ? 3.0 : 0.0);
+    }
+    auto id = [](int x, int y) { return y * n + x; };
+    for (int y = 0; y < n - 1; ++y) {
+        for (int x = 0; x < n - 1; ++x) {
+            vtkIdType a[3] = {id(x, y), id(x + 1, y), id(x + 1, y + 1)};
+            vtkIdType b[3] = {id(x, y), id(x + 1, y + 1), id(x, y + 1)};
+            polys->InsertNextCell(3, a);
+            polys->InsertNextCell(3, b);
+        }
+    }
+    auto mesh = vtkSmartPointer<vtkPolyData>::New();
+    mesh->SetPoints(points);
+    mesh->SetPolys(polys);
+    const auto smooth = MeshGenerator::smoothToothMesh(mesh);
+    require(smooth && smooth->GetNumberOfPoints() == points->GetNumberOfPoints(),
+            "tooth smoothing dropped the surface");
+    double spike[3] = {};
+    mesh->GetPoint(id(5, 5), spike);
+    require(spike[2] > 2.5, "smoothing changed the input mesh");
+    smooth->GetPoint(id(5, 5), spike);
+    require(spike[2] < 1.5, "the marching-cubes spike was left rough");
+    double corner[3] = {};
+    smooth->GetPoint(id(0, 0), corner);
+    require(std::abs(corner[2]) < 0.8, "tooth smoothing pulled the border off the surface");
 }
+} // namespace
 
 // Thick CT slices left the bone in terraces, one step per slice (user's report, 2026-10-19: "sale muy rugosa,
 // no sale lisa"). A sphere seen with 0.4 x 0.4 x 1.25 mm voxels must come out round: its radius may not wobble
@@ -263,6 +299,7 @@ void checkThickSlicesDoNotTerrace(double sz, double block)
 int main(int argc, char** argv)
 {
     try {
+        checkToothSmoothingFlattensASpike();
         for (int label : {1, 5, 6}) {
             for (bool hollow : {false, true}) {
                 for (int iterations : {0, 15, 40}) {

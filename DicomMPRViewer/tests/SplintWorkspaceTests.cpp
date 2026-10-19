@@ -572,8 +572,11 @@ public:
                 "initial cutting block is not 15 mm thick");
         require(window.m_compositeBlockPanel->isVisibleTo(&window), "block panel not shown");
 
-        // Default method: contour points placed around the scan.
-        require(window.compositePointsMethodActive(), "contour points are not the default composite method");
+        // Default method joins the teeth and a little gingiva, without points. The point contour stays selectable.
+        require(window.compositeGingivalMethodActive(), "teeth and gingiva are not the default composite method");
+        require(window.m_compositeCalculateButton->isEnabled(), "automatic composite cannot be calculated");
+        window.m_compositeMethodCombo->setCurrentIndex(window.m_compositeMethodCombo->findData(2));
+        require(window.compositePointsMethodActive(), "contour points method not selectable");
         require(!window.m_compositeCalculateButton->isEnabled(), "composite can be calculated without contour points");
         {
             const double kPiLocal = 3.14159265358979323846;

@@ -216,7 +216,7 @@ int main()
                 require(unfilled != nullptr, "Unfilled conversion failed");
                 auto distance = vtkSmartPointer<vtkImplicitPolyDataDistance>::New();
                 distance->SetInput(unfilled);
-                require(distance->EvaluateFunction(seed.data()) > 0, "Conversion invented new bone filling");
+                require(distance->EvaluateFunction(seed.data()) < 0, "The sealed gap between the cortices stayed hollow");
             }
             auto filled = fillEnclosedBoneCavity(mask, label, seed);
             require(filled.labelmap && filled.addedVoxels > 0, "Cavity fixture was not filled");

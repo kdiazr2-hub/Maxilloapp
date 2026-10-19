@@ -102,6 +102,107 @@ int main()
                         input->SetScalarComponentFromDouble(x, y, z, 0, 5);
         require(fillEnclosedBoneCavity(input, 5, world(input, 3, 19, 0)).labelmap != nullptr,
                 "Maxillary cavity was not filled");
+        auto sealed = vtkSmartPointer<vtkImageData>::New();
+        sealed->SetExtent(0, 20, 0, 20, 0, 20);
+        sealed->SetSpacing(1.0, 1.0, 1.0);
+        sealed->AllocateScalars(VTK_UNSIGNED_CHAR, 1);
+        sealed->GetPointData()->GetScalars()->FillComponent(0, 0);
+        for (int z = 4; z <= 14; ++z)
+            for (int y = 4; y <= 14; ++y)
+                for (int x = 4; x <= 14; ++x) {
+                    const bool wall = x == 4 || x == 14 || y == 4 || y == 14 || z == 4 || z == 14;
+                    if (wall)
+                        sealed->SetScalarComponentFromDouble(x, y, z, 0, 5);
+                }
+        auto narrow = fillBetweenCortices(sealed, 5);
+        require(narrow != nullptr, "The sealed gap between cortices was not filled");
+        require(narrow->GetScalarComponentAsDouble(9, 9, 9, 0) == 5, "Marrow between cortices stayed empty");
+        require(sealed->GetScalarComponentAsDouble(9, 9, 9, 0) == 0, "Cortical fill modified the mask");
+        require(narrow->GetScalarComponentAsDouble(0, 0, 0, 0) == 0, "Air outside the bone became bone");
+        require(narrow->GetScalarComponentAsDouble(1, 9, 9, 0) == 0, "The cortex grew outward");
+        sealed->SetScalarComponentFromDouble(4, 9, 9, 0, 0); // a foramen, not a sealed box
+        auto opened = fillBetweenCortices(sealed, 5);
+        require(opened && opened->GetScalarComponentAsDouble(9, 9, 9, 0) == 5,
+                "Marrow stayed empty when a foramen opens the cortex");
+        require(opened->GetScalarComponentAsDouble(0, 0, 0, 0) == 0, "A foramen filled the air outside the bone");
+
+        auto sinus = vtkSmartPointer<vtkImageData>::New();
+        sinus->SetExtent(0, 44, 0, 44, 0, 44);
+        sinus->SetSpacing(1.0, 1.0, 1.0);
+        sinus->AllocateScalars(VTK_UNSIGNED_CHAR, 1);
+        sinus->GetPointData()->GetScalars()->FillComponent(0, 0);
+        for (int z = 2; z <= 40; ++z)
+            for (int y = 2; y <= 40; ++y)
+                for (int x = 2; x <= 40; ++x) {
+                    const bool wall = x == 2 || x == 40 || y == 2 || y == 40 || z == 2 || z == 40;
+                    if (wall)
+                        sinus->SetScalarComponentFromDouble(x, y, z, 0, 5);
+                }
+        require(fillBetweenCortices(sinus, 5) == nullptr, "A sinus, the nasal cavity or an orbit was filled");
+
+        sealed = vtkSmartPointer<vtkImageData>::New();
+        sealed->SetExtent(0, 20, 0, 20, 0, 20);
+        sealed->SetSpacing(1.0, 1.0, 1.0);
+        sealed->AllocateScalars(VTK_UNSIGNED_CHAR, 1);
+        sealed->GetPointData()->GetScalars()->FillComponent(0, 0);
+        for (int z = 4; z <= 14; ++z)
+            for (int y = 4; y <= 14; ++y)
+                for (int x = 4; x <= 14; ++x) {
+                    const bool wall = x == 4 || x == 14 || y == 4 || y == 14 || z == 4 || z == 14;
+                    if (wall)
+                        sealed->SetScalarComponentFromDouble(x, y, z, 0, 6);
+                }
+        sealed->SetScalarComponentFromDouble(8, 8, 8, 0, 7);
+        auto kept = fillBetweenCortices(sealed, 6);
+        require(kept && kept->GetScalarComponentAsDouble(8, 8, 8, 0) == 7, "The mandibular canal was overwritten");
+        require(kept->GetScalarComponentAsDouble(7, 8, 8, 0) == 6, "Marrow beside the canal stayed empty");
+
+        auto density = vtkSmartPointer<vtkImageData>::New();
+        density->SetExtent(0, 20, 0, 20, 0, 20);
+        density->SetSpacing(1.0, 1.0, 1.0);
+        density->AllocateScalars(VTK_SHORT, 1);
+        density->GetPointData()->GetScalars()->FillComponent(0, -1000);
+        for (int z = 5; z <= 13; ++z)
+            for (int y = 5; y <= 13; ++y)
+                for (int x = 5; x <= 13; ++x)
+                    density->SetScalarComponentFromDouble(x, y, z, 0, 400);
+        auto marrow = fillBetweenCortices(sealed, 6, 20.0, density, kMarrowMinimumHu);
+        require(marrow && marrow->GetScalarComponentAsDouble(9, 9, 9, 0) == 6, "Cancellous marrow was left hollow");
+        require(marrow->GetScalarComponentAsDouble(0, 0, 0, 0) == 0, "Air outside the cortex became bone");
+        density->GetPointData()->GetScalars()->FillComponent(0, -1000);
+        require(fillBetweenCortices(sealed, 6, 20.0, density, kMarrowMinimumHu) == nullptr,
+                "Air between the cortices was filled");
+        for (int z = 5; z <= 13; ++z)
+            for (int y = 5; y <= 13; ++y)
+                for (int x = 5; x <= 13; ++x)
+                    density->SetScalarComponentFromDouble(x, y, z, 0, -40);
+        auto darkMarrow = fillBetweenCortices(sealed, 6, 20.0, density, kMarrowMinimumHu);
+        require(darkMarrow && darkMarrow->GetScalarComponentAsDouble(9, 9, 9, 0) == 6,
+                "Dark ramus marrow was left hollow");
+
+        auto orbit = vtkSmartPointer<vtkImageData>::New();
+        orbit->SetExtent(0, 20, 0, 20, 0, 20);
+        orbit->SetSpacing(1.0, 1.0, 1.0);
+        orbit->AllocateScalars(VTK_UNSIGNED_CHAR, 1);
+        orbit->GetPointData()->GetScalars()->FillComponent(0, 0);
+        for (int z = 2; z <= 18; ++z)
+            for (int y = 2; y <= 18; ++y)
+                for (int x = 2; x <= 18; ++x) {
+                    const bool wall = x == 2 || x == 18 || y == 2 || y == 18 || z == 2 || z == 18;
+                    if (wall)
+                        orbit->SetScalarComponentFromDouble(x, y, z, 0, 6);
+                }
+        for (int z = 3; z <= 17; ++z)
+            for (int x = 3; x <= 17; ++x)
+                orbit->SetScalarComponentFromDouble(x, 2, z, 0, 0); // anterior opening, outer rim kept
+        density->GetPointData()->GetScalars()->FillComponent(0, -1000);
+        for (int z = 3; z <= 17; ++z)
+            for (int y = 3; y <= 17; ++y)
+                for (int x = 3; x <= 17; ++x)
+                    density->SetScalarComponentFromDouble(x, y, z, 0, -40);
+        require(fillBetweenCortices(orbit, 6, 20.0, density, kMarrowMinimumHu) == nullptr,
+                "An orbit open toward anterior was filled");
+
         std::cout << "Bone cavity fill: enclosed, protected labels, geometry metadata and leak checks passed.\n";
         return 0;
     } catch (const std::exception& e) {

@@ -103,6 +103,7 @@ set(SOURCES
     src/WindowLevelPresets.cpp
     src/ProjectSerializer.cpp
     src/TransformCore.cpp
+    src/OrientationCore.cpp
     src/GeometryValidation.cpp
     src/GeometryValidationCore.cpp
     src/CompositeModelCore.cpp
@@ -114,6 +115,7 @@ set(SOURCES
     src/SplintDesignPanel.cpp
     src/MainWindowSplint.cpp
     src/CompositeBlockCore.cpp
+    src/ScanEraseCore.cpp
     src/MeshRepairCore.cpp
     src/OsteotomyCore.cpp
     src/OsteotomyWizardPanel.cpp
@@ -283,9 +285,12 @@ endif()
 vtk_module_autoinit(TARGETS BoneCavityFillTests MODULES ${VTK_LIBRARIES})
 add_test(NAME BoneCavityFillTests COMMAND BoneCavityFillTests)
 
-add_executable(MeshGeneratorTests tests/MeshGeneratorTests.cpp src/MeshGenerator.cpp)
+add_executable(MeshGeneratorTests tests/MeshGeneratorTests.cpp src/MeshGenerator.cpp src/BoneCavityFill.cpp)
 target_include_directories(MeshGeneratorTests PRIVATE src)
 target_link_libraries(MeshGeneratorTests PRIVATE Qt6::Core ${VTK_LIBRARIES})
+if(MSVC)
+    target_compile_options(MeshGeneratorTests PRIVATE /utf-8)
+endif()
 vtk_module_autoinit(TARGETS MeshGeneratorTests MODULES ${VTK_LIBRARIES})
 add_test(NAME MeshGeneratorTests COMMAND MeshGeneratorTests)
 
@@ -313,6 +318,7 @@ add_core_test(ProjectSerializerTests tests/ProjectSerializerTests.cpp
     src/GuidePlanCore.cpp src/PlateCore.cpp src/GuideDesignCore.cpp src/GuideBaseCore.cpp src/CutSlotCore.cpp
     src/WrapCore.cpp src/OsteotomyCore.cpp src/ImplicitCore.cpp src/MeshRepairCore.cpp)
 add_core_test(CompositeBlockTests tests/CompositeBlockTests.cpp src/CompositeBlockCore.cpp)
+add_core_test(ScanEraseTests tests/ScanEraseTests.cpp src/ScanEraseCore.cpp)
 add_core_test(ImplicitCoreTests tests/ImplicitCoreTests.cpp src/ImplicitCore.cpp
     src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)
 add_core_test(WrapCoreTests tests/WrapCoreTests.cpp src/WrapCore.cpp src/ImplicitCore.cpp
@@ -349,6 +355,7 @@ add_core_test(RootAnalysisTests tests/RootAnalysisTests.cpp src/RootAnalysisCore
 add_core_test(LeFortHoleTests tests/LeFortHoleTests.cpp src/LeFortHoleCore.cpp src/LeFortMotionCore.cpp
     src/PlateCore.cpp src/GuideDesignCore.cpp src/GuideBaseCore.cpp src/CutSlotCore.cpp src/WrapCore.cpp
     src/OsteotomyCore.cpp src/ImplicitCore.cpp src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)
+add_core_test(OrientationCoreTests tests/OrientationCoreTests.cpp src/OrientationCore.cpp)
 target_link_libraries(ProjectSerializerTests PRIVATE Qt6::Gui)
 
 # Splint generator timing with real or synthetic STL (not a CTest by default).

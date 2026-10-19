@@ -6,6 +6,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QMouseEvent>
+#include <QPaintEvent>
 #include <QPainter>
 #include <QPen>
 #include <QSignalBlocker>
@@ -20,6 +21,7 @@
 #include <limits>
 
 #include <vtkActor.h>
+#include <vtkAlgorithm.h>
 #include <vtkActor2D.h>
 #include <vtkBillboardTextActor3D.h>
 #include <vtkTextProperty.h>
@@ -51,6 +53,58 @@
 #include <vtkTransform.h>
 #include <vtkTransformPolyDataFilter.h>
 #include <vtkTubeFilter.h>
+
+// Flat eraser ring drawn above the OpenGL window. It has to be a child of the
+// VTK widget: QVTKOpenGLNativeWidget's native surface covers every sibling, so
+// the previous overlay never replaced the ball the user was seeing.
+class ScreenBrushCircle : public QWidget
+{
+public:
+    explicit ScreenBrushCircle(QWidget* parent)
+        : QWidget(parent)
+    {
+        setAttribute(Qt::WA_TransparentForMouseEvents);
+        setAttribute(Qt::WA_NoSystemBackground);
+        setAttribute(Qt::WA_TranslucentBackground);
+        setAttribute(Qt::WA_AlwaysStackOnTop);
+        setAutoFillBackground(false);
+        hide();
+    }
+
+    void place(int centerX, int centerY, int radiusPx)
+    {
+        m_center = QPoint(centerX, centerY);
+        m_radius = std::max(4, radiusPx);
+        m_visible = true;
+        if (!isVisible())
+            show();
+        raise();
+        update();
+    }
+
+    void dismiss()
+    {
+        m_visible = false;
+        hide();
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        if (!m_visible || m_radius < 1)
+            return;
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setPen(QPen(QColor(10, 132, 255), 2));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawEllipse(m_center, m_radius, m_radius);
+    }
+
+private:
+    QPoint m_center;
+    int m_radius = 0;
+    bool m_visible = false;
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Custom interactor style
@@ -215,14 +269,19 @@ void Mesh3DView::buildLayout()
     m_vtkWidget->setMinimumSize(256, 256);
     m_vtkWidget->setFocusPolicy(Qt::StrongFocus);
     m_vtkWidget->setStyleSheet("background-color:#1c1d20;");
+    m_vtkWidget->setMouseTracking(true);
     m_vtkWidget->installEventFilter(this);
     outer->addWidget(m_vtkWidget, 1);
+    setMouseTracking(true);
 
     // Transparent lasso overlay on top of the VTK widget
     m_lassoCanvas = new LassoCanvas3D(m_vtkWidget);
     m_lassoCanvas->setGeometry(m_vtkWidget->rect());
     m_lassoCanvas->hide();
     m_lassoCanvas->raise();
+
+    // Child of the VTK widget so it stacks above that widget's native OpenGL window.
+    m_screenCircle = new ScreenBrushCircle(m_vtkWidget);
 
     m_clickFeedback = new QWidget(m_vtkWidget);
     m_clickFeedback->setObjectName("clickFeedback");
@@ -327,8 +386,65 @@ void Mesh3DView::initRenderer()
 
     // Right-click = rotate (same as left-click); scroll = zoom; middle = pan
     auto style = vtkSmartPointer<vtkInteractorStyleRotateRight>::New();
-    if (auto* interactor = m_renderWindow->GetInteractor())
+    if (auto* interactor = m_renderWindow->GetInteractor()) {
         interactor->SetInteractorStyle(style);
+        // Runs after the camera style. While the eraser is on, any sphere a pick
+        // just dropped on the bone or the STL is removed before the frame is drawn.
+        auto hover = vtkSmartPointer<vtkCallbackCommand>::New();
+        hover->SetClientData(this);
+        hover->SetCallback(&Mesh3DView::screenBrushHoverCallback);
+        interactor->AddObserver(vtkCommand::MouseMoveEvent, hover, -10.0);
+    }
+}
+
+void Mesh3DView::screenBrushHoverCallback(vtkObject*, unsigned long, void* data, void*)
+{
+    auto* view = static_cast<Mesh3DView*>(data);
+    if (view && view->m_screenBrush)
+        view->dropSphereMarkers();
+}
+
+void Mesh3DView::dropSphereMarkers()
+{
+    std::vector<vtkActor*> doomed;
+    auto collect = [&](vtkRenderer* renderer) {
+        if (!renderer)
+            return;
+        auto* props = renderer->GetViewProps();
+        props->InitTraversal();
+        while (vtkProp* prop = props->GetNextProp()) {
+            auto* actor = vtkActor::SafeDownCast(prop);
+            if (!actor)
+                continue;
+            auto* mapper = vtkPolyDataMapper::SafeDownCast(actor->GetMapper());
+            vtkAlgorithm* algo = mapper ? mapper->GetInputAlgorithm() : nullptr;
+            if (algo && algo->IsA("vtkSphereSource"))
+                doomed.push_back(actor);
+        }
+    };
+    collect(m_renderer);
+    collect(m_foregroundRenderer);
+    collect(m_annotationRenderer);
+    if (doomed.empty())
+        return;
+    for (vtkActor* actor : doomed) {
+        if (m_renderer)
+            m_renderer->RemoveActor(actor);
+        if (m_foregroundRenderer)
+            m_foregroundRenderer->RemoveActor(actor);
+        if (m_annotationRenderer)
+            m_annotationRenderer->RemoveActor(actor);
+        m_pointMarkerActors.erase(std::remove(m_pointMarkerActors.begin(), m_pointMarkerActors.end(), actor),
+                                  m_pointMarkerActors.end());
+    }
+    m_editablePoints.erase(std::remove_if(m_editablePoints.begin(), m_editablePoints.end(),
+                                          [&](const EditablePoint& point) {
+                                              return std::find(doomed.begin(), doomed.end(), point.actor.GetPointer()) !=
+                                                     doomed.end();
+                                          }),
+                           m_editablePoints.end());
+    m_draggedPointGroup = m_draggedPointIndex = -1;
+    render();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -351,7 +467,7 @@ bool Mesh3DView::eventFilter(QObject* watched, QEvent* event)
     if (event->type() == QEvent::MouseButtonPress) {
         m_vtkWidget->setFocus(Qt::MouseFocusReason);
         auto* mouseEvent = static_cast<QMouseEvent*>(event);
-        if (mouseEvent->button() == Qt::LeftButton &&
+        if (mouseEvent->button() == Qt::LeftButton && !m_screenBrush &&
             (m_pointPickActive || m_pointEditActive || m_planeDragActive ||
              m_brushActive || m_lassoActive)) {
             showClickFeedback(mouseEvent->position());
@@ -642,8 +758,13 @@ void Mesh3DView::positionOverlayControls()
     if (m_lassoCanvas)
         m_lassoCanvas->setGeometry(m_vtkWidget->rect());
 
+    if (m_screenCircle)
+        m_screenCircle->setGeometry(m_vtkWidget->rect());
+
     if (m_lassoCanvas)
         m_lassoCanvas->raise();
+    if (m_screenCircle)
+        m_screenCircle->raise();
 
     if (m_clickFeedback && m_clickFeedback->isVisible())
         m_clickFeedback->raise();
@@ -828,7 +949,7 @@ void Mesh3DView::setPointPickMode(bool active)
 
 void Mesh3DView::addPointMarker(double x, double y, double z, const QColor& color)
 {
-    if (!m_renderer) return;
+    if (!m_renderer || m_screenBrush) return;
 
     auto sphere = vtkSmartPointer<vtkSphereSource>::New();
     sphere->SetCenter(x, y, z);
@@ -1043,6 +1164,8 @@ void Mesh3DView::setEditablePoints(int group, const std::vector<std::array<doubl
                                    const QColor& color, double radius)
 {
     if (!m_annotationRenderer) return;
+    const std::vector<std::array<double, 3>> none;
+    const auto& drawn = m_screenBrush ? none : points;
     m_editablePoints.erase(std::remove_if(m_editablePoints.begin(), m_editablePoints.end(),
                                           [this, group](const EditablePoint& p) {
                                               if (p.group != group) return false;
@@ -1050,9 +1173,9 @@ void Mesh3DView::setEditablePoints(int group, const std::vector<std::array<doubl
                                               return true;
                                           }),
                            m_editablePoints.end());
-    for (size_t i = 0; i < points.size(); ++i) {
+    for (size_t i = 0; i < drawn.size(); ++i) {
         auto source = vtkSmartPointer<vtkSphereSource>::New();
-        source->SetCenter(points[i][0], points[i][1], points[i][2]);
+        source->SetCenter(drawn[i][0], drawn[i][1], drawn[i][2]);
         source->SetRadius(radius);
         source->SetThetaResolution(20);
         source->SetPhiResolution(20);
@@ -1082,10 +1205,15 @@ void Mesh3DView::clearEditablePoints()
 
 void Mesh3DView::setPointEditMode(bool active, int activeGroup)
 {
+    const int group = active ? activeGroup : -1;
+    const bool unchanged = m_pointEditActive == active && m_pointEditGroup == group;
     m_pointEditActive = active;
-    m_pointEditGroup = active ? activeGroup : -1;
-    m_draggedPointGroup = m_draggedPointIndex = -1;
-    m_rightPressGroup = m_rightPressIndex = -1;
+    m_pointEditGroup = group;
+    // Refreshing the markers while a drag is in progress must not drop the drag.
+    if (!unchanged) {
+        m_draggedPointGroup = m_draggedPointIndex = -1;
+        m_rightPressGroup = m_rightPressIndex = -1;
+    }
     updateInteractionCursor();
 }
 
@@ -1397,7 +1525,75 @@ void Mesh3DView::setSurfaceBrushMode(bool active)
     m_brushActive = active;
     m_brushing = false;
     m_brushResizing = false;
+    m_brushPlaneValid = false;
+    if (!active)
+        setScreenBrush(false);
     updateInteractionCursor();
+}
+
+void Mesh3DView::setScreenBrush(bool enabled)
+{
+    m_screenBrush = enabled;
+    if (enabled) {
+        clearPointMarkers();
+        // addPointMarker and setEditablePoints are the only spheres this view
+        // creates. Drop any that were added before the eraser became active.
+        dropSphereMarkers();
+    } else if (m_screenCircle) {
+        static_cast<ScreenBrushCircle*>(m_screenCircle)->dismiss();
+    }
+}
+
+void Mesh3DView::setScreenBrushRadiusMm(double radiusMm)
+{
+    m_screenBrushRadiusMm = std::max(0.5, radiusMm);
+    if (m_screenCircle && m_screenCircle->isVisible())
+        placeScreenCircle(m_screenCircleX, m_screenCircleY);
+}
+
+double Mesh3DView::widgetPixelsPerMm() const
+{
+    if (!m_renderer || !m_renderer->GetActiveCamera() || !m_vtkWidget || m_vtkWidget->height() < 1)
+        return 4.0;
+    auto* camera = m_renderer->GetActiveCamera();
+    double worldHeight = 0.0;
+    if (camera->GetParallelProjection())
+        worldHeight = 2.0 * camera->GetParallelScale();
+    else {
+        const double distance = std::max(1e-3, camera->GetDistance());
+        const double halfAngle = vtkMath::RadiansFromDegrees(camera->GetViewAngle()) * 0.5;
+        worldHeight = 2.0 * distance * std::tan(halfAngle);
+    }
+    if (worldHeight < 1e-3)
+        return 4.0;
+    return static_cast<double>(m_vtkWidget->height()) / worldHeight;
+}
+
+vtkMTimeType Mesh3DView::cameraMTime() const
+{
+    if (!m_renderer || !m_renderer->GetActiveCamera())
+        return 0;
+    return m_renderer->GetActiveCamera()->GetMTime();
+}
+
+bool Mesh3DView::projectToWidget(const double world[3], double& x, double& y) const
+{
+    if (!m_renderer || !m_renderer->GetActiveCamera() || !m_vtkWidget || m_vtkWidget->width() < 1)
+        return false;
+    const double aspect = m_renderer->GetTiledAspectRatio();
+    vtkMatrix4x4* matrix = m_renderer->GetActiveCamera()->GetCompositeProjectionTransformMatrix(aspect, 0, 1);
+    if (!matrix)
+        return false;
+    const double in[4] = {world[0], world[1], world[2], 1.0};
+    double out[4] = {};
+    matrix->MultiplyPoint(in, out);
+    if (out[3] <= 1e-8)
+        return false;
+    const double nx = out[0] / out[3];
+    const double ny = out[1] / out[3];
+    x = (nx * 0.5 + 0.5) * static_cast<double>(m_vtkWidget->width());
+    y = (0.5 - ny * 0.5) * static_cast<double>(m_vtkWidget->height());
+    return true;
 }
 
 std::array<double, 3> Mesh3DView::viewDirection() const
@@ -1417,6 +1613,17 @@ std::array<double, 3> Mesh3DView::viewDirection() const
     return direction;
 }
 
+void Mesh3DView::placeScreenCircle(int logicalX, int logicalY)
+{
+    if (!m_screenCircle || !m_vtkWidget)
+        return;
+    m_screenCircle->setGeometry(m_vtkWidget->rect());
+    const int radius = std::max(6, static_cast<int>(std::lround(m_screenBrushRadiusMm * widgetPixelsPerMm())));
+    static_cast<ScreenBrushCircle*>(m_screenCircle)->place(logicalX, logicalY, radius);
+    m_screenCircleX = logicalX;
+    m_screenCircleY = logicalY;
+}
+
 bool Mesh3DView::handleBrushEvent(QEvent* event)
 {
     const QEvent::Type type = event->type();
@@ -1428,12 +1635,85 @@ bool Mesh3DView::handleBrushEvent(QEvent* event)
     toDisplay(m_vtkWidget, me->position(), px, py);
     std::array<double, 3> hit{};
 
+    if (m_screenBrush) {
+        const auto showCircle = [&]() {
+            placeScreenCircle(static_cast<int>(std::lround(me->position().x())),
+                              static_cast<int>(std::lround(me->position().y())));
+        };
+        if (type == QEvent::MouseMove && !me->buttons().testFlag(Qt::LeftButton)) {
+            // Hover, and right-drag orbit, never leave a marker on the mesh.
+            m_brushing = false;
+            m_brushResizing = false;
+            if (m_screenCircle && m_screenCircle->isVisible())
+                static_cast<ScreenBrushCircle*>(m_screenCircle)->dismiss();
+            return false;
+        }
+        if (type == QEvent::MouseButtonPress && me->button() == Qt::LeftButton) {
+            m_brushing = true;
+            m_brushResizing = me->modifiers().testFlag(Qt::AltModifier);
+            m_brushLastY = me->position().y();
+            showCircle();
+            if (!m_brushResizing)
+                emit brushScreenMoved(m_screenCircleX, m_screenCircleY, me->modifiers());
+            return true;
+        }
+        if (type == QEvent::MouseMove && (m_brushing || me->buttons().testFlag(Qt::LeftButton))) {
+            if (!m_brushing) {
+                m_brushing = true;
+                m_brushLastY = me->position().y();
+            }
+            if (m_brushResizing || me->modifiers().testFlag(Qt::AltModifier)) {
+                m_brushResizing = true;
+                const double deltaY = me->position().y() - m_brushLastY;
+                m_brushLastY = me->position().y();
+                if (deltaY != 0.0)
+                    emit brushRadiusDragged(deltaY);
+                showCircle();
+            } else {
+                showCircle();
+                emit brushScreenMoved(m_screenCircleX, m_screenCircleY, me->modifiers());
+            }
+            return true;
+        }
+        if (type == QEvent::MouseButtonRelease && me->button() == Qt::LeftButton && m_brushing) {
+            m_brushing = false;
+            m_brushResizing = false;
+            if (m_screenCircle)
+                static_cast<ScreenBrushCircle*>(m_screenCircle)->dismiss();
+            emit surfaceBrushFinished();
+            return true;
+        }
+        return false;
+    }
+
+    // On a mesh the circle sits on that surface, bone included. Off every mesh it
+    // stays on the view plane, so the drag is not confined to the scan.
+    const auto cursorAt = [&](std::array<double, 3>& point) {
+        if (pickSurface(px, py, point)) {
+            m_brushPlaneOrigin = point;
+            m_brushPlaneValid = true;
+            return true;
+        }
+        if (!m_brushPlaneValid && m_renderer && m_renderer->GetActiveCamera()) {
+            double focal[3] = {};
+            m_renderer->GetActiveCamera()->GetFocalPoint(focal);
+            m_brushPlaneOrigin = {focal[0], focal[1], focal[2]};
+            m_brushPlaneValid = true;
+        }
+        if (!m_brushPlaneValid || !rayPlanePoint(px, py, m_brushPlaneOrigin, viewDirection(), point))
+            return false;
+        m_brushPlaneOrigin = point;
+        return true;
+    };
     if (type == QEvent::MouseButtonPress && me->button() == Qt::LeftButton) {
         m_brushing = true;
         m_brushResizing = me->modifiers().testFlag(Qt::AltModifier);
         m_brushLastY = me->position().y();
-        if (!m_brushResizing && pickSurface(px, py, hit))
-            emit surfaceBrushed(hit[0], hit[1], hit[2], me->modifiers());
+        if (!m_brushResizing && cursorAt(hit)) {
+            emit brushCursorMoved(hit[0], hit[1], hit[2], me->modifiers());
+            if (pickSurface(px, py, hit))
+                emit surfaceBrushed(hit[0], hit[1], hit[2], me->modifiers());
+        }
         return true;
     }
     if (type == QEvent::MouseMove && m_brushing) {
@@ -1442,8 +1722,11 @@ bool Mesh3DView::handleBrushEvent(QEvent* event)
             m_brushLastY = me->position().y();
             if (deltaY != 0.0)
                 emit brushRadiusDragged(deltaY);
-        } else if (pickSurface(px, py, hit)) {
-            emit surfaceBrushed(hit[0], hit[1], hit[2], me->modifiers());
+        } else if (cursorAt(hit)) {
+            emit brushCursorMoved(hit[0], hit[1], hit[2], me->modifiers());
+            std::array<double, 3> surface{};
+            if (pickSurface(px, py, surface))
+                emit surfaceBrushed(surface[0], surface[1], surface[2], me->modifiers());
         }
         return true;
     }

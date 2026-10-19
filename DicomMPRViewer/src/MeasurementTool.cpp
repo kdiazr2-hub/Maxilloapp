@@ -7,6 +7,14 @@ void MeasurementTool::reset()
     m_points.clear();
 }
 
+bool MeasurementTool::undoPendingPoint()
+{
+    if (m_points.empty())
+        return false;
+    m_points.pop_back();
+    return true;
+}
+
 void MeasurementTool::appendPointOnSamePlane(const std::array<double, 3>& point,
                                              MeasurementViewOrientation view,
                                              int sliceIndex)

@@ -406,6 +406,7 @@ void MainWindow::onOsteotomyLandmarkAdded(int group, double x, double y, double 
     if (group < 0 || group >= count || group != m_ostWizard.currentLandmark)
         return;
     m_ostWizard.landmarks[static_cast<size_t>(group)] = OstPoint3{x, y, z};
+    m_osteotomyLandmarkUndo.append(group);
     int next = -1;
     for (int step = 1; step <= count; ++step) {
         const int candidate = (group + step) % count;
@@ -450,6 +451,7 @@ void MainWindow::onOsteotomyLandmarkRemoved(int group, int)
 
 void MainWindow::clearOsteotomyLandmarks()
 {
+    m_osteotomyLandmarkUndo.clear();
     std::fill(m_ostWizard.landmarks.begin(), m_ostWizard.landmarks.end(), std::nullopt);
     setOsteotomyLandmarkIndex(0);
     rebuildOsteotomyPlan();

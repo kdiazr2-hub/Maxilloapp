@@ -10,7 +10,11 @@
 #include <QTimer>
 #include <QVTKOpenGLNativeWidget.h>
 
+#include <vtkFileOutputWindow.h>
 #include <vtkImageData.h>
+#include <vtkNew.h>
+#include <vtkObject.h>
+#include <vtkOutputWindow.h>
 #include <vtkSmartPointer.h>
 
 #include "AsyncDicomLoader.h"    // Q_DECLARE_METATYPE guards
@@ -45,6 +49,14 @@ static QPixmap buildSplashPixmap()
 
 int main(int argc, char* argv[])
 {
+    // VTK's Windows output window pops up and hangs on the warnings a render
+    // produces every frame. Warnings stay off, and anything that still asks
+    // for the window is written to the null device.
+    vtkObject::GlobalWarningDisplayOff();
+    vtkNew<vtkFileOutputWindow> vtkOutput;
+    vtkOutput->SetFileName("NUL");
+    vtkOutputWindow::SetInstance(vtkOutput);
+
     // ── VTK / Qt OpenGL bootstrap ──────────────────────────────────────────
     // This MUST happen before QApplication is constructed.
     // QVTKOpenGLNativeWidget requires OpenGL 3.2 Core Profile.
