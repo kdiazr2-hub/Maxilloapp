@@ -480,3 +480,4 @@ cmake --build build-linux-core --parallel && ctest --test-dir build-linux-core -
 |------|-------|
 | Project constitution (SDD non-negotiables) | `02-DOCS/wiki/sdd/constitution.md` |
 | Full knowledge map (specs, decisions) | `02-DOCS/wiki/index.md` |
+| Project skills for CT segmentation (GPU policy, masks, meshes, Python imaging) | `.claude/skills/{gpu-safe-execution,medical-image-segmentation,mesh-reconstruction-3d,python-medical-imaging}/SKILL.md` |
