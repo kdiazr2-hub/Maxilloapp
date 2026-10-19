@@ -32,6 +32,12 @@ tags: [index]
 |------|--------|-------|
 | Guía de corte Le Fort I generada a partir del movimiento | PASS (re-run) | `sdd/analysis/guia-lefort-por-movimiento.md` |
 
+## sdd/verifications
+
+| Verification | Verdict | Where |
+|------|--------|-------|
+| Congelamiento: mallas de hueso más rápidas y `segmentacion.log` (2026-10-19) | PASS | `sdd/verifications/congelamiento-mallas-2026-10-19.md` |
+
 ## plataforma
 
 | What | Where |

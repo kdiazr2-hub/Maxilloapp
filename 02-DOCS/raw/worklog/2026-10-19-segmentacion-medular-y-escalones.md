@@ -33,3 +33,18 @@ conflict: their marrow fill runs first (`contourSource`), then `smoothBoneField`
 Python 56 OK, Linux core 11/11, app 30/32: `RepositionWorkspaceTests` ("Hiding the objects left their masks
 hidden in 3D") and `SplintWorkspaceTests` ("teeth and gingiva are not the default composite method") fail on
 their branch alone too — behaviour changes from the Cursor work, pending the user's answer.
+
+**Freeze (user's report, 2026-10-19: «se congeló la pantalla», during the segmentation).** The app reads the
+script's output asynchronously, so the run itself cannot block the window; but when it ends the bone meshes are
+built on the UI thread, one label after another. Measured on a 512×512×400 skull shell (0.4 × 0.4 × 0.5 mm, 4
+cores, Linux): the user's code before the merge took 20 s per bone and 1.7 GB; after the merge 38 s and 2.5 GB —
+`smoothBoneField` ran its two distance transforms and `vtkImageGaussianSmooth` on one core (16 s) and kept six
+float grids alive. Now: distance transform, own separable Gaussian, ridge and refinement split over the hardware
+threads (`parallelFor`, as in `ImplicitCore`), the field written straight into the image that is blurred in
+place, labels read through their own type instead of `GetTuple1`: 18.5 s and 1.3 GB, my part 4.5 s. The rest is
+`fillBetweenCortices` (4.4 s), marching cubes, clean, sinc and normals (~10 s), as before.
+`MeshGeneratorTests` unchanged (wobble 0.054 mm at 2.5 mm slices). The run's output is now also written as it
+arrives to `segmentacion.log` in `%LOCALAPPDATA%\…\DicomCache\AISegmentation\<fecha_hora>\`, with the time of
+each chunk: a frozen or killed run left nothing to read. Still open: which step froze (the log says it next
+time), and whether the whole PC froze (GPU/RAM under TotalSegmentator) or only the window.
+App 30/32 (same two Cursor failures).

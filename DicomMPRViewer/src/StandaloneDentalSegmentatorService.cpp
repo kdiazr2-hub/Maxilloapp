@@ -6,6 +6,7 @@
 #include <vector>
 
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
 #include <QProcessEnvironment>
@@ -451,6 +452,10 @@ void StandaloneDentalSegmentatorService::startExternalProcess(const QString&,
 {
     emit statusChanged("Ejecutando DentalSegmentator standalone...");
     m_processLog.clear();
+    m_processLogFile.close();
+    m_processLogFile.setFileName(QDir(m_outputDirectory).filePath("segmentacion.log"));
+    if (!m_processLogFile.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        m_processLogFile.setFileName(QString());
     const QString program = resolveExecutable(m_externalCommand.program);
     if (program.isEmpty()) {
         failRun(
@@ -486,6 +491,13 @@ void StandaloneDentalSegmentatorService::appendProcessText(const QByteArray& dat
     if (data.isEmpty())
         return;
     m_processLog += QString::fromUtf8(data);
+    if (m_processLogFile.isOpen()) {
+        m_processLogFile.write(QDateTime::currentDateTime().toString("[hh:mm:ss] ").toUtf8());
+        m_processLogFile.write(data);
+        if (!data.endsWith('\n'))
+            m_processLogFile.write("\n");
+        m_processLogFile.flush();
+    }
     if (m_processLog.size() > 200000)
         m_processLog = m_processLog.right(100000);
     // Only explicit milestones ("45% Ejecutando…" or MAXILLO_PROGRESS) reach the
@@ -497,6 +509,13 @@ void StandaloneDentalSegmentatorService::onProcessFinished(
     int exitCode,
     QProcess::ExitStatus status)
 {
+    if (m_processLogFile.isOpen()) {
+        m_processLogFile.write(QString("[%1] Proceso terminado, codigo %2.\n")
+                                   .arg(QDateTime::currentDateTime().toString("hh:mm:ss"))
+                                   .arg(exitCode)
+                                   .toUtf8());
+    }
+    m_processLogFile.close();
     publishProcessProgress(QByteArray(), false, true);
     publishProcessProgress(QByteArray(), true, true);
     if (m_cancelRequested) {

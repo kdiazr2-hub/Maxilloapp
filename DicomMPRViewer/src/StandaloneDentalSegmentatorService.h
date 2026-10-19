@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QFile>
 #include <QFutureWatcher>
 #include <QProcess>
 #include <QString>
@@ -57,6 +58,9 @@ private:
     QString m_outputDirectory;
     QString m_outputSegmentationPath;
     QString m_processLog;
+    // The run's output, as it arrives, in segmentacion.log next to the output: a frozen or killed run has no
+    // error dialog, and the file still says which step it reached (user's report, 2026-10-19: "se congeló").
+    QFile m_processLogFile;
     ExternalCommand m_externalCommand;
     QProcess* m_process = nullptr;
     QFutureWatcher<StandaloneSegmentationResult>* m_workerWatcher = nullptr;
