@@ -60,3 +60,8 @@ workspace-test-artifacts/
 
 # Linux core-test build (tools/linux-core-tests)
 /build-linux-core/
+
+# rsc local state (hooks, seals, logs) and managed skill links — machine-local
+.worktrees/
+.claude/skills/connect-tool
+.claude/agents/finding-verifier.md
