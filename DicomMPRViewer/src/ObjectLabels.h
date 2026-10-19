@@ -7,6 +7,8 @@
 // The upper teeth as their own object (the segmentation's "_dientes_superiores" file): the maxilla keeps
 // them too, so the Le Fort segment carries its teeth; this copy is only for the guide's root analysis.
 inline constexpr int kUpperTeethLabel = 3;
+// Lower teeth on their own (the segmentation's "_dientes_inferiores" file). The mandible keeps them too.
+inline constexpr int kLowerTeethLabel = 8;
 inline constexpr int kUpperArchLabel = 201;
 inline constexpr int kLowerArchLabel = 202;
 inline constexpr int kUpperCompositeLabel  = 203;
@@ -54,6 +56,7 @@ inline constexpr int kOrientationBoneReferenceKey = -160;
 
 // MODELOS composite contour wall (points method).
 inline constexpr int kCompositeContourActorKey = -522;
+inline constexpr int kScanEraseBrushActorKey = -523; // circle shown while erasing the scan
 inline constexpr int kGuideRegionOverlayKey = 3;     // marked region outline in GUIAS
 inline constexpr int kGuideRootsOverlayKey = 4;      // root lengths and apex-to-cut lines in GUIAS
 inline constexpr int kGuideWrapActorKey = -540;      // translucent envelope while designing

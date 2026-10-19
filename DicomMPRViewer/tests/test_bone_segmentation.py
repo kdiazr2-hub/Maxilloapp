@@ -204,6 +204,18 @@ class ThinBoneTests(unittest.TestCase):
                                                **segmentator.bone_thickening_params(1))
         self.assertFalse(np.any(result[15, 9:21, 9:21]), "an air opening of the maxilla was sealed")
 
+    def test_an_orbit_sized_opening_stays_open(self):
+        shape = (50, 50, 50)
+        labels = np.zeros(shape, dtype=np.uint8)
+        labels[25, 2:-2, 2:-2] = 1
+        labels[25, 8:42, 8:42] = 0
+        intensities = np.full(shape, 40.0, dtype=np.float32)
+        intensities[25, 2:-2, 2:-2] = 250.0
+        intensities[25, 8:42, 8:42] = 30.0
+        result = segmentator.thicken_thin_bone(labels == 1, labels, intensities, (0.5, 0.5, 0.5),
+                                               **segmentator.bone_thickening_params(1))
+        self.assertFalse(bool(result[25, 25, 25]), "an orbit-sized opening was filled with bone")
+
     def test_the_mandible_keeps_its_own_rule(self):
         labels, intensities = self.maxilla_wall(-450.0)
         labels[labels == 1] = 2
@@ -238,7 +250,7 @@ class BoneRemapTests(unittest.TestCase):
         self.env.start()
         self.addCleanup(self.env.stop)
 
-    def remap(self, labels, target, shifted_prediction=False):
+    def remap(self, labels, target, shifted_prediction=False, bone_from_totalsegmentator=False):
         image = sitk.GetImageFromArray(np.full(labels.shape, 50, dtype=np.int16))
         image.SetSpacing((0.4, 0.7, 1.1))
         image.SetOrigin((12.5, -37, 80))
@@ -252,12 +264,21 @@ class BoneRemapTests(unittest.TestCase):
         output_path = self.root / "output.nrrd"
         sitk.WriteImage(image, str(input_path))
         sitk.WriteImage(prediction, str(prediction_path))
-        segmentator.remap_prediction(input_path, prediction_path, output_path, target)
+        segmentator.remap_prediction(input_path, prediction_path, output_path, target,
+                                     bone_from_totalsegmentator=bone_from_totalsegmentator)
         output = sitk.ReadImage(str(output_path))
         np.testing.assert_allclose(output.GetSpacing(), image.GetSpacing(), atol=1e-6)
         np.testing.assert_allclose(output.GetOrigin(), image.GetOrigin(), atol=1e-6)
         np.testing.assert_allclose(output.GetDirection(), image.GetDirection(), atol=1e-6)
         return sitk.GetArrayFromImage(output)
+
+    def test_a_hole_inside_a_tooth_is_filled(self):
+        labels = np.zeros((16, 16, 16), dtype=np.uint8)
+        labels[4:12, 4:12, 4:12] = 3
+        labels[7:9, 7:9, 7:9] = 0
+        result = self.remap(labels, "dientes")
+        self.assertTrue(np.all(result[4:12, 4:12, 4:12] == 5), "the hole inside the tooth was left empty")
+        self.assertEqual(result[2, 2, 2], 0, "filling the tooth grew into the space around it")
 
     def test_individual_bones_are_completed_even_without_smoothing(self):
         for source, target, app_label in ((1, "maxilar", 5), (2, "mandibula", 6)):
@@ -278,11 +299,11 @@ class BoneRemapTests(unittest.TestCase):
                 result = self.remap(labels, "completo")
                 self.assertEqual(result[12, 12, 12], 5)
                 self.assertEqual(result[13, 13, 35], 6)
-                self.assertEqual(result[12, 12, 35], 7)
+                self.assertEqual(result[12, 12, 35], 6)
                 self.assertEqual(result[8, 8, 8], 5)
                 self.assertEqual(result[8, 8, 31], 6)
                 self.assertTrue(np.any(result == 2))
-                self.assertEqual(np.count_nonzero(result == 7), 1)
+                self.assertEqual(np.count_nonzero(result == 7), 0)
 
     def test_teeth_only_does_not_fill_bone(self):
         labels = shell()
@@ -309,7 +330,15 @@ class BoneRemapTests(unittest.TestCase):
         labels[18:27, 13:20, 13:20] = 5  # its exit through the cortex, 7 voxels wide (the orange spots)
         result = self.remap(labels, "hueso")
         self.assertTrue(np.all(result[26, 13:20, 13:20] == 6), "the foramen still opens the bone's surface")
-        self.assertTrue(np.all(result[16, 16, 10:20] == 7), "the canal inside the mandible was lost")
+        self.assertTrue(np.all(result[16, 16, 10:20] == 6), "the canal was left as its own structure")
+        self.assertEqual(np.count_nonzero(result == 7), 0)
+
+    def test_totalsegmentator_bone_keeps_its_interior(self):
+        # A hollow DentalSegmentator shell is no longer filled once the bone came from TotalSegmentator.
+        result = self.remap(shell(source_label=1), "hueso", bone_from_totalsegmentator=True)
+        self.assertEqual(result[10, 10, 10], 0)
+        self.assertEqual(result[3, 10, 10], 5)
+        self.assertEqual(result[0, 0, 0], 0)
 
     def test_mismatched_physical_grids_fail_without_writing_output(self):
         with self.assertRaisesRegex(ValueError, "cuadricula fisica"):
@@ -427,6 +456,70 @@ class ProcessOutputTests(unittest.TestCase):
         self.assertTrue(any("2%" in line for line in lines))
 
 
+class TotalSegmentatorBoneTests(unittest.TestCase):
+    def test_skull_and_mandible_replace_the_dental_shell(self):
+        dental = np.zeros((6, 6, 6), dtype=np.uint8)
+        dental[1:5, 1:5, 1] = 1
+        dental[1:5, 1:5, 4] = 2
+        total = np.zeros_like(dental)
+        total[1:5, 1:5, 1:3] = segmentator.TS_SKULL
+        total[1:5, 1:5, 3:5] = segmentator.TS_MANDIBLE
+        out = segmentator.replace_bone_with_totalsegmentator(dental, total)
+        self.assertTrue(np.all(out[1:5, 1:5, 1:3] == 1))
+        self.assertTrue(np.all(out[1:5, 1:5, 3:5] == 2))
+        self.assertEqual(out[0, 0, 0], 0)
+
+    def test_teeth_stay_and_the_canal_becomes_bone(self):
+        dental = np.zeros((5, 5, 5), dtype=np.uint8)
+        dental[2, 2, 2] = 3
+        dental[2, 2, 3] = 4
+        dental[2, 2, 1] = 5
+        total = np.full((5, 5, 5), segmentator.TS_SKULL, dtype=np.uint8)
+        total[2, 2, 3] = segmentator.TS_MANDIBLE
+        out = segmentator.replace_bone_with_totalsegmentator(dental, total)
+        self.assertEqual(out[2, 2, 2], 3)
+        self.assertEqual(out[2, 2, 3], 4)
+        self.assertEqual(out[2, 2, 1], 1)  # canal covered by skull becomes skull, not a canal
+        self.assertEqual(out[0, 0, 0], 1)
+        uncovered = np.zeros((3, 3, 3), dtype=np.uint8)
+        uncovered[1, 1, 1] = 5
+        filled = segmentator.replace_bone_with_totalsegmentator(uncovered, np.zeros_like(uncovered))
+        self.assertEqual(filled[1, 1, 1], 2)
+
+    def test_sinus_head_and_totalsegmentator_teeth_are_not_bone(self):
+        dental = np.ones((4, 4, 4), dtype=np.uint8)
+        total = np.zeros_like(dental)
+        total[1, 1, 1] = 5  # maxillary sinus
+        total[2, 2, 2] = 7  # teeth_upper
+        total[3, 3, 3] = 4  # head
+        out = segmentator.replace_bone_with_totalsegmentator(dental, total)
+        self.assertEqual(out[1, 1, 1], 0)
+        self.assertEqual(out[2, 2, 2], 0)
+        self.assertEqual(out[3, 3, 3], 0)
+
+    def test_mandible_wins_where_the_two_bones_overlap(self):
+        dental = np.zeros((2, 2, 2), dtype=np.uint8)
+        total = np.full((2, 2, 2), segmentator.TS_SKULL, dtype=np.uint8)
+        total[0, 0, 0] = segmentator.TS_MANDIBLE
+        out = segmentator.replace_bone_with_totalsegmentator(dental, total)
+        self.assertEqual(out[0, 0, 0], 2)
+        self.assertEqual(out[1, 1, 1], 1)
+
+    def test_mismatched_shapes_fail(self):
+        with self.assertRaisesRegex(ValueError, "cuadricula"):
+            segmentator.replace_bone_with_totalsegmentator(
+                np.zeros((2, 2, 2), np.uint8), np.zeros((3, 3, 3), np.uint8))
+
+    def test_resample_keeps_labels_on_the_same_grid(self):
+        reference = sitk.GetImageFromArray(np.zeros((4, 4, 4), np.uint8))
+        reference.SetSpacing((1.0, 1.0, 1.0))
+        moving = sitk.GetImageFromArray(np.full((4, 4, 4), segmentator.TS_SKULL, np.uint8))
+        moving.CopyInformation(reference)
+        np.testing.assert_array_equal(
+            segmentator.resample_label_array(moving, reference),
+            np.full((4, 4, 4), segmentator.TS_SKULL))
+
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -458,3 +551,20 @@ class UpperTeethSidecarTests(unittest.TestCase):
             output = Path(folder) / "out.nrrd"
             self.assertIsNone(segmentator.write_upper_teeth_sidecar(np.zeros((3, 3, 3), bool), reference, output))
             self.assertFalse((Path(folder) / "out_dientes_superiores.nrrd").exists())
+
+    def test_the_sidecar_holds_exactly_the_lower_teeth(self):
+        labels = np.zeros((6, 7, 8), dtype=np.uint8)
+        labels[1:3, 2:4, 2:5] = 2
+        teeth = np.zeros_like(labels, dtype=bool)
+        teeth[1:3, 2:4, 2:5] = True
+        reference = sitk.GetImageFromArray(labels)
+        reference.SetSpacing((0.4, 0.4, 0.7))
+        reference.SetOrigin((-10.0, 5.0, 2.0))
+        with tempfile.TemporaryDirectory() as folder:
+            output = Path(folder) / "output_segmentation.nrrd"
+            path = segmentator.write_lower_teeth_sidecar(teeth, reference, output)
+            self.assertEqual(path, Path(folder) / "output_segmentation_dientes_inferiores.nrrd")
+            written = sitk.ReadImage(str(path))
+            np.testing.assert_array_equal(sitk.GetArrayFromImage(written), teeth.astype(np.uint8))
+            self.assertEqual(written.GetSpacing(), reference.GetSpacing())
+            self.assertFalse((Path(folder) / "output_segmentation_dientes_superiores.nrrd").exists())

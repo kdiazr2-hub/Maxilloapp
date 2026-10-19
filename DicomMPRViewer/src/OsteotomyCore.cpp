@@ -13,6 +13,7 @@
 
 #include <vtkCleanPolyData.h>
 #include <vtkClipPolyData.h>
+#include <vtkContourTriangulator.h>
 #include <vtkDoubleArray.h>
 #include <vtkFlyingEdges3D.h>
 #include <vtkFloatArray.h>
@@ -32,6 +33,10 @@
 #include <cmath>
 #include <functional>
 #include <limits>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
 
 namespace
 {
@@ -251,6 +256,133 @@ double pathFieldWorld(const PathFrame& f, const Vec3& p)
 
 // ── Split ────────────────────────────────────────────────────────────────────
 
+// The clip leaves the cut face open, so a solid bone still reads as a hollow shell.
+// Triangulate each boundary loop. A loop inside a larger one (the sinus on the cut)
+// is a hole, so that cavity stays open while the marrow face closes.
+vtkSmartPointer<vtkPolyData> capCutFace(vtkPolyData* mesh)
+{
+    if (!mesh || mesh->GetNumberOfPolys() == 0)
+        return mesh;
+    struct EdgeHash {
+        size_t operator()(const std::pair<vtkIdType, vtkIdType>& edge) const
+        {
+            return std::hash<vtkIdType>{}(edge.first) ^ (std::hash<vtkIdType>{}(edge.second) << 1);
+        }
+    };
+    std::unordered_map<std::pair<vtkIdType, vtkIdType>, int, EdgeHash> count;
+    auto polys = vtk::TakeSmartPointer(mesh->GetPolys()->NewIterator());
+    for (polys->GoToFirstCell(); !polys->IsDoneWithTraversal(); polys->GoToNextCell()) {
+        vtkIdType npts = 0;
+        const vtkIdType* ids = nullptr;
+        polys->GetCurrentCell(npts, ids);
+        for (vtkIdType k = 0; k < npts; ++k) {
+            vtkIdType a = ids[k];
+            vtkIdType b = ids[(k + 1) % npts];
+            if (a > b)
+                std::swap(a, b);
+            ++count[{a, b}];
+        }
+    }
+    std::unordered_map<vtkIdType, std::vector<vtkIdType>> adjacent;
+    for (const auto& entry : count) {
+        if (entry.second != 1)
+            continue;
+        adjacent[entry.first.first].push_back(entry.first.second);
+        adjacent[entry.first.second].push_back(entry.first.first);
+    }
+    if (adjacent.empty())
+        return mesh;
+
+    std::unordered_set<std::pair<vtkIdType, vtkIdType>, EdgeHash> used;
+    std::vector<std::vector<vtkIdType>> loops;
+    for (const auto& entry : adjacent) {
+        for (vtkIdType startNeighbor : entry.second) {
+            const vtkIdType start = entry.first;
+            if (!used.insert({start, startNeighbor}).second)
+                continue;
+            used.insert({startNeighbor, start});
+            std::vector<vtkIdType> loop;
+            loop.push_back(start);
+            vtkIdType previous = start;
+            vtkIdType current = startNeighbor;
+            bool closed = false;
+            for (vtkIdType guard = 0; guard < mesh->GetNumberOfPoints(); ++guard) {
+                loop.push_back(current);
+                if (current == start) {
+                    closed = true;
+                    loop.pop_back();
+                    break;
+                }
+                vtkIdType next = -1;
+                for (vtkIdType neighbor : adjacent[current]) {
+                    if (neighbor == previous)
+                        continue;
+                    if (used.insert({current, neighbor}).second) {
+                        used.insert({neighbor, current});
+                        next = neighbor;
+                        break;
+                    }
+                }
+                if (next < 0)
+                    break;
+                previous = current;
+                current = next;
+            }
+            if (closed && loop.size() >= 3)
+                loops.push_back(std::move(loop));
+        }
+    }
+    if (loops.empty())
+        return mesh;
+
+    auto lines = vtkSmartPointer<vtkPolyData>::New();
+    lines->SetPoints(mesh->GetPoints());
+    auto segments = vtkSmartPointer<vtkCellArray>::New();
+    for (const auto& loop : loops) {
+        for (size_t i = 0; i < loop.size(); ++i) {
+            const vtkIdType segment[2] = {loop[i], loop[(i + 1) % loop.size()]};
+            segments->InsertNextCell(2, segment);
+        }
+    }
+    lines->SetLines(segments);
+    auto cap = vtkSmartPointer<vtkCellArray>::New();
+    if (!vtkContourTriangulator::TriangulateContours(lines, 0, lines->GetNumberOfLines(), cap, nullptr) ||
+        cap->GetNumberOfCells() == 0)
+        return mesh;
+
+    auto capped = vtkSmartPointer<vtkPolyData>::New();
+    capped->DeepCopy(mesh);
+    auto merged = vtkSmartPointer<vtkCellArray>::New();
+    merged->DeepCopy(capped->GetPolys());
+    const vtkIdType added = cap->GetNumberOfCells();
+    auto triangles = vtk::TakeSmartPointer(cap->NewIterator());
+    for (triangles->GoToFirstCell(); !triangles->IsDoneWithTraversal(); triangles->GoToNextCell()) {
+        vtkIdType npts = 0;
+        const vtkIdType* ids = nullptr;
+        triangles->GetCurrentCell(npts, ids);
+        merged->InsertNextCell(npts, ids);
+    }
+    capped->SetPolys(merged);
+    vtkCellData* cellData = capped->GetCellData();
+    for (int arrayIndex = 0; arrayIndex < cellData->GetNumberOfArrays(); ++arrayIndex) {
+        vtkDataArray* array = cellData->GetArray(arrayIndex);
+        if (!array || array->GetNumberOfTuples() == 0)
+            continue;
+        const vtkIdType oldCount = array->GetNumberOfTuples();
+        std::vector<double> sample(static_cast<size_t>(array->GetNumberOfComponents()));
+        array->GetTuple(oldCount - 1, sample.data());
+        array->SetNumberOfTuples(oldCount + added);
+        const bool part = std::string(array->GetName() ? array->GetName() : "") == CompositeBlockCore::PartArrayName;
+        for (vtkIdType tuple = 0; tuple < added; ++tuple) {
+            if (part)
+                array->SetTuple1(oldCount + tuple, CompositeBlockCore::BonePart);
+            else
+                array->SetTuple(oldCount + tuple, sample.data());
+        }
+    }
+    return capped;
+}
+
 vtkSmartPointer<vtkPolyData> finishPiece(vtkPolyData* clipped)
 {
     auto piece = vtkSmartPointer<vtkPolyData>::New();
@@ -260,7 +392,7 @@ vtkSmartPointer<vtkPolyData> finishPiece(vtkPolyData* clipped)
     clean->SetInputData(piece);
     clean->Update();
     auto normals = vtkSmartPointer<vtkPolyDataNormals>::New();
-    normals->SetInputData(clean->GetOutput());
+    normals->SetInputData(capCutFace(clean->GetOutput()));
     normals->ConsistencyOn();
     normals->SplittingOff();
     normals->Update();

@@ -18,7 +18,8 @@ void MainWindow::calculateObjectFromMask(int label, bool smooth)
 {
     QString error;
     auto mesh = MaskToObjectCore::Convert(m_segmentationLabelmap, label, &error,
-                                          smooth ? MaskToObjectCore::Surface::Smooth : MaskToObjectCore::Surface::Exact);
+                                          smooth ? MaskToObjectCore::Surface::Smooth : MaskToObjectCore::Surface::Exact,
+                                          m_volume);
     if (!mesh) {
         QMessageBox::warning(this, tr("Convertir máscara a objeto"), error);
         return;
@@ -58,36 +59,42 @@ void MainWindow::calculateObjectFromMask(int label, bool smooth)
 
 void MainWindow::importUpperTeethSidecar(const QString& outputSegmentationPath)
 {
-    // The segmentation writes the upper teeth on their own next to the labelmap (they stay in the maxilla
-    // there, so the Le Fort segment carries them). They become a hidden object for the guide's root analysis.
+    // Both arches come out on their own. The labelmap still keeps them inside the jaw.
+    importToothSidecar(outputSegmentationPath, QStringLiteral("_dientes_superiores"), kUpperTeethLabel);
+    importToothSidecar(outputSegmentationPath, QStringLiteral("_dientes_inferiores"), kLowerTeethLabel);
+}
+
+void MainWindow::importToothSidecar(const QString& outputSegmentationPath, const QString& suffix, int label)
+{
     const QFileInfo info(outputSegmentationPath);
     QString name = info.fileName();
     for (const QString& ext : {QStringLiteral(".nrrd"), QStringLiteral(".nii.gz"), QStringLiteral(".mha")})
         if (name.endsWith(ext)) {
-            name = name.left(name.size() - ext.size()) + QStringLiteral("_dientes_superiores") + ext;
+            name = name.left(name.size() - ext.size()) + suffix + ext;
             break;
         }
     const QString path = info.dir().filePath(name);
     if (!QFileInfo::exists(path))
         return;
+    const QString objectName = meshLabelName(label);
     QString error;
     const auto teeth = SegmentationImporter::importLabelmap(path, &error);
     if (!teeth) {
-        statusBar()->showMessage(tr("Dientes superiores: %1").arg(error), 8000);
+        statusBar()->showMessage(tr("%1: %2").arg(objectName, error), 8000);
         return;
     }
-    const auto mesh = MeshGenerator::generateMesh(teeth, 1, true, 10, &error);
+    const auto exact = MeshGenerator::generateMesh(teeth, 1, false, 0, &error, false);
+    const auto mesh = exact ? MeshGenerator::smoothToothMesh(exact) : nullptr;
     if (!mesh || mesh->GetNumberOfPolys() == 0) {
-        statusBar()->showMessage(tr("Dientes superiores: %1").arg(error), 8000);
+        statusBar()->showMessage(tr("%1: %2").arg(objectName, error), 8000);
         return;
     }
-    const QString objectName = meshLabelName(kUpperTeethLabel);
-    addObjectEntry(objectName, meshLabelColor(kUpperTeethLabel), kUpperTeethLabel);
+    addObjectEntry(objectName, meshLabelColor(label), label);
     if (m_mesh3DView) {
-        const int key = objectActorKey(kUpperTeethLabel);
+        const int key = objectActorKey(label);
         m_mesh3DView->addMesh(key, mesh, objectName);
-        m_mesh3DView->setMeshColor(key, objectColorForLabel(kUpperTeethLabel));
+        m_mesh3DView->setMeshColor(key, objectColorForLabel(label));
     }
-    setObjectEntryVisible(kUpperTeethLabel, false);
+    setObjectEntryVisible(label, false);
     m_appState.setProjectDirty(true);
 }

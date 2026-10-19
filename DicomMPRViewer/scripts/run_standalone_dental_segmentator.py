@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import traceback
 import zipfile
 from pathlib import Path
@@ -29,9 +30,17 @@ FOLDS = "0"
 
 # DentalSegmentator model labels:
 #   1 Maxilla & Upper Skull, 2 Mandible, 3 Upper Teeth, 4 Lower Teeth, 5 Mandibular canal
+# Bone (1 and 2) is replaced by TotalSegmentator, which runs first. Teeth (3, 4) stay
+# DentalSegmentator. The canal (5) is not a result: those voxels become mandible.
 # App labels:
-#   5 Maxilar + dientes superiores, 6 Mandibula + dientes inferiores, 7 Canal mandibular
-APP_LABEL_MAP = {1: 5, 2: 6, 3: 5, 4: 6, 5: 7}
+#   5 Maxilar + dientes superiores, 6 Mandibula + dientes inferiores, 2 Tejido blando
+APP_LABEL_MAP = {1: 5, 2: 6, 3: 5, 4: 6, 5: 6}
+
+# craniofacial_structures class ids (TotalSegmentator map_to_binary):
+#   1 mandible, 2 teeth_lower, 3 skull, 4 head, 5 sinus_maxillary, 6 sinus_frontal, 7 teeth_upper
+TS_SKULL = 3
+TS_MANDIBLE = 1
+TS_SINUS = (5, 6)
 
 
 def log(message):
@@ -275,11 +284,125 @@ def kill_process_tree(process):
     process.wait()
 
 
-def run_logged(command, env=None, progress_range=None, stage="Procesando"):
+def gpu_temperature():
+    """Degrees Celsius, or None when the reading is not available."""
+    try:
+        output = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=temperature.gpu", "--format=csv,noheader,nounits"],
+            text=True, timeout=5, stderr=subprocess.DEVNULL,
+        )
+        return int(output.strip().splitlines()[0])
+    except Exception:
+        return None
+
+
+def descendant_pids(root):
+    """Process ids of `root` and everything it started. Windows only."""
+    if os.name != "nt":
+        return [root]
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class ProcessEntry(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", wintypes.DWORD),
+                ("cntUsage", wintypes.DWORD),
+                ("th32ProcessID", wintypes.DWORD),
+                ("th32DefaultHeapID", ctypes.c_size_t),
+                ("th32ModuleID", wintypes.DWORD),
+                ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD),
+                ("pcPriClassBase", ctypes.c_long),
+                ("dwFlags", wintypes.DWORD),
+                ("szExeFile", wintypes.WCHAR * 260),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        kernel32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(ProcessEntry)]
+        kernel32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(ProcessEntry)]
+        snap = kernel32.CreateToolhelp32Snapshot(0x00000002, 0)
+        if snap == wintypes.HANDLE(-1).value:
+            return [root]
+        children = {}
+        entry = ProcessEntry()
+        entry.dwSize = ctypes.sizeof(ProcessEntry)
+        ok = kernel32.Process32FirstW(snap, ctypes.byref(entry))
+        while ok:
+            children.setdefault(entry.th32ParentProcessID, []).append(entry.th32ProcessID)
+            ok = kernel32.Process32NextW(snap, ctypes.byref(entry))
+        kernel32.CloseHandle(snap)
+        found = []
+        pending = [root]
+        while pending:
+            pid = pending.pop()
+            found.append(pid)
+            pending.extend(children.get(pid, []))
+        return found
+    except Exception:
+        return [root]
+
+
+def set_process_tree_running(root, running):
+    """Pause or continue a process tree. Pausing stops the GPU work so the chip can cool."""
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        ntdll = ctypes.WinDLL("ntdll")
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        action = ntdll.NtResumeProcess if running else ntdll.NtSuspendProcess
+        action.argtypes = [wintypes.HANDLE]
+        action.restype = ctypes.c_long
+        ok = False
+        for pid in descendant_pids(root):
+            handle = kernel32.OpenProcess(0x0800, False, pid)
+            if not handle:
+                continue
+            if action(handle) == 0:
+                ok = True
+            kernel32.CloseHandle(handle)
+        return ok
+    except Exception:
+        return False
+
+
+def run_logged(command, env=None, progress_range=None, stage="Procesando", guard_gpu=False):
     log(" ".join([str(p) for p in command]))
     process = open_logged_process(command, env)
     job = attach_kill_on_close_job(process)
     last_percent = None
+    paused = {"on": False}
+
+    def gpu_guard():
+        # The laptop powers off at 90 C. Pause the segmentation at 80 and let the fans catch up.
+        announced = False
+        while process.poll() is None:
+            temp = gpu_temperature()
+            if temp is None:
+                if not announced:
+                    announced = True
+                    log("No se pudo leer la temperatura de la GPU.")
+                time.sleep(5)
+                continue
+            if not paused["on"] and temp >= 80:
+                if set_process_tree_running(process.pid, False):
+                    paused["on"] = True
+                    log(f"GPU a {temp}°. Pausa para que no llegue a 90°.")
+            elif paused["on"] and temp <= 68:
+                if set_process_tree_running(process.pid, True):
+                    paused["on"] = False
+                    log(f"GPU a {temp}°. Sigue la segmentacion.")
+            time.sleep(2)
+
+    if guard_gpu:
+        threading.Thread(target=gpu_guard, daemon=True).start()
 
     def handle(text):
         nonlocal last_percent
@@ -307,6 +430,9 @@ def run_logged(command, env=None, progress_range=None, stage="Procesando"):
         # Worker processes inherit the pipe and keep it open after a crash: drain briefly, then stop them.
         reader.join(timeout=5.0)
     finally:
+        if paused["on"]:
+            set_process_tree_running(process.pid, True)
+            paused["on"] = False
         # A failure or exception here must not leave nnU-Net running on the GPU.
         kill_process_tree(process)
         close_job(job)
@@ -379,8 +505,10 @@ def bone_thickening_params(source_label):
 
     The maxilla gets a stronger seal (user's report, 2026-10-06: "enfócate en el maxilar, la mandíbula está bien"):
     its anterior wall over the sinus is so thin that the CT reads a gap in it as half bone, half sinus air —
-    around -400 HU — which the general rule took for an opening. Its holes are filled down to -700 HU and up to
-    about 6 mm across; a real opening into air (-1000) still stays open. The mandible keeps the general rule.
+    around -400 HU — which the general rule took for an opening. Its pinholes are filled down to -700 HU and
+    about 3.5 mm across. A wider seal fills the nose and the orbits, which have soft tissue and bone on both
+    sides a few millimetres apart. A real opening into air (-1000) still stays open. The mandible keeps the
+    general rule.
     """
     def env_float(name, default_value, minimum=None):
         try:
@@ -498,20 +626,40 @@ def cap_canal_openings(labelmap, spacing_zyx, bone_label=6, canal_label=7, cap_m
     return count
 
 
-def upper_teeth_sidecar_path(output_path):
-    """Where the upper teeth go, next to the labelmap: <name>_dientes_superiores<ext>."""
+def fill_tooth_interiors(mask):
+    """Fill holes inside a tooth. The crown often comes out as a shell or with pulp-sized gaps; closing those
+    does not join a separate tooth, and it does not grow into the bone around it."""
+    import scipy.ndimage as ndi
+
+    if mask is None or not np.any(mask):
+        return mask
+    return ndi.binary_fill_holes(mask)
+
+
+def teeth_sidecar_path(output_path, suffix):
+    """Where one arch of teeth goes, next to the labelmap: <name>_<suffix><ext>."""
     path = Path(output_path)
     for ext in (".nii.gz", ".nrrd", ".mha", ".nii"):
         if path.name.endswith(ext):
-            return path.with_name(path.name[: -len(ext)] + "_dientes_superiores" + ext)
-    return path.with_name(path.name + "_dientes_superiores.nrrd")
+            return path.with_name(path.name[: -len(ext)] + "_" + suffix + ext)
+    return path.with_name(path.name + "_" + suffix + ".nrrd")
 
 
-def write_upper_teeth_sidecar(teeth_mask, reference, output_path):
-    """The upper teeth (DentalSegmentator label 3) on their own, for the guide's root analysis.
+def upper_teeth_sidecar_path(output_path):
+    """Where the upper teeth go, next to the labelmap: <name>_dientes_superiores<ext>."""
+    return teeth_sidecar_path(output_path, "dientes_superiores")
 
-    The labelmap keeps them inside the maxilla (APP_LABEL_MAP 3 -> 5) so the Le Fort segment carries its
-    teeth; this second file is the only place they are apart. Returns the path, or None without teeth.
+
+def lower_teeth_sidecar_path(output_path):
+    """Where the lower teeth go, next to the labelmap: <name>_dientes_inferiores<ext>."""
+    return teeth_sidecar_path(output_path, "dientes_inferiores")
+
+
+def write_teeth_sidecar(teeth_mask, reference, output_path, suffix):
+    """One arch (DentalSegmentator 3 or 4) on its own.
+
+    The labelmap keeps those voxels inside the jaw (APP_LABEL_MAP 3 -> 5, 4 -> 6) so the osteotomy
+    still carries the teeth. This file is the only place they are apart. Returns the path, or None.
     """
     import numpy as np
     import SimpleITK as sitk
@@ -520,12 +668,23 @@ def write_upper_teeth_sidecar(teeth_mask, reference, output_path):
         return None
     image = sitk.GetImageFromArray(teeth_mask.astype(np.uint8))
     image.CopyInformation(reference)
-    path = upper_teeth_sidecar_path(output_path)
+    path = teeth_sidecar_path(output_path, suffix)
     sitk.WriteImage(image, str(path), True)
     return path
 
 
-def remap_prediction(input_path, prediction_path, output_path, target, seed=None, seed2=None):
+def write_upper_teeth_sidecar(teeth_mask, reference, output_path):
+    """The upper teeth (DentalSegmentator label 3) on their own, for the guide's root analysis."""
+    return write_teeth_sidecar(teeth_mask, reference, output_path, "dientes_superiores")
+
+
+def write_lower_teeth_sidecar(teeth_mask, reference, output_path):
+    """The lower teeth (DentalSegmentator label 4) on their own. The mandible labelmap is unchanged."""
+    return write_teeth_sidecar(teeth_mask, reference, output_path, "dientes_inferiores")
+
+
+def remap_prediction(input_path, prediction_path, output_path, target, seed=None, seed2=None,
+                     bone_from_totalsegmentator=False):
     import numpy as np
     import SimpleITK as sitk
 
@@ -570,11 +729,16 @@ def remap_prediction(input_path, prediction_path, output_path, target, seed=None
             return mask
         if label_value == 5:
             return mask  # The mandibular canal is not a bone smoothing target.
+        # TotalSegmentator already returns the skull and the mandible. The DentalSegmentator
+        # closing would grow that surface and fill openings the craniofacial model left empty.
+        if label_value in (1, 2) and bone_from_totalsegmentator:
+            return mask
 
         # DentalSegmentator may keep very thin bracket/metal spikes. A tiny
         # binary opening + closing keeps anatomy while softening serrated masks.
         if label_value in (3, 4):
-            open_radius = radius_env("DENTALSEGMENTATOR_TEETH_OPEN_RADIUS", 1)
+            # Opening ate thin enamel and the contacts. Holes inside a tooth are filled afterwards.
+            open_radius = radius_env("DENTALSEGMENTATOR_TEETH_OPEN_RADIUS", 0)
             close_radius = radius_env("DENTALSEGMENTATOR_TEETH_CLOSE_RADIUS", 1)
         else:
             open_radius = radius_env("DENTALSEGMENTATOR_BONE_OPEN_RADIUS", 0)
@@ -591,6 +755,8 @@ def remap_prediction(input_path, prediction_path, output_path, target, seed=None
             except Exception as exc:
                 log(f"Postproceso conservador omitido para label {label_value}: {exc}")
 
+        if label_value in (3, 4):
+            mask = fill_tooth_interiors(mask)
         mask &= (arr == 0) | (arr == label_value)
         if label_value in (1, 2):
             image, intensities = source_image()
@@ -617,10 +783,9 @@ def remap_prediction(input_path, prediction_path, output_path, target, seed=None
         if arr is not None:
             for source_label, app_label in APP_LABEL_MAP.items():
                 out[conservative_mask(source_label)] = app_label
-            image, _ = source_image()
-            cap_canal_openings(out, image.GetSpacing()[::-1])
 
-    if target in ("completo", "segmentacion automatica", "auto", "via aerea", "via_aerea", "airway"):
+    if target in ("completo", "segmentacion automatica", "auto", "dental",
+                  "via aerea", "via_aerea", "airway"):
         log("95% Generando mascaras avanzadas de tejido y via aerea...")
         import scipy.ndimage as ndi
         img, img_arr = source_image()
@@ -646,7 +811,8 @@ def remap_prediction(input_path, prediction_path, output_path, target, seed=None
         # Restaurar y limpiar bordes
         clean_body = ndi.binary_dilation(body_core, structure=struct3d, iterations=2)
 
-        if target in ("completo", "segmentacion automatica", "auto", "via aerea", "via_aerea", "airway"):
+        if target in ("completo", "segmentacion automatica", "auto", "dental",
+                      "via aerea", "via_aerea", "airway"):
             log("    [Tejidos Blandos] Generando mascara corporal sellada...")
             # Un pequeño closing en clean_body sella labios y nariz externamente
             # sin contraer ni aplastar los conductos de aire internos.
@@ -655,7 +821,7 @@ def remap_prediction(input_path, prediction_path, output_path, target, seed=None
             for z in range(depth):
                 solid_body[z] = ndi.binary_fill_holes(closed_body[z])
             
-            if target in ("completo", "segmentacion automatica", "auto"):
+            if target in ("completo", "segmentacion automatica", "auto", "dental"):
                 soft_tissue_mask = ndi.binary_closing(solid_body, structure=struct3d, iterations=2)
             else:
                 soft_tissue_mask = None
@@ -897,6 +1063,90 @@ def remap_prediction(input_path, prediction_path, output_path, target, seed=None
         sidecar = write_upper_teeth_sidecar(conservative_mask(3), seg, output_path)
         if sidecar:
             log(f"Dientes superiores aparte: {sidecar}")
+        lower = write_lower_teeth_sidecar(conservative_mask(4), seg, output_path)
+        if lower:
+            log(f"Dientes inferiores aparte: {lower}")
+
+
+def same_physical_grid(image, reference):
+    return (image.GetSize() == reference.GetSize()
+            and np.allclose(image.GetSpacing(), reference.GetSpacing(), rtol=0, atol=1e-5)
+            and np.allclose(image.GetOrigin(), reference.GetOrigin(), rtol=0, atol=1e-3)
+            and np.allclose(image.GetDirection(), reference.GetDirection(), rtol=0, atol=1e-5))
+
+
+def resample_label_array(moving, reference):
+    """Nearest-neighbour labels of `moving` on the voxel grid of `reference`."""
+    if same_physical_grid(moving, reference):
+        return sitk.GetArrayFromImage(moving)
+    resampler = sitk.ResampleImageFilter()
+    resampler.SetReferenceImage(reference)
+    resampler.SetInterpolator(sitk.sitkNearestNeighbor)
+    resampler.SetDefaultPixelValue(0)
+    return sitk.GetArrayFromImage(resampler.Execute(moving))
+
+
+def replace_bone_with_totalsegmentator(dental, total, skull_id=TS_SKULL, mandible_id=TS_MANDIBLE,
+                                       sinus_ids=TS_SINUS):
+    """Skull and mandible come from TotalSegmentator. Teeth stay DentalSegmentator.
+
+    `dental` uses DentalSegmentator ids (1 skull/maxilla, 2 mandible, 3 upper teeth, 4 lower teeth,
+    5 canal). `total` uses craniofacial_structures ids. Sinuses, the head envelope and TotalSegmentator
+    teeth are not bone. A voxel that is both skull and mandible is kept as mandible. The canal is not
+    kept: where the mandible does not already cover it, it becomes mandible.
+    """
+    dental = np.asarray(dental)
+    total = np.asarray(total)
+    if dental.shape != total.shape:
+        raise ValueError("TotalSegmentator y DentalSegmentator no comparten la cuadricula.")
+    sinus = np.zeros(total.shape, dtype=bool)
+    for label in sinus_ids:
+        sinus |= total == label
+    skull = (total == skull_id) & ~sinus
+    mandible = (total == mandible_id) & ~sinus
+    protected = (dental == 3) | (dental == 4)
+    out = np.array(dental, copy=True)
+    out[(out == 1) | (out == 2) | (out == 5)] = 0
+    out[skull & ~protected] = 1
+    out[mandible & ~protected] = 2
+    out[(dental == 5) & ~protected & (out == 0)] = 2
+    return out
+
+
+def run_totalsegmentator_bone(nifti_path, output_file, device):
+    """Skull and mandible from task craniofacial_structures.
+
+    That task has no fast model and rejects roi_subset. It crops to the skull itself, then
+    segments mandible, skull, teeth, sinuses and head. Only mandible and skull are kept later.
+    """
+    import importlib.util
+    if importlib.util.find_spec("totalsegmentator") is None:
+        raise RuntimeError(
+            "Falta TotalSegmentator en el Python de la segmentacion. "
+            "Instale en ese entorno: pip install TotalSegmentator"
+        )
+    ts_device = "cpu" if device == "cpu" else "gpu"
+    log(f"25% Craneo y mandibula con TotalSegmentator ({ts_device}), por separado.")
+    progress(25, "Hueso con TotalSegmentator")
+    # A child process, so the temperature guard can pause it without freezing itself.
+    code = (
+        "from totalsegmentator.python_api import totalsegmentator\n"
+        "totalsegmentator(%r, %r, ml=True, task='craniofacial_structures', device=%r, "
+        "quiet=False, nr_thr_resamp=1, nr_thr_saving=1)\n"
+        % (str(nifti_path), str(output_file), ts_device)
+    )
+    try:
+        run_logged([sys.executable, "-c", code], progress_range=(25, 55),
+                   stage="Hueso con TotalSegmentator", guard_gpu=(ts_device == "gpu"))
+    except RuntimeError:
+        if ts_device != "gpu":
+            raise
+        log("TotalSegmentator no cupo en la GPU. El hueso sigue en el procesador.")
+        code = code.replace("device='gpu'", "device='cpu'")
+        run_logged([sys.executable, "-c", code], progress_range=(25, 55),
+                   stage="Hueso con TotalSegmentator en CPU")
+    if not Path(output_file).is_file():
+        raise RuntimeError("TotalSegmentator termino, pero no escribio el hueso.")
 
 
 def run_dentalsegmentator_nnunet(input_path, output_path, target, seed=None, seed2=None):
@@ -917,7 +1167,7 @@ def run_dentalsegmentator_nnunet(input_path, output_path, target, seed=None, see
     raw_dir.mkdir(parents=True, exist_ok=True)
     prep_dir.mkdir(parents=True, exist_ok=True)
 
-    log("30% Convirtiendo NRRD a NIfTI para nnU-Net...")
+    log("20% Convirtiendo el TAC...")
     image = sitk.ReadImage(str(input_path))
     case_input = images_dir / "case_0000.nii.gz"
     sitk.WriteImage(image, str(case_input), True)
@@ -931,8 +1181,15 @@ def run_dentalsegmentator_nnunet(input_path, output_path, target, seed=None, see
     if device == "auto":
         import torch
         device = "cuda" if torch.cuda.is_available() else "cpu"
-    log(f"Python DentalSegmentator: {sys.executable}")
-    log(f"40% Usando dispositivo nnU-Net: {device}")
+    log(f"Python: {sys.executable}")
+
+    bone_from_totalsegmentator = False
+    if target.lower() not in ("teeth", "dientes"):
+        ts_path = pred_dir / "totalsegmentator_craniofacial.nii.gz"
+        run_totalsegmentator_bone(case_input, ts_path, device)
+        bone_from_totalsegmentator = True
+
+    log(f"58% Dientes y tejido blando con DentalSegmentator ({device}).")
     cmd = [
         nnunet_predict_executable(),
         "-i", str(images_dir),
@@ -945,27 +1202,41 @@ def run_dentalsegmentator_nnunet(input_path, output_path, target, seed=None, see
         "-npp", env.get("DENTALSEGMENTATOR_NPP", "1"),
         "-nps", env.get("DENTALSEGMENTATOR_NPS", "1"),
     ]
-    # Optional faster, slightly less accurate inference (nnU-Net defaults otherwise).
     step_size = env.get("DENTALSEGMENTATOR_STEP_SIZE", "").strip()
     if step_size:
         cmd += ["-step_size", step_size]
-    if env.get("DENTALSEGMENTATOR_DISABLE_TTA", "").strip() == "1":
+    # Mirroring runs the network several times and holds the GPU at full load. Off unless asked.
+    if env.get("DENTALSEGMENTATOR_DISABLE_TTA", "1").strip() != "0":
         cmd.append("--disable_tta")
-
-    log("45% Ejecutando DentalSegmentator nnU-Net...")
-    run_logged(cmd, env=env, progress_range=(45, 88), stage="Prediciendo con nnU-Net")
-    log("88% Exportando la prediccion de nnU-Net...")
+    run_logged(cmd, env=env, progress_range=(58, 88), stage="Dientes con DentalSegmentator",
+               guard_gpu=(device != "cpu"))
+    log("88% Exportando dientes...")
 
     prediction_path = pred_dir / "case.nii.gz"
     if not prediction_path.exists():
-        alternatives = list(pred_dir.glob("*.nii.gz"))
+        alternatives = [path for path in pred_dir.glob("*.nii.gz")
+                        if path.name != "totalsegmentator_craniofacial.nii.gz"]
         if alternatives:
             prediction_path = alternatives[0]
     if not prediction_path.exists():
         raise RuntimeError("nnU-Net termino, pero no genero prediccion NIfTI.")
 
-    log("90% Remapeando etiquetas DentalSegmentator a la app...")
-    remap_prediction(input_path, prediction_path, output_path, target, seed, seed2)
+    if bone_from_totalsegmentator:
+        dental_img = sitk.ReadImage(str(prediction_path))
+        merged = replace_bone_with_totalsegmentator(
+            sitk.GetArrayFromImage(dental_img),
+            resample_label_array(sitk.ReadImage(str(ts_path)), dental_img),
+        )
+        merged_img = sitk.GetImageFromArray(np.ascontiguousarray(merged.astype(np.uint8)))
+        merged_img.CopyInformation(dental_img)
+        combined_path = pred_dir / "bone_totalsegmentator.nii.gz"
+        sitk.WriteImage(merged_img, str(combined_path), True)
+        prediction_path = combined_path
+        log("92% Craneo y mandibula de TotalSegmentator; dientes de DentalSegmentator. Sin canal.")
+
+    log("93% Remapeando etiquetas a la app...")
+    remap_prediction(input_path, prediction_path, output_path, target, seed, seed2,
+                     bone_from_totalsegmentator=bone_from_totalsegmentator)
     if not Path(output_path).exists():
         raise RuntimeError("No se genero labelmap NRRD de salida.")
     log(f"100% Labelmap guardado: {output_path}")

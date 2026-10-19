@@ -148,6 +148,7 @@ void testLeFortSplitAndGuide()
     // Cut points are linear interpolations along 1.5 mm edges: allow 0.2 mm at the path corners.
     require(worstNegative <= -0.3 && worstPositive >= 0.3,
             "the split does not leave the 1 mm kerf: " + std::to_string(worstNegative) + " / " + std::to_string(worstPositive));
+    require(closedSurface(split.negative) && closedSurface(split.positive), "the cut face was left open");
     double bounds[6];
     split.negative->GetBounds(bounds);
     require(bounds[4] < 0.5 && bounds[5] < 26.0, "Le Fort segment is not the caudal part");

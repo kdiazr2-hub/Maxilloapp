@@ -131,6 +131,12 @@ public:
     // keyboard modifiers (Ctrl = unmark); Alt + vertical drag reports pixel
     // deltas to resize the brush. Right drag still rotates.
     void setSurfaceBrushMode(bool active);
+    // Flat circle drawn in the widget, following the cursor. It does not sit on a mesh.
+    void setScreenBrush(bool enabled);
+    void setScreenBrushRadiusMm(double radiusMm);
+    double widgetPixelsPerMm() const;
+    vtkMTimeType cameraMTime() const;
+    bool projectToWidget(const double world[3], double& x, double& y) const;
 
     // Where the camera looks (focal - position, normalised): the axis a trim sweeps along.
     std::array<double, 3> viewDirection() const;
@@ -153,6 +159,10 @@ signals:
     void planeDragMoved(double x, double y, double z, double deltaYPixels, Qt::KeyboardModifiers modifiers);
     void planeDragFinished(double x, double y, double z);
     void surfaceBrushed(double x, double y, double z, Qt::KeyboardModifiers modifiers);
+    // The cursor during a brush drag, also where no mesh was hit, so a marker can follow it.
+    void brushCursorMoved(double x, double y, double z, Qt::KeyboardModifiers modifiers);
+    // Widget coordinates of the cursor while the screen brush is held. Not a mesh pick.
+    void brushScreenMoved(int x, int y, Qt::KeyboardModifiers modifiers);
     void brushRadiusDragged(double deltaYPixels);
     void surfaceBrushFinished();
 
@@ -171,6 +181,9 @@ private:
     void positionOverlayControls();
     void updateInteractionCursor();
     void showClickFeedback(const QPointF& position);
+    void placeScreenCircle(int logicalX, int logicalY);
+    void dropSphereMarkers();
+    static void screenBrushHoverCallback(vtkObject*, unsigned long, void*, void*);
     void sceneBounds(double bounds[6]) const;
 
     QVTKOpenGLNativeWidget* m_vtkWidget  = nullptr;
@@ -276,4 +289,11 @@ private:
     bool m_brushing = false;
     bool m_brushResizing = false;
     double m_brushLastY = 0.0;
+    bool m_brushPlaneValid = false;
+    std::array<double, 3> m_brushPlaneOrigin{0.0, 0.0, 0.0};
+    QWidget* m_screenCircle = nullptr;
+    bool m_screenBrush = false;
+    double m_screenBrushRadiusMm = 4.0;
+    int m_screenCircleX = 0;
+    int m_screenCircleY = 0;
 };

@@ -27,6 +27,7 @@ public:
     virtual std::optional<Measurement> finish(QWidget*) { return std::nullopt; }
 
     void reset();
+    bool undoPendingPoint();
     int pendingPointCount() const { return static_cast<int>(m_points.size()); }
     const std::vector<std::array<double, 3>>& pendingPoints() const { return m_points; }
     MeasurementViewOrientation pendingView() const { return m_view; }

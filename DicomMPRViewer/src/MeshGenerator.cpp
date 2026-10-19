@@ -1,4 +1,5 @@
 #include "MeshGenerator.h"
+#include "BoneCavityFill.h"
 
 #include <vtkAlgorithmOutput.h>
 #include <vtkCleanPolyData.h>
@@ -76,7 +77,9 @@ vtkSmartPointer<vtkPolyData> MeshGenerator::generateMesh(vtkImageData* labelmap,
                                                          int labelValue,
                                                          bool smooth,
                                                          int smoothingIterations,
-                                                         QString* errorMessage)
+                                                         QString* errorMessage,
+                                                         bool closeCortices,
+                                                         vtkImageData* hounsfield)
 {
     if (!labelmap || labelmap->GetNumberOfPoints() == 0) {
         if (errorMessage) *errorMessage = "No hay labelmap cargado.";
@@ -92,11 +95,14 @@ vtkSmartPointer<vtkPolyData> MeshGenerator::generateMesh(vtkImageData* labelmap,
         : 0;
 
     // Contouring cannot close a foreground region that ends at the image edge.
-    // Add exterior background only, leaving the labelmap and anatomical voids intact.
+    // Add exterior background only. Bone labels first fill marrow whose Hounsfield value
+    // is bone; air and the orbits stay hollow.
+    const auto cortical = closeCortices ? fillBetweenCortices(labelmap, labelValue, 20.0, hounsfield) : nullptr;
+    vtkImageData* contourSource = cortical ? cortical.Get() : labelmap;
     int extent[6];
-    labelmap->GetExtent(extent);
+    contourSource->GetExtent(extent);
     auto padded = vtkSmartPointer<vtkImageConstantPad>::New();
-    padded->SetInputData(labelmap);
+    padded->SetInputData(contourSource);
     padded->SetConstant(0);
     padded->SetOutputWholeExtent(extent[0] - 1, extent[1] + 1,
                                  extent[2] - 1, extent[3] + 1,
@@ -111,7 +117,7 @@ vtkSmartPointer<vtkPolyData> MeshGenerator::generateMesh(vtkImageData* labelmap,
         threshold->SetOutValue(0.0);
         threshold->SetOutputScalarTypeToFloat();
 
-        const auto sigma = volumeSigmaFor(labelmap, iterations);
+        const auto sigma = volumeSigmaFor(contourSource, iterations);
         auto gaussian = vtkSmartPointer<vtkImageGaussianSmooth>::New();
         gaussian->SetInputConnection(threshold->GetOutputPort());
         gaussian->SetDimensionality(3);
@@ -192,4 +198,30 @@ vtkSmartPointer<vtkPolyData> MeshGenerator::generateMesh(vtkImageData* labelmap,
     auto mesh = vtkSmartPointer<vtkPolyData>::New();
     mesh->DeepCopy(output);
     return mesh;
+}
+
+vtkSmartPointer<vtkPolyData> MeshGenerator::smoothToothMesh(vtkPolyData* mesh)
+{
+    if (!mesh || mesh->GetNumberOfPoints() == 0)
+        return nullptr;
+    auto smoother = vtkSmartPointer<vtkWindowedSincPolyDataFilter>::New();
+    smoother->SetInputData(mesh);
+    smoother->SetNumberOfIterations(40);
+    smoother->SetPassBand(0.06);
+    smoother->BoundarySmoothingOn();
+    smoother->FeatureEdgeSmoothingOff();
+    smoother->NonManifoldSmoothingOn();
+    smoother->NormalizeCoordinatesOn();
+    smoother->Update();
+    auto normals = vtkSmartPointer<vtkPolyDataNormals>::New();
+    normals->SetInputConnection(smoother->GetOutputPort());
+    normals->ConsistencyOn();
+    normals->SplittingOff();
+    normals->AutoOrientNormalsOff();
+    normals->Update();
+    if (!normals->GetOutput() || normals->GetOutput()->GetNumberOfPoints() == 0)
+        return nullptr;
+    auto out = vtkSmartPointer<vtkPolyData>::New();
+    out->DeepCopy(normals->GetOutput());
+    return out;
 }

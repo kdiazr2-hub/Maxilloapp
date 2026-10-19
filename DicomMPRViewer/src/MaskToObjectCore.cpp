@@ -1,4 +1,5 @@
 #include "MaskToObjectCore.h"
+#include "BoneCavityFill.h"
 #include "MeshGenerator.h"
 
 #include <vtkDataArray.h>
@@ -43,8 +44,11 @@ bool labelExtent(vtkImageData* mask, int label, int result[6])
     return result[0] <= result[1];
 }
 
-vtkSmartPointer<vtkPolyData> smoothSurface(vtkImageData* mask, int label, QString* error)
+vtkSmartPointer<vtkPolyData> smoothSurface(vtkImageData* mask, int label, QString* error, vtkImageData* hounsfield)
 {
+    const auto cortical = fillBetweenCortices(mask, label, 20.0, hounsfield);
+    if (cortical)
+        mask = cortical;
     // Anti-aliased surface: blur the binary label slightly and contour it halfway, so the surface
     // interpolates between voxels instead of following the CT slice staircase. Solid filling stays
     // solid and a one-voxel bone plate survives (its blurred peak stays above 0.5); the mask is read only.
@@ -117,7 +121,8 @@ vtkSmartPointer<vtkPolyData> smoothSurface(vtkImageData* mask, int label, QStrin
 }
 } // namespace
 
-vtkSmartPointer<vtkPolyData> MaskToObjectCore::Convert(vtkImageData* mask, int label, QString* error, Surface surface)
+vtkSmartPointer<vtkPolyData> MaskToObjectCore::Convert(vtkImageData* mask, int label, QString* error,
+                                                               Surface surface, vtkImageData* hounsfield)
 {
     if (error) error->clear();
     if (!mask || !mask->GetPointData()->GetScalars() || mask->GetNumberOfScalarComponents() != 1) {
@@ -129,6 +134,6 @@ vtkSmartPointer<vtkPolyData> MaskToObjectCore::Convert(vtkImageData* mask, int l
         return nullptr;
     }
     if (surface == Surface::Exact)
-        return MeshGenerator::generateMesh(mask, label, false, 0, error);
-    return smoothSurface(mask, label, error);
+        return MeshGenerator::generateMesh(mask, label, false, 0, error, true, hounsfield);
+    return smoothSurface(mask, label, error, hounsfield);
 }

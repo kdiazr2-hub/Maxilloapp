@@ -91,8 +91,9 @@ CompositeBlockResult CreateBlockComposite(vtkPolyData* bone, vtkPolyData* dental
 // X–Y plane; each point also keeps its height along axisZ.
 using CompositeContour = std::vector<std::array<double, 3>>;
 inline constexpr int MinContourPoints = 3;
-// CT bone is only replaced within this distance of the kept scan (crowns, skirt): bone beside or behind the
-// teeth inside the region (external oblique ridge, ramus) stays when no scan covers it.
+// CT bone below the line of the points is only replaced within this distance of the kept scan.
+// Bone past that line stays (external oblique ridge, ramus, palate). The scan's open border is
+// blended onto it: upward on the maxilla, downward on the mandible.
 inline constexpr double ContourNearScanMm = 3.0;
 bool ContourValid(const CompositeCutBlock& block, const CompositeContour& contour, QString* error = nullptr);
 // Points on the scan border (buccal and palatal gingiva, any order): everything below the line of the
@@ -108,6 +109,25 @@ vtkSmartPointer<vtkPolyData> ContourWallMesh(const CompositeCutBlock& block, con
 vtkSmartPointer<vtkPolyData> ContourPolyline(const CompositeCutBlock& block, const CompositeContour& contour);
 CompositeBlockResult CreateContourComposite(vtkPolyData* bone, vtkPolyData* dentalScan, const CompositeCutBlock& block,
                                             const CompositeContour& contour);
+// No points: keeps the crowns plus a short band of gingiva (measured from the local occlusal surface toward
+// the bone) and blends that border onto the jaw. Mucosa farther up the vestibule stays out.
+inline constexpr double ToothAndGingivaMm = 12.0;
+CompositeBlockResult CreateGingivalComposite(vtkPolyData* bone, vtkPolyData* dentalScan, const CompositeCutBlock& block);
+// Three points — posterior right, posterior left and anterior — sit on the facial gingiva. The red
+// band is the circle through them, just labial to the clicks and a little further forward at the
+// incisors, continued past the molars. On its occlusal side, and only across that arch, the CT
+// teeth are removed and the scan replaces them, overlapping the line by a couple of millimetres.
+// The rami and the bone on the jaw side of the line stay.
+vtkSmartPointer<vtkPolyData> ArchRibbon(vtkPolyData* bone, const CompositeCutBlock& block,
+                                       const CompositeContour& points);
+CompositeBlockResult CreateArchComposite(vtkPolyData* bone, vtkPolyData* dentalScan, const CompositeCutBlock& block,
+                                        const CompositeContour& points);
+// Boxed cast of an open intraoral scan, before the composite match. The cut is a plane
+// normal to the jaw axis (upper +Z toward the maxilla, lower −Z toward the mandible),
+// ToothAndGingivaMm past the cusps, so the teeth and a little gingiva stay and the ragged
+// rim and anything past that plane are dropped. A narrow opening is capped on the rim.
+// The palatal vault and the floor of the mouth are not covered. The input mesh is not modified.
+vtkSmartPointer<vtkPolyData> BoxScan(vtkPolyData* scan, CompositeJaw jaw, QString* error = nullptr);
 QJsonArray ContourToJson(const CompositeContour& contour);
 CompositeContour ContourFromJson(const QJsonArray& array);
 
@@ -124,8 +144,11 @@ vtkSmartPointer<vtkPolyData> SliceContour(vtkPolyData* mesh, int axis, double po
 
 // Single closed mesh from several (possibly open) surfaces: voxelised shells,
 // small gaps sealed by closing, interior filled from outside, iso-surface.
+// `fillSolids` fills enclosed cavities. The gingival composite passes false: it only
+// closes the gap between the scan and the bone, and leaves the sinus and the palate empty.
 VoxelUnionResult VoxelUnion(const std::vector<vtkPolyData*>& meshes, double spacingMm = 0.3,
-                            int closingVoxels = 3, const std::atomic<bool>* cancel = nullptr);
+                            int closingVoxels = 3, const std::atomic<bool>* cancel = nullptr,
+                            bool fillSolids = true);
 
 QJsonObject BlockToJson(const CompositeCutBlock& block);
 CompositeCutBlock BlockFromJson(const QJsonObject& object);

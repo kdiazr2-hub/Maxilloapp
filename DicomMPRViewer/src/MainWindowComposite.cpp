@@ -13,6 +13,7 @@
 #include "CompositeModelCore.h"
 #include "LoggerCore.h"
 #include "MeshRepairCore.h"
+#include "ScanEraseCore.h"
 #include "MPRView.h"
 #include "Mesh3DView.h"
 #include "ObjectLabels.h"
@@ -28,12 +29,16 @@
 #include <QSignalBlocker>
 #include <QStackedWidget>
 #include <QStatusBar>
+#include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <vtkPolyData.h>
 #include <vtkSTLWriter.h>
+#include <cmath>
+#include <limits>
+#include <vector>
 
 #include <algorithm>
 #include <vector>
@@ -43,11 +48,14 @@ namespace
 constexpr int kBlockMethod = 0;
 constexpr int kClassicMethod = 1;
 constexpr int kPointsMethod = 2;
+constexpr int kGingivalMethod = 3;
+constexpr int kArchMethod = 4;
+constexpr int kArchLabelKey = 6;
 constexpr int kCompositeContourOverlayKey = 5;
 const QColor kBlockColor(40, 120, 255);
 const QColor kContourPointColor(255, 140, 0);
 const std::array<unsigned char, 3> kReviewBoneColor{226, 212, 190};
-const std::array<unsigned char, 3> kReviewDentalColor{250, 250, 244};
+const std::array<unsigned char, 3> kReviewDentalColor{226, 212, 190};
 const std::array<double, 3> kUpperContourColor{1.0, 0.82, 0.0};
 const std::array<double, 3> kOsteotomyContourColor{1.0, 0.45, 0.1};
 const std::array<double, 3> kLowerContourColor{0.0, 0.86, 1.0};
@@ -90,40 +98,67 @@ QWidget* MainWindow::buildCompositeBlockPanel(QWidget* parent)
     m_compositeBlockControls = new QWidget(m_compositeBlockPanel);
     auto* blockLayout = new QVBoxLayout(m_compositeBlockControls);
     blockLayout->setContentsMargins(0, 0, 0, 0);
+
+    m_compositeLegacyControls = new QWidget(m_compositeBlockControls);
+    auto* legacyLayout = new QVBoxLayout(m_compositeLegacyControls);
+    legacyLayout->setContentsMargins(0, 0, 0, 0);
     auto* sizeRow = new QHBoxLayout();
-    sizeRow->addWidget(new QLabel(tr("Método:"), m_compositeBlockControls));
-    m_compositeMethodCombo = new QComboBox(m_compositeBlockControls);
+    sizeRow->addWidget(new QLabel(tr("Método:"), m_compositeLegacyControls));
+    m_compositeMethodCombo = new QComboBox(m_compositeLegacyControls);
+    m_compositeMethodCombo->addItem(tr("Tres puntos"), kArchMethod);
+    m_compositeMethodCombo->addItem(tr("Dientes y encía"), kGingivalMethod);
     m_compositeMethodCombo->addItem(tr("Contorno por puntos"), kPointsMethod);
     m_compositeMethodCombo->addItem(tr("Bloque de corte"), kBlockMethod);
     m_compositeMethodCombo->addItem(tr("Recorte automático (clásico)"), kClassicMethod);
     sizeRow->addWidget(m_compositeMethodCombo);
-    m_compositeWidthSpin = makeSizeSpin(m_compositeBlockControls, 5.0, 160.0);
-    m_compositeLengthSpin = makeSizeSpin(m_compositeBlockControls, 5.0, 160.0);
-    m_compositeThicknessSpin = makeSizeSpin(m_compositeBlockControls, 2.0, 40.0);
+    m_compositeWidthSpin = makeSizeSpin(m_compositeLegacyControls, 5.0, 160.0);
+    m_compositeLengthSpin = makeSizeSpin(m_compositeLegacyControls, 5.0, 160.0);
+    m_compositeThicknessSpin = makeSizeSpin(m_compositeLegacyControls, 2.0, 40.0);
     m_compositeThicknessSpin->setValue(CompositeBlockCore::DefaultThicknessMm);
-    sizeRow->addWidget(new QLabel(tr("Ancho:"), m_compositeBlockControls));
+    sizeRow->addWidget(new QLabel(tr("Ancho:"), m_compositeLegacyControls));
     sizeRow->addWidget(m_compositeWidthSpin);
-    sizeRow->addWidget(new QLabel(tr("Largo:"), m_compositeBlockControls));
+    sizeRow->addWidget(new QLabel(tr("Largo:"), m_compositeLegacyControls));
     sizeRow->addWidget(m_compositeLengthSpin);
-    sizeRow->addWidget(new QLabel(tr("Grosor:"), m_compositeBlockControls));
+    sizeRow->addWidget(new QLabel(tr("Grosor:"), m_compositeLegacyControls));
     sizeRow->addWidget(m_compositeThicknessSpin);
     sizeRow->addStretch(1);
-    blockLayout->addLayout(sizeRow);
+    legacyLayout->addLayout(sizeRow);
 
-    auto* blockButtons = new QHBoxLayout();
-    m_compositeGizmoButton = new QPushButton(tr("Mover bloque"), m_compositeBlockControls);
-    m_compositeAcceptGizmoButton = new QPushButton(tr("Aceptar ajuste"), m_compositeBlockControls);
-    m_compositeResetButton = new QPushButton(tr("Reiniciar bloque"), m_compositeBlockControls);
-    m_compositeClearPointsButton = new QPushButton(tr("Borrar puntos"), m_compositeBlockControls);
-    auto* ctButton = new QPushButton(tr("Ver cortes TAC"), m_compositeBlockControls);
+    auto* legacyButtons = new QHBoxLayout();
+    m_compositeGizmoButton = new QPushButton(tr("Mover bloque"), m_compositeLegacyControls);
+    m_compositeAcceptGizmoButton = new QPushButton(tr("Aceptar ajuste"), m_compositeLegacyControls);
+    m_compositeResetButton = new QPushButton(tr("Reiniciar bloque"), m_compositeLegacyControls);
+    m_compositeClearPointsButton = new QPushButton(tr("Borrar puntos"), m_compositeLegacyControls);
+    auto* ctButton = new QPushButton(tr("Ver cortes TAC"), m_compositeLegacyControls);
     ctButton->setToolTip(tr("Muestra el contorno del escaneo registrado sobre los cortes 2D del TAC."));
-    m_compositeCalculateButton = new QPushButton(tr("Calcular compuesto"), m_compositeBlockControls);
-    auto* cancelBlock = new QPushButton(tr("Cancelar"), m_compositeBlockControls);
+    auto* cancelBlock = new QPushButton(tr("Cancelar"), m_compositeLegacyControls);
     for (QPushButton* button : {m_compositeGizmoButton, m_compositeAcceptGizmoButton, m_compositeResetButton,
-                                m_compositeClearPointsButton, ctButton, m_compositeCalculateButton, cancelBlock})
-        blockButtons->addWidget(button);
-    blockButtons->addStretch(1);
-    blockLayout->addLayout(blockButtons);
+                                m_compositeClearPointsButton, ctButton, cancelBlock})
+        legacyButtons->addWidget(button);
+    legacyButtons->addStretch(1);
+    legacyLayout->addLayout(legacyButtons);
+    blockLayout->addWidget(m_compositeLegacyControls);
+
+    m_compositeEraseControls = new QWidget(m_compositeBlockControls);
+    auto* eraseRow = new QHBoxLayout(m_compositeEraseControls);
+    eraseRow->setContentsMargins(0, 0, 0, 0);
+    eraseRow->addWidget(new QLabel(tr("Borrador:"), m_compositeEraseControls));
+    m_compositeEraseRadiusSpin = makeSizeSpin(m_compositeEraseControls, 1.0, 20.0);
+    m_compositeEraseRadiusSpin->setValue(4.0);
+    m_compositeEraseRadiusSpin->setToolTip(tr("Tamaño del círculo. También puede cambiarlo con Alt y arrastrar en vertical."));
+    eraseRow->addWidget(m_compositeEraseRadiusSpin);
+    auto* eraseHint = new QLabel(tr("Arrastre sobre el escaneo para quitar lo que no entra en el compuesto. Ctrl+Z deshace."),
+                                 m_compositeEraseControls);
+    eraseHint->setStyleSheet(QStringLiteral("color:#8e8e93;"));
+    eraseRow->addWidget(eraseHint);
+    eraseRow->addStretch(1);
+    blockLayout->addWidget(m_compositeEraseControls);
+
+    auto* calculateRow = new QHBoxLayout();
+    m_compositeCalculateButton = new QPushButton(tr("Calcular compuesto"), m_compositeBlockControls);
+    calculateRow->addWidget(m_compositeCalculateButton);
+    calculateRow->addStretch(1);
+    blockLayout->addLayout(calculateRow);
     layout->addWidget(m_compositeBlockControls);
 
     // ── Review stage ──────────────────────────────────────────────────────
@@ -157,6 +192,12 @@ QWidget* MainWindow::buildCompositeBlockPanel(QWidget* parent)
     connect(m_compositeResetButton, &QPushButton::clicked, this, &MainWindow::resetCompositeBlock);
     connect(m_compositeClearPointsButton, &QPushButton::clicked, this, &MainWindow::clearCompositeContour);
     connect(ctButton, &QPushButton::clicked, this, &MainWindow::showCompositeSlicesInCt);
+    connect(m_compositeEraseRadiusSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
+            [this](double value) {
+                showCompositeEraseBrush();
+                if (m_modelMatchView)
+                    m_modelMatchView->setScreenBrushRadiusMm(value);
+            });
     connect(m_compositeCalculateButton, &QPushButton::clicked, this, &MainWindow::calculateBlockComposite);
     connect(cancelBlock, &QPushButton::clicked, this, &MainWindow::cancelCompositeStage);
     connect(back, &QPushButton::clicked, this, &MainWindow::backToCompositeBlockStage);
@@ -167,6 +208,9 @@ QWidget* MainWindow::buildCompositeBlockPanel(QWidget* parent)
         connect(m_modelMatchView, &Mesh3DView::editablePointAdded, this, &MainWindow::onCompositeContourPointAdded);
         connect(m_modelMatchView, &Mesh3DView::editablePointMoved, this, &MainWindow::onCompositeContourPointMoved);
         connect(m_modelMatchView, &Mesh3DView::editablePointRemoved, this, &MainWindow::onCompositeContourPointRemoved);
+        connect(m_modelMatchView, &Mesh3DView::brushScreenMoved, this, &MainWindow::onCompositeScanScreenMoved);
+        connect(m_modelMatchView, &Mesh3DView::surfaceBrushFinished, this, &MainWindow::onCompositeScanBrushFinished);
+        connect(m_modelMatchView, &Mesh3DView::brushRadiusDragged, this, &MainWindow::onCompositeEraseRadiusDragged);
     }
     return m_compositeBlockPanel;
 }
@@ -181,6 +225,16 @@ bool MainWindow::compositePointsMethodActive() const
     return m_compositeMethodCombo && m_compositeMethodCombo->currentData().toInt() == kPointsMethod;
 }
 
+bool MainWindow::compositeGingivalMethodActive() const
+{
+    return m_compositeMethodCombo && m_compositeMethodCombo->currentData().toInt() == kGingivalMethod;
+}
+
+bool MainWindow::compositeArchMethodActive() const
+{
+    return !m_compositeMethodCombo || m_compositeMethodCombo->currentData().toInt() == kArchMethod;
+}
+
 CompositeCutBlock& MainWindow::compositeBlockForStep(int step)
 {
     return step == 0 ? m_upperCompositeBlock : m_lowerCompositeBlock;
@@ -189,6 +243,18 @@ CompositeCutBlock& MainWindow::compositeBlockForStep(int step)
 vtkSmartPointer<vtkPolyData> MainWindow::compositeDentalForStep(int step, QString* error) const
 {
     return step == 0 ? resolvedUpperArchWorldMesh(error) : resolvedLowerArchWorldMesh(error);
+}
+
+// The registered scan the composite will merge. Gingival mode shows and merges the boxed
+// cast; the imported STL and the mesh the eraser edits stay as they are.
+vtkSmartPointer<vtkPolyData> boxedCompositeScan(vtkPolyData* scan, int step)
+{
+    if (!scan)
+        return nullptr;
+    const CompositeJaw jaw = step == 0 ? CompositeJaw::Upper : CompositeJaw::Lower;
+    if (auto boxed = CompositeBlockCore::BoxScan(scan, jaw))
+        return boxed;
+    return scan;
 }
 
 // ── Stages ────────────────────────────────────────────────────────────────────
@@ -219,9 +285,18 @@ void MainWindow::startCompositeBlockStage(int step)
     }
     m_compositeStageStep = step;
     m_compositeReviewMesh = nullptr;
+    m_scanEraseUndo.clear();
+    m_scanEraseStrokeOpen = false;
+    m_scanErasePressing = false;
+    m_scanEraseHasHit = false;
     m_compositeStage = CompositeStage::Block;
     showCompositeStage();
-    statusBar()->showMessage(compositePointsMethodActive()
+    statusBar()->showMessage(compositeArchMethodActive()
+        ? tr("Marque tres puntos en la encía vestibular: posterior derecho, posterior izquierdo y anterior. "
+             "La línea roja rodea la arcada, por delante de los dientes. Siguiente quita los dientes del TAC y los reemplaza por el escaneo.")
+        : compositeGingivalMethodActive()
+        ? tr("Borre del escaneo lo que sobre y pulse Calcular compuesto. Une los dientes y un poco de encía.")
+        : compositePointsMethodActive()
         ? tr("Modelo compuesto: marque puntos sobre el escaneo rodeando toda la zona que reemplaza al TAC "
              "(clic: poner · arrastrar: mover · clic derecho: borrar) y pulse Calcular compuesto.")
         : tr("Modelo compuesto: ajuste el bloque azul para que cubra los dientes y pulse Calcular compuesto."));
@@ -237,6 +312,8 @@ void MainWindow::showCompositeStage()
     if (m_compositeButton)
         m_compositeButton->setVisible(!active);
     updateCompositeStagePanel();
+    if (m_modelMatchView && (m_compositeStage != CompositeStage::Block || !compositeGingivalMethodActive()))
+        m_modelMatchView->setSurfaceBrushMode(false);
     if (m_compositeStage == CompositeStage::Review)
         updateCompositeReviewDisplay();
     else if (active)
@@ -250,7 +327,10 @@ void MainWindow::updateCompositeStagePanel()
     if (!m_compositeBlockPanel || m_compositeStage == CompositeStage::None)
         return;
     const QString jaw = m_compositeStageStep == 0 ? tr("maxilar") : tr("mandibular");
-    const QString zone = compositePointsMethodActive() ? tr("Contorno") : tr("Bloque");
+    const QString zone = compositeArchMethodActive() ? tr("Tres puntos")
+                         : compositeGingivalMethodActive() ? tr("Dientes y encía")
+                         : compositePointsMethodActive() ? tr("Contorno")
+                                                         : tr("Bloque");
     const QString steps = m_compositeStage == CompositeStage::Review
         ? tr("Registrar ✓ · Ajuste fino ✓ · %1 ✓ · <b>Revisar</b>").arg(zone)
         : tr("Registrar ✓ · Ajuste fino ✓ · <b>%1</b> · Revisar").arg(zone);
@@ -261,26 +341,42 @@ void MainWindow::updateCompositeStagePanel()
     m_compositeBlockControls->setVisible(!review);
     m_compositeReviewControls->setVisible(review);
     m_compositeBlockControls->setEnabled(!computing);
+    const bool showErase = compositeGingivalMethodActive();
+    const bool archMethod = compositeArchMethodActive();
+    if (m_compositeStageLabel)
+        m_compositeStageLabel->setVisible(!(showErase && !review));
+    if (m_compositeLegacyControls)
+        m_compositeLegacyControls->setVisible(!showErase && !archMethod);
+    if (m_compositeEraseControls)
+        m_compositeEraseControls->setVisible(showErase && !review);
 
     const bool blockMethod = compositeBlockMethodActive();
     const CompositeCutBlock& block = compositeBlockForStep(m_compositeStageStep);
     const bool pointsMethod = compositePointsMethodActive();
+    const bool gingivalMethod = compositeGingivalMethodActive();
+    const bool arch = compositeArchMethodActive();
     for (QWidget* w : {static_cast<QWidget*>(m_compositeWidthSpin), static_cast<QWidget*>(m_compositeLengthSpin)})
         w->setEnabled(blockMethod);
     // Points method: the bone is replaced up to the line of the points, so thickness does not apply.
     m_compositeThicknessSpin->setEnabled(blockMethod);
-    m_compositeResetButton->setEnabled(blockMethod || pointsMethod);
-    m_compositeResetButton->setText(pointsMethod ? tr("Reiniciar contorno") : tr("Reiniciar bloque"));
-    m_compositeGizmoButton->setVisible(!pointsMethod);
-    m_compositeAcceptGizmoButton->setVisible(!pointsMethod);
+    m_compositeResetButton->setEnabled(blockMethod || pointsMethod || gingivalMethod || arch);
+    m_compositeResetButton->setText(pointsMethod || arch ? tr("Reiniciar puntos")
+                                     : gingivalMethod ? tr("Reiniciar")
+                                                      : tr("Reiniciar bloque"));
+    m_compositeGizmoButton->setVisible(blockMethod);
+    m_compositeAcceptGizmoButton->setVisible(blockMethod);
     m_compositeGizmoButton->setEnabled(blockMethod && !m_compositeBlockGizmoActive);
     m_compositeAcceptGizmoButton->setEnabled(blockMethod && m_compositeBlockGizmoActive);
     const auto& contour = m_compositeContours[static_cast<size_t>(std::clamp(m_compositeStageStep, 0, 1))];
-    const bool contourReady = !pointsMethod || static_cast<int>(contour.size()) >= CompositeBlockCore::MinContourPoints;
-    m_compositeClearPointsButton->setVisible(pointsMethod);
+    const bool contourReady = arch ? static_cast<int>(contour.size()) == 3
+                                   : gingivalMethod || !pointsMethod
+                                         || static_cast<int>(contour.size()) >= CompositeBlockCore::MinContourPoints;
+    m_compositeClearPointsButton->setVisible(pointsMethod || arch);
     m_compositeClearPointsButton->setEnabled(!contour.empty());
     m_compositeCalculateButton->setEnabled(!computing && contourReady);
     m_compositeCalculateButton->setText(computing ? tr("Calculando…")
+                                        : arch && !contourReady ? tr("Siguiente (%1/3 puntos)").arg(contour.size())
+                                        : arch ? tr("Siguiente")
                                         : contourReady ? tr("Calcular compuesto")
                                                        : tr("Calcular compuesto (%1/%2 puntos)")
                                                              .arg(contour.size()).arg(CompositeBlockCore::MinContourPoints));
@@ -306,9 +402,11 @@ void MainWindow::updateCompositeBlockDisplay()
         // Translucent so the block and the teeth it replaces stay visible.
         m_modelMatchView->setMeshOpacity(boneLabel, 0.45);
         // Contour points go on the scan, not on the bone behind it.
-        m_modelMatchView->setMeshPickable(boneLabel, !compositePointsMethodActive());
+        m_modelMatchView->setMeshPickable(boneLabel, compositeArchMethodActive() ||
+                                                          (!compositePointsMethodActive() && !compositeGingivalMethodActive()));
     }
-    if (const auto arch = step == 0 ? m_upperArchMesh : m_lowerArchMesh) {
+    if (const auto source = step == 0 ? m_upperArchMesh : m_lowerArchMesh) {
+        const auto arch = compositeGingivalMethodActive() ? boxedCompositeScan(source, step) : source;
         const int key = objectActorKey(archLabel);
         m_modelMatchView->addMesh(key, arch, tr("Escaneo registrado"));
         m_modelMatchView->setMeshColor(key, objectColorForLabel(archLabel));
@@ -320,11 +418,23 @@ void MainWindow::updateCompositeBlockDisplay()
         m_modelMatchView->setMeshOpacity(kCompositeBlockActorKey, 0.35);
         m_modelMatchView->setMeshPickable(kCompositeBlockActorKey, false);
     }
-    if (compositePointsMethodActive())
+    if (compositeArchMethodActive())
+        m_modelMatchView->setTitle(step == 0 ? tr("REEMPLAZAR DIENTES — MAXILAR") : tr("REEMPLAZAR DIENTES — MANDÍBULA"));
+    else if (compositeGingivalMethodActive())
+        m_modelMatchView->setTitle(step == 0 ? tr("DIENTES Y ENCÍA — MAXILAR") : tr("DIENTES Y ENCÍA — MANDÍBULA"));
+    else if (compositePointsMethodActive())
         m_modelMatchView->setTitle(step == 0 ? tr("CONTORNO POR PUNTOS — MAXILAR") : tr("CONTORNO POR PUNTOS — MANDÍBULA"));
     else
         m_modelMatchView->setTitle(step == 0 ? tr("BLOQUE DE CORTE — MAXILAR") : tr("BLOQUE DE CORTE — MANDÍBULA"));
     updateCompositeContourDisplay();
+    if (m_modelMatchView) {
+        const bool gingival = compositeGingivalMethodActive();
+        m_modelMatchView->setSurfaceBrushMode(gingival);
+        m_modelMatchView->setScreenBrush(gingival);
+        if (gingival && m_compositeEraseRadiusSpin)
+            m_modelMatchView->setScreenBrushRadiusMm(m_compositeEraseRadiusSpin->value());
+    }
+    showCompositeEraseBrush();
     m_modelMatchView->render();
 }
 
@@ -334,20 +444,56 @@ void MainWindow::updateCompositeContourDisplay()
 {
     if (!m_modelMatchView)
         return;
-    const bool active = m_compositeStage == CompositeStage::Block && compositePointsMethodActive();
+    const bool points = compositePointsMethodActive();
+    const bool arch = compositeArchMethodActive();
+    const bool active = m_compositeStage == CompositeStage::Block && (points || arch);
     const int step = std::clamp(m_compositeStageStep, 0, 1);
     const CompositeBlockCore::CompositeContour none;
     const auto& contour = active ? m_compositeContours[static_cast<size_t>(step)] : none;
-    m_modelMatchView->setEditablePoints(0, contour, kContourPointColor, 0.8);
+    const QColor pointColor = arch ? QColor(220, 30, 40) : kContourPointColor;
+    m_modelMatchView->setEditablePoints(0, contour, pointColor, 2.2);
     m_modelMatchView->setPointEditMode(active, active ? 0 : -1);
     const CompositeCutBlock& block = compositeBlockForStep(step);
-    if (active && block.valid && contour.size() >= 2) {
+    if (arch && block.valid && contour.size() == 3) {
+        const auto ribbon = CompositeBlockCore::ArchRibbon(meshForAnatomicLabel(step == 0 ? 5 : 6), block, contour);
+        if (ribbon && ribbon->GetNumberOfPolys() > 0) {
+            m_modelMatchView->addMesh(kCompositeContourActorKey, ribbon, tr("Zona de reemplazo"));
+            m_modelMatchView->setMeshColor(kCompositeContourActorKey, QColor(220, 30, 40));
+            m_modelMatchView->setMeshOpacity(kCompositeContourActorKey, 0.45);
+            m_modelMatchView->setMeshPickable(kCompositeContourActorKey, false);
+        } else {
+            m_modelMatchView->removeMesh(kCompositeContourActorKey);
+        }
+        std::vector<std::pair<std::array<double, 3>, QString>> labels;
+        for (const auto& p : contour)
+            labels.push_back({p, QString()});
+        if (labels.size() == 3) {
+            int anterior = 0;
+            for (int i = 1; i < 3; ++i)
+                if (labels[static_cast<size_t>(i)].first[1] < labels[static_cast<size_t>(anterior)].first[1])
+                    anterior = i;
+            const int right = labels[(anterior + 1) % 3].first[0] < labels[(anterior + 2) % 3].first[0]
+                                  ? (anterior + 1) % 3
+                                  : (anterior + 2) % 3;
+            const int left = 3 - anterior - right;
+            const QString side = step == 0 ? QStringLiteral("U") : QStringLiteral("L");
+            labels[static_cast<size_t>(right)].second = side + QStringLiteral("R");
+            labels[static_cast<size_t>(left)].second = side + QStringLiteral("L");
+            labels[static_cast<size_t>(anterior)].second = side + QStringLiteral("F");
+        }
+        m_modelMatchView->setOverlayLabels(kArchLabelKey, labels, QColor(255, 220, 40));
+        m_modelMatchView->removeOverlay(kCompositeContourOverlayKey);
+        m_modelMatchView->render();
+        return;
+    }
+    m_modelMatchView->setOverlayLabels(kArchLabelKey, {}, QColor());
+    if (points && block.valid && contour.size() >= 2) {
         m_modelMatchView->setOverlayPolyline(kCompositeContourOverlayKey, CompositeBlockCore::ContourPolyline(block, contour),
                                              kContourPointColor, 3.0);
     } else {
         m_modelMatchView->removeOverlay(kCompositeContourOverlayKey);
     }
-    if (active && block.valid && static_cast<int>(contour.size()) >= CompositeBlockCore::MinContourPoints) {
+    if (points && block.valid && static_cast<int>(contour.size()) >= CompositeBlockCore::MinContourPoints) {
         m_modelMatchView->addMesh(kCompositeContourActorKey, CompositeBlockCore::ContourWallMesh(block, contour),
                                   tr("Contorno del compuesto"));
         m_modelMatchView->setMeshColor(kCompositeContourActorKey, kContourPointColor);
@@ -359,22 +505,168 @@ void MainWindow::updateCompositeContourDisplay()
     m_modelMatchView->render();
 }
 
+void MainWindow::refreshCompositeScanMesh()
+{
+    if (!m_modelMatchView || m_compositeStage != CompositeStage::Block)
+        return;
+    const int step = m_compositeStageStep;
+    const int archLabel = step == 0 ? kUpperArchLabel : kLowerArchLabel;
+    const auto source = step == 0 ? m_upperArchMesh : m_lowerArchMesh;
+    if (!source)
+        return;
+    const auto arch = compositeGingivalMethodActive() ? boxedCompositeScan(source, step) : source;
+    const int key = objectActorKey(archLabel);
+    m_modelMatchView->addMesh(key, arch, tr("Escaneo registrado"));
+    m_modelMatchView->setMeshColor(key, objectColorForLabel(archLabel));
+    showCompositeEraseBrush();
+}
+
+void MainWindow::showCompositeEraseBrush()
+{
+    if (!m_modelMatchView)
+        return;
+    m_modelMatchView->removeMesh(kScanEraseBrushActorKey);
+    if (m_compositeStage != CompositeStage::Block || !compositeGingivalMethodActive()) {
+        m_modelMatchView->setSurfaceBrushMode(false);
+        m_modelMatchView->setScreenBrush(false);
+    }
+}
+
+void MainWindow::onCompositeScanScreenMoved(int x, int y, Qt::KeyboardModifiers modifiers)
+{
+    if (m_compositeStage != CompositeStage::Block || !compositeGingivalMethodActive() || modifiers.testFlag(Qt::AltModifier))
+        return;
+    // The circle is already at the cursor. Deletion runs after this event so the
+    // marker is not waiting on a projection of the scan.
+    m_scanErasePressing = true;
+    m_scanErasePending.append(QPoint(x, y));
+    if (m_scanEraseQueued)
+        return;
+    m_scanEraseQueued = true;
+    QTimer::singleShot(0, this, [this] { flushCompositeScanErase(); });
+}
+
+void MainWindow::flushCompositeScanErase()
+{
+    m_scanEraseQueued = false;
+    if (m_compositeStage != CompositeStage::Block || !compositeGingivalMethodActive() || !m_modelMatchView) {
+        m_scanErasePending.clear();
+        return;
+    }
+    const QVector<QPoint> samples = m_scanErasePending;
+    m_scanErasePending.clear();
+    if (samples.isEmpty())
+        return;
+    const int step = std::clamp(m_compositeStageStep, 0, 1);
+    auto& arch = step == 0 ? m_upperArchMesh : m_lowerArchMesh;
+    if (!arch || arch->GetNumberOfPolys() == 0)
+        return;
+    const double radiusMm = m_compositeEraseRadiusSpin ? m_compositeEraseRadiusSpin->value() : 4.0;
+    const double radiusPx = std::max(1.0, radiusMm * m_modelMatchView->widgetPixelsPerMm());
+    bool changed = false;
+    for (const QPoint& sample : samples) {
+        if (!arch || arch->GetNumberOfPoints() == 0)
+            break;
+        const vtkIdType n = arch->GetNumberOfPoints();
+        const vtkMTimeType meshTime = arch->GetMTime();
+        const vtkMTimeType cameraTime = m_modelMatchView->cameraMTime();
+        if (m_scanEraseCacheStep != step || m_scanEraseCacheMeshTime != meshTime
+            || m_scanEraseCacheCameraTime != cameraTime
+            || m_scanEraseDisplayX.size() != static_cast<int>(n)) {
+            m_scanEraseDisplayX.resize(static_cast<int>(n));
+            m_scanEraseDisplayY.resize(static_cast<int>(n));
+            for (vtkIdType i = 0; i < n; ++i) {
+                double world[3] = {};
+                arch->GetPoint(i, world);
+                double wx = 0.0;
+                double wy = 0.0;
+                if (!m_modelMatchView->projectToWidget(world, wx, wy)) {
+                    m_scanEraseDisplayX[static_cast<int>(i)] = std::numeric_limits<float>::quiet_NaN();
+                    m_scanEraseDisplayY[static_cast<int>(i)] = std::numeric_limits<float>::quiet_NaN();
+                    continue;
+                }
+                m_scanEraseDisplayX[static_cast<int>(i)] = static_cast<float>(wx);
+                m_scanEraseDisplayY[static_cast<int>(i)] = static_cast<float>(wy);
+            }
+            m_scanEraseCacheStep = step;
+            m_scanEraseCacheMeshTime = meshTime;
+            m_scanEraseCacheCameraTime = cameraTime;
+        }
+        const auto erased = ScanEraseCore::EraseScreen(arch, m_scanEraseDisplayX.constData(),
+                                                       m_scanEraseDisplayY.constData(), sample.x(), sample.y(),
+                                                       radiusPx);
+        if (!erased)
+            continue;
+        if (!m_scanEraseStrokeOpen) {
+            ScanEraseSnapshot snapshot;
+            snapshot.step = step;
+            snapshot.mesh = vtkSmartPointer<vtkPolyData>::New();
+            snapshot.mesh->DeepCopy(arch);
+            m_scanEraseUndo.append(snapshot);
+            while (m_scanEraseUndo.size() > 12)
+                m_scanEraseUndo.removeFirst();
+            m_scanEraseStrokeOpen = true;
+        }
+        arch = erased;
+        changed = true;
+        m_scanEraseCacheStep = -1;
+    }
+    if (changed) {
+        refreshCompositeScanMesh();
+        statusBar()->showMessage(tr("Borrador %1 mm. Ctrl+Z deshace el trazo.").arg(radiusMm, 0, 'f', 1));
+    }
+    if (!m_scanErasePending.isEmpty()) {
+        m_scanEraseQueued = true;
+        QTimer::singleShot(0, this, [this] { flushCompositeScanErase(); });
+    }
+}
+
+void MainWindow::onCompositeScanBrushFinished()
+{
+    m_scanEraseStrokeOpen = false;
+    m_scanErasePressing = false;
+    m_scanEraseHasHit = false;
+    showCompositeEraseBrush();
+}
+
+void MainWindow::onCompositeEraseRadiusDragged(double deltaY)
+{
+    if (!m_compositeEraseRadiusSpin || !compositeGingivalMethodActive())
+        return;
+    m_scanErasePressing = true;
+    m_compositeEraseRadiusSpin->setValue(m_compositeEraseRadiusSpin->value() - deltaY * 0.04);
+    if (m_modelMatchView)
+        m_modelMatchView->setScreenBrushRadiusMm(m_compositeEraseRadiusSpin->value());
+}
+
 void MainWindow::onCompositeContourPointAdded(int group, double x, double y, double z)
 {
-    if (group != 0 || m_compositeStage != CompositeStage::Block || !compositePointsMethodActive())
+    if (group != 0 || m_compositeStage != CompositeStage::Block
+        || (!compositePointsMethodActive() && !compositeArchMethodActive()))
         return;
     auto& contour = m_compositeContours[static_cast<size_t>(std::clamp(m_compositeStageStep, 0, 1))];
+    if (compositeArchMethodActive() && static_cast<int>(contour.size()) >= 3) {
+        statusBar()->showMessage(tr("Ya están los tres puntos. Arrastre uno para mover la línea, o pulse Siguiente."));
+        return;
+    }
     contour.push_back({x, y, z});
     updateCompositeContourDisplay();
     updateCompositeStagePanel();
-    statusBar()->showMessage(static_cast<int>(contour.size()) < CompositeBlockCore::MinContourPoints
-        ? tr("Contorno: %1 punto(s). Siga rodeando el escaneo.").arg(contour.size())
-        : tr("Contorno: %1 puntos. Siga rodeando o pulse Calcular compuesto.").arg(contour.size()));
+    if (compositeArchMethodActive()) {
+        statusBar()->showMessage(static_cast<int>(contour.size()) < 3
+            ? tr("Punto %1 de 3. Derecho, izquierdo y anterior.").arg(contour.size())
+            : tr("Línea roja lista. Siguiente quita los dientes del TAC de ese lado y los reemplaza por el escaneo."));
+    } else {
+        statusBar()->showMessage(static_cast<int>(contour.size()) < CompositeBlockCore::MinContourPoints
+            ? tr("Contorno: %1 punto(s). Siga rodeando el escaneo.").arg(contour.size())
+            : tr("Contorno: %1 puntos. Siga rodeando o pulse Calcular compuesto.").arg(contour.size()));
+    }
 }
 
 void MainWindow::onCompositeContourPointMoved(int group, int index, double x, double y, double z)
 {
-    if (group != 0 || m_compositeStage != CompositeStage::Block || !compositePointsMethodActive())
+    if (group != 0 || m_compositeStage != CompositeStage::Block
+        || (!compositePointsMethodActive() && !compositeArchMethodActive()))
         return;
     auto& contour = m_compositeContours[static_cast<size_t>(std::clamp(m_compositeStageStep, 0, 1))];
     if (index < 0 || index >= static_cast<int>(contour.size()))
@@ -385,7 +677,8 @@ void MainWindow::onCompositeContourPointMoved(int group, int index, double x, do
 
 void MainWindow::onCompositeContourPointRemoved(int group, int index)
 {
-    if (group != 0 || m_compositeStage != CompositeStage::Block || !compositePointsMethodActive())
+    if (group != 0 || m_compositeStage != CompositeStage::Block
+        || (!compositePointsMethodActive() && !compositeArchMethodActive()))
         return;
     auto& contour = m_compositeContours[static_cast<size_t>(std::clamp(m_compositeStageStep, 0, 1))];
     if (index < 0 || index >= static_cast<int>(contour.size()))
@@ -477,7 +770,7 @@ void MainWindow::resetCompositeBlock()
         if (m_modelMatchView && m_modelMatchView->hasGizmo())
             m_modelMatchView->stopGizmo();
     }
-    if (compositePointsMethodActive())
+    if (compositePointsMethodActive() || compositeArchMethodActive())
         m_compositeContours[static_cast<size_t>(std::clamp(m_compositeStageStep, 0, 1))].clear();
     compositeBlockForStep(m_compositeStageStep).valid = false;
     startCompositeBlockStage(m_compositeStageStep);
@@ -518,10 +811,20 @@ void MainWindow::calculateBlockComposite()
     bone->DeepCopy(boneSource);
     auto dental = vtkSmartPointer<vtkPolyData>::New();
     dental->DeepCopy(dentalSource);
+    const bool gingivalMethod = compositeGingivalMethodActive();
+    const bool archMethod = compositeArchMethodActive();
+    if (gingivalMethod) {
+        if (auto boxed = CompositeBlockCore::BoxScan(dental, step == 0 ? CompositeJaw::Upper : CompositeJaw::Lower))
+            dental = boxed;
+    }
     const CompositeCutBlock block = compositeBlockForStep(step);
     const bool blockMethod = compositeBlockMethodActive();
     const bool pointsMethod = compositePointsMethodActive();
     const CompositeBlockCore::CompositeContour contour = m_compositeContours[static_cast<size_t>(std::clamp(step, 0, 1))];
+    if (archMethod && static_cast<int>(contour.size()) != 3) {
+        statusBar()->showMessage(tr("Marque los tres puntos antes de seguir."));
+        return;
+    }
     if (pointsMethod && !CompositeBlockCore::ContourValid(block, contour, &error)) {
         statusBar()->showMessage(error);
         return;
@@ -543,7 +846,11 @@ void MainWindow::calculateBlockComposite()
         watcher->deleteLater();
         onBlockCompositeCalculated(step, result);
     });
-    watcher->setFuture(QtConcurrent::run([bone, dental, block, blockMethod, pointsMethod, contour, step]() {
+    watcher->setFuture(QtConcurrent::run([bone, dental, block, blockMethod, pointsMethod, gingivalMethod, archMethod, contour, step]() {
+        if (archMethod)
+            return CompositeBlockCore::CreateArchComposite(bone, dental, block, contour);
+        if (gingivalMethod)
+            return CompositeBlockCore::CreateGingivalComposite(bone, dental, block);
         if (pointsMethod)
             return CompositeBlockCore::CreateContourComposite(bone, dental, block, contour);
         if (blockMethod)

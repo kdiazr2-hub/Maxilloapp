@@ -6,6 +6,8 @@
 #include "CompositeModelCore.h"
 #include "CranioPalette.h"
 #include "LoggerCore.h"
+#include "OrientationCore.h"
+#include "OsteotomyWizardPanel.h"
 #include "NrrdVolumeExporter.h"
 #include "ProjectSerializer.h"
 #include "RegistrationResult.h"
@@ -801,6 +803,9 @@ void MainWindow::buildToolBar()
 
         const int idx = stack->count() - 1;
         connect(tab, &QToolButton::clicked, this, [this, stack, idx, title] {
+            // A module opened from fullscreen used to stay stretched over the window.
+            if (m_viewFullScreen)
+                exitViewFullScreen();
             if (title != tr("SEGMENTACION")) cancelBoneCavityFill();
             stack->setCurrentIndex(idx);
             const bool models     = title == tr("MODELOS");
@@ -6651,6 +6656,7 @@ void MainWindow::loadVolume(const QString& folderPath)
     m_upperArchPoints.clear();
     m_mandibleBonePoints.clear();
     m_lowerArchPoints.clear();
+    m_dentalPointUndo.clear();
     m_frankfurtPoints.clear();
     m_frankfurtCapturingIdx = -1;
     m_dentalPointSet = DentalPointSet::None;
@@ -8103,14 +8109,14 @@ void MainWindow::showSegmentationBackendInfo()
         this,
         tr("Backend de segmentacion"),
         tr("La segmentacion ya no depende de Slicer.exe.\n\n"
-           "Dental IA usa DentalSegmentator standalone con nnU-Net/PyTorch y los pesos "
-           "oficiales instalados en este equipo (sin conexion a internet).\n\n"
-           "Python debe tener SimpleITK, numpy, torch y nnunetv2. Puede definir "
+           "Primero TotalSegmentator separa el craneo y la mandibula. Despues DentalSegmentator "
+           "saca los dientes y el tejido blando. El canal mandibular no se segmenta.\n\n"
+           "Si la GPU llega a 80 grados la segmentacion se pausa, para que el equipo no se apague a 90.\n\n"
+           "Python debe tener SimpleITK, numpy, torch, nnunetv2 y TotalSegmentator. Puede definir "
            "DENTALSEGMENTATOR_PYTHON para seleccionar el Python de ese entorno, "
-           "DENTALSEGMENTATOR_MODEL_DIR para los pesos y DENTALSEGMENTATOR_DEVICE "
+           "DENTALSEGMENTATOR_MODEL_DIR para los pesos de DentalSegmentator y DENTALSEGMENTATOR_DEVICE "
            "como cuda o cpu.\n\n"
-           "Tejido blando sigue usando segmentacion local por HU porque DentalSegmentator "
-           "no entrega esa estructura."));
+           "Tejido blando sigue usando segmentacion local por HU."));
 }
 
 void MainWindow::startAISegmentation(SegmentationTarget target)
@@ -8249,7 +8255,7 @@ void MainWindow::onSegmentationFinished(const QString& outputSegmentationPath)
         QStringLiteral("bone/tissue"),
         outputSegmentationPath,
         true);
-    importUpperTeethSidecar(outputSegmentationPath); // the upper teeth apart, for the guide's root analysis
+    importUpperTeethSidecar(outputSegmentationPath); // upper and lower teeth, each on their own
 
     // ── Decide which labels to (re)generate meshes for ────────────────────
     const int pendingLabel = m_pendingAutoMeshLabel;
@@ -8275,7 +8281,7 @@ void MainWindow::onSegmentationFinished(const QString& outputSegmentationPath)
             : smoothingIterationsForPreset(MeshSmoothingPreset::Moderate);
         m_maskSmoothingIterations[currentLabel] = smoothingIterations;
         auto mesh = MeshGenerator::generateMesh(
-            m_segmentationLabelmap, currentLabel, true, smoothingIterations, &meshError);
+            m_segmentationLabelmap, currentLabel, true, smoothingIterations, &meshError, true, m_volume);
         if (!mesh) {
             statusBar()->showMessage(
                 tr("Malla %1: %2").arg(meshLabelName(currentLabel), meshError));
@@ -8520,13 +8526,14 @@ void MainWindow::fillBoneCavityAt(const std::array<double, 3>& point)
     progress.setMinimumDuration(0);
     QFutureWatcher<Candidate> watcher;
     connect(&watcher, &QFutureWatcher<Candidate>::finished, &progress, &QDialog::accept);
-    watcher.setFuture(QtConcurrent::run([input, label, point, iterations] {
+    const auto volume = m_volume;
+    watcher.setFuture(QtConcurrent::run([input, label, point, iterations, volume] {
         Candidate candidate;
         try {
             candidate.fill = fillEnclosedBoneCavity(input, label, point);
             if (candidate.fill.labelmap)
                 candidate.mesh = MeshGenerator::generateMesh(candidate.fill.labelmap, label, true,
-                                                              iterations, &candidate.fill.error);
+                                                              iterations, &candidate.fill.error, true, volume);
         } catch (const std::exception& e) {
             candidate.fill.error = QString::fromUtf8(e.what());
         }
@@ -8599,7 +8606,7 @@ void MainWindow::fillBoneCavityAt(const std::array<double, 3>& point)
     meshView->setMeshColor(label, maskColorForLabel(label));
     meshView->setStandardView(0);
     grid->addWidget(meshView, 1, 1);
-    const auto originalMesh = MeshGenerator::generateMesh(original, label, true, iterations, nullptr);
+    const auto originalMesh = MeshGenerator::generateMesh(original, label, true, iterations, nullptr, true, m_volume);
     connect(compare, &QCheckBox::toggled, &preview, [=](bool filled) {
         for (auto* view : views) {
             view->setSegmentationLabelmap(filled ? candidate.fill.labelmap : original);
@@ -8800,14 +8807,24 @@ void MainWindow::syncVisibilityPanelToAllViews()
             const bool visible = !visItem || visItem->checkState() == Qt::Checked;
             for (Mesh3DView* view : views) {
                 if (!view) continue;
-                view->setMeshVisible(actorKey, visible);
-                if (label > 0) {
-                    // A mask surface is hidden only while its object is shown in that view;
-                    // hiding the object shows the mask again instead of emptying the scene.
+                if (view == m_mesh3DView) {
+                    // The segmentation view keeps the mask and the object as two copies of the same
+                    // anatomy. Either checkbox hides both, so unchecking an object actually clears it.
                     const auto mask = maskVisible.find(label);
-                    view->setMeshVisible(label, mask != maskVisible.end()
-                        ? mask->second && !(visible && view->meshData(actorKey))
-                        : visible && !view->meshData(actorKey));
+                    const bool maskOn = mask == maskVisible.end() || mask->second;
+                    view->setMeshVisible(actorKey, visible && maskOn);
+                    if (label > 0)
+                        view->setMeshVisible(label, false);
+                } else {
+                    view->setMeshVisible(actorKey, visible);
+                    if (label > 0) {
+                        // A mask surface is hidden only while its object is shown in that view;
+                        // hiding the object shows the mask again instead of emptying the scene.
+                        const auto mask = maskVisible.find(label);
+                        view->setMeshVisible(label, mask != maskVisible.end()
+                            ? mask->second && !(visible && view->meshData(actorKey))
+                            : visible && !view->meshData(actorKey));
+                    }
                 }
                 if (idItem->data(kObjectOpacityRole).isValid()) {
                     const double opacity = idItem->data(kObjectOpacityRole).toDouble();
@@ -9287,7 +9304,7 @@ QString MainWindow::refreshEditedSegmentationMesh(int label)
     QString meshError;
     const int smoothingIterations = m_maskSmoothingIterations.value(label, 20);
     auto mesh = MeshGenerator::generateMesh(
-        m_segmentationLabelmap, label, true, smoothingIterations, &meshError);
+        m_segmentationLabelmap, label, true, smoothingIterations, &meshError, true, m_volume);
     publishSegmentationMesh(label, mesh);
     QString derivedNote;
     if (mesh) {
@@ -9390,6 +9407,81 @@ void MainWindow::undoLastEdit()
         }
     }
 
+    if (m_compositeStage == CompositeStage::Block && compositeGingivalMethodActive()
+        && m_viewModeStack && m_viewModeStack->currentIndex() == 1 && !m_scanEraseUndo.isEmpty()) {
+        const ScanEraseSnapshot snapshot = m_scanEraseUndo.takeLast();
+        auto& arch = snapshot.step == 0 ? m_upperArchMesh : m_lowerArchMesh;
+        arch = vtkSmartPointer<vtkPolyData>::New();
+        arch->DeepCopy(snapshot.mesh);
+        m_scanEraseStrokeOpen = false;
+        if (snapshot.step == m_compositeStageStep)
+            refreshCompositeScanMesh();
+        statusBar()->showMessage(tr("Ctrl+Z: último borrado del escaneo deshecho."));
+        return;
+    }
+    // The point just placed, whichever surface is waiting for the next one.
+    if (m_compositeStage == CompositeStage::Block && compositePointsMethodActive()
+        && m_viewModeStack && m_viewModeStack->currentIndex() == 1) {
+        auto& contour = m_compositeContours[static_cast<size_t>(std::clamp(m_compositeStageStep, 0, 1))];
+        if (!contour.empty()) {
+            contour.pop_back();
+            updateCompositeContourDisplay();
+            updateCompositeStagePanel();
+            statusBar()->showMessage(tr("Ctrl+Z: último punto del contorno eliminado."));
+            return;
+        }
+    }
+    if (m_airwayPointCaptureStep == 2) {
+        m_airwayPointCaptureStep = 1;
+        statusBar()->showMessage(tr("Ctrl+Z: punto de nasofaringe eliminado. Márquelo de nuevo."));
+        return;
+    }
+    if (m_activeMeasurementTool && m_activeMeasurementTool->undoPendingPoint()) {
+        refreshMeasurementOverlays();
+        statusBar()->showMessage(tr("Ctrl+Z: último punto de la medición eliminado."));
+        return;
+    }
+    if (m_viewModeStack && m_viewModeStack->currentIndex() == 2 && !m_frankfurtPoints.isEmpty()) {
+        const int removed = static_cast<int>(m_frankfurtPoints.size()) - 1;
+        m_frankfurtPoints.removeLast();
+        QAction* const pointActions[4] = {
+            m_frankfortPorionDAct, m_frankfortPorionIAct,
+            m_frankfortOrbitalDAct, m_frankfortOrbitalIAct
+        };
+        if (removed >= 0 && removed < 4 && pointActions[removed])
+            pointActions[removed]->setChecked(false);
+        m_frankfurtCapturingIdx = removed;
+        if (m_orientationView) {
+            m_orientationView->clearPointMarkers();
+            static const QColor kColors[4] = {Qt::red, Qt::blue, Qt::green, Qt::cyan};
+            for (int i = 0; i < static_cast<int>(m_frankfurtPoints.size()); ++i)
+                m_orientationView->addPointMarker(m_frankfurtPoints[i].x(), m_frankfurtPoints[i].y(),
+                                                  m_frankfurtPoints[i].z(), kColors[i]);
+            m_orientationView->setPointPickMode(true);
+            m_orientationView->setStandardView(removed == 0 ? 1 : removed == 1 ? 2 : 0);
+        }
+        updateFrankfurtPointStatus();
+        statusBar()->showMessage(tr("Ctrl+Z: último punto de Frankfort eliminado."));
+        return;
+    }
+    if (m_osteotomyWizard && m_osteotomyWizard->step() == OsteotomyWizardPanel::LandmarkStep) {
+        while (!m_osteotomyLandmarkUndo.isEmpty()) {
+            const int group = m_osteotomyLandmarkUndo.takeLast();
+            if (group < 0 || group >= static_cast<int>(m_ostWizard.landmarks.size())
+                || !m_ostWizard.landmarks[static_cast<size_t>(group)])
+                continue;
+            m_ostWizard.landmarks[static_cast<size_t>(group)].reset();
+            m_ostWizard.currentLandmark = group;
+            if (m_osteotomyView)
+                m_osteotomyView->setPointEditMode(true, group);
+            rebuildOsteotomyPlan();
+            updateOsteotomyLandmarkMarkers();
+            refreshOsteotomyWizard();
+            statusBar()->showMessage(tr("Ctrl+Z: último punto de osteotomía eliminado."));
+            return;
+        }
+    }
+
     // ── Priority 0: dental registration points ────────────────────────────
     auto pointsForSet = [this](DentalPointSet set) -> QVector<QVector3D>* {
         switch (set) {
@@ -9402,22 +9494,28 @@ void MainWindow::undoLastEdit()
         return nullptr;
     };
 
-    DentalPointSet undoSet = m_dentalPointSet;
-    if (undoSet == DentalPointSet::None && m_viewModeStack && m_viewModeStack->currentIndex() == 1) {
-        const int step = m_modelStepStack ? m_modelStepStack->currentIndex() : 0;
-        if (step == 1) {
-            if (!m_lowerArchPoints.isEmpty()) undoSet = DentalPointSet::LowerArch;
-            else if (!m_mandibleBonePoints.isEmpty()) undoSet = DentalPointSet::MandibleBone;
-        } else {
-            if (!m_upperArchPoints.isEmpty()) undoSet = DentalPointSet::UpperArch;
-            else if (!m_maxillaBonePoints.isEmpty()) undoSet = DentalPointSet::MaxillaBone;
+    const bool placingDental = m_dentalPointSet != DentalPointSet::None
+        || (m_viewModeStack && m_viewModeStack->currentIndex() == 1
+            && (!m_maxillaBonePoints.isEmpty() || !m_upperArchPoints.isEmpty()
+                || !m_mandibleBonePoints.isEmpty() || !m_lowerArchPoints.isEmpty()));
+    if (placingDental) {
+        if (m_dentalPointUndo.isEmpty()) {
+            const int step = m_modelStepStack ? m_modelStepStack->currentIndex() : 0;
+            if (step == 1) {
+                if (!m_lowerArchPoints.isEmpty()) m_dentalPointUndo.append(DentalPointSet::LowerArch);
+                else if (!m_mandibleBonePoints.isEmpty()) m_dentalPointUndo.append(DentalPointSet::MandibleBone);
+            } else {
+                if (!m_upperArchPoints.isEmpty()) m_dentalPointUndo.append(DentalPointSet::UpperArch);
+                else if (!m_maxillaBonePoints.isEmpty()) m_dentalPointUndo.append(DentalPointSet::MaxillaBone);
+            }
         }
-    }
-
-    if (undoSet != DentalPointSet::None) {
-        QVector<QVector3D>* pts = pointsForSet(undoSet);
-        if (pts && !pts->isEmpty()) {
+        while (!m_dentalPointUndo.isEmpty()) {
+            const DentalPointSet undoSet = m_dentalPointUndo.takeLast();
+            QVector<QVector3D>* pts = pointsForSet(undoSet);
+            if (!pts || pts->isEmpty())
+                continue;
             pts->removeLast();
+            setDentalPointCapture(undoSet);
             rebuildDentalPointMarkers();
             updateDentalPointStatus();
             updateButtonStates();
@@ -9441,7 +9539,7 @@ void MainWindow::undoLastEdit()
                 QString err;
                 const int smoothingIterations = m_maskSmoothingIterations.value(lbl, 20);
                 auto mesh = MeshGenerator::generateMesh(
-                    m_segmentationLabelmap, lbl, true, smoothingIterations, &err);
+                    m_segmentationLabelmap, lbl, true, smoothingIterations, &err, true, m_volume);
                 publishSegmentationMesh(lbl, mesh);
             }
         }
@@ -10110,7 +10208,7 @@ vtkSmartPointer<vtkPolyData> MainWindow::meshForAnatomicLabel(int label) const
     QString error;
     const int smoothingIterations = m_maskSmoothingIterations.value(label, 20);
     auto generated = MeshGenerator::generateMesh(
-        m_segmentationLabelmap, label, true, smoothingIterations, &error);
+        m_segmentationLabelmap, label, true, smoothingIterations, &error, true, m_volume);
     return generated;
 }
 
@@ -10299,6 +10397,7 @@ void MainWindow::onDentalPointPicked(int actorLabel, double x, double y, double 
     }
 
     target->append(QVector3D(static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)));
+    m_dentalPointUndo.append(m_dentalPointSet);
     if (m_mesh3DView) m_mesh3DView->addPointMarker(x, y, z, markerColor);
     if (maxillaActor && m_modelMaxillaView)
         m_modelMaxillaView->addPointMarker(x, y, z, markerColor);
@@ -10602,8 +10701,9 @@ void MainWindow::onOrientationGizmoUpdated(int meshLabel, vtkSmartPointer<vtkPol
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Computes the rotation that makes the Frankfurt plane horizontal (normal → Z+)
-// and applies it to both composite meshes in-place.
+// Levels both composite meshes onto the Frankfurt plane and yaws the porions
+// onto X. The plane math is OrientationCore::AlignFrankfurt; the pivot stays
+// here because it is the bounding-box center of the composite meshes.
 void MainWindow::alignFrankfurtPlane()
 {
     if (m_frankfurtPoints.size() < 4) {
@@ -10612,43 +10712,8 @@ void MainWindow::alignFrankfurtPlane()
         return;
     }
 
-    // Points: P0=PorionD, P1=PorionI, P2=OrbitalD, P3=OrbitalI
-    // Best-fit plane normal via Newell's method (polygon order: P0→P2→P3→P1)
-    // This gives a convex quadrilateral covering the Frankfurt plane.
-    const QVector3D pts[4] = {
-        m_frankfurtPoints[0],  // Porion D
-        m_frankfurtPoints[2],  // Orbital D  (right side together)
-        m_frankfurtPoints[3],  // Orbital I  (left side together)
-        m_frankfurtPoints[1],  // Porion I
-    };
-    QVector3D normal(0.0f, 0.0f, 0.0f);
-    for (int i = 0; i < 4; ++i) {
-        const QVector3D& curr = pts[i];
-        const QVector3D& next = pts[(i + 1) % 4];
-        normal += QVector3D(
-            (curr.y() - next.y()) * (curr.z() + next.z()),
-            (curr.z() - next.z()) * (curr.x() + next.x()),
-            (curr.x() - next.x()) * (curr.y() + next.y()));
-    }
-    normal.normalize();
-
-    // We want to align 'normal' with (0, 0, 1) — make the plane horizontal
-    const QVector3D target(0.0f, 0.0f, 1.0f);
-    const float cosA = QVector3D::dotProduct(normal, target);
-    const float angle = static_cast<float>(std::acos(std::clamp(static_cast<double>(cosA), -1.0, 1.0)));
-
-    // Rotation axis = normal × target
-    QVector3D axis = QVector3D::crossProduct(normal, target);
-    const float axisLen = axis.length();
-
-    if (axisLen < 1e-6f) {
-        axis = (cosA < 0.0f) ? QVector3D(1.0f, 0.0f, 0.0f)
-                             : QVector3D(0.0f, 0.0f, 1.0f);
-    } else {
-        axis.normalize();
-    }
-
-    // Compute the composite bounding-box center (pivot for rotation)
+    // Composite bounding-box center (pivot). Depends on the meshes, so it
+    // stays in MainWindow. Also used later for the plane disc radius.
     double bounds[6] = { 1e30, -1e30, 1e30, -1e30, 1e30, -1e30 };
     auto expandBounds = [&](vtkPolyData* pd) {
         if (!pd) return;
@@ -10664,12 +10729,28 @@ void MainWindow::alignFrankfurtPlane()
     const double cy = (bounds[2]+bounds[3])*0.5;
     const double cz = (bounds[4]+bounds[5])*0.5;
 
-    // Build VTK transform: RotateWXYZ(degrees, axis) around center
-    const float angleDeg = angle * 180.0f / static_cast<float>(M_PI);
+    // Stored order: [0] Porion D, [1] Porion I, [2] Orbital D, [3] Orbital I.
+    auto toPoint = [](const QVector3D& p) {
+        return std::array<double, 3>{ p.x(), p.y(), p.z() };
+    };
+    const OrientationCore::FrankfurtPoints points{
+        toPoint(m_frankfurtPoints[0]),
+        toPoint(m_frankfurtPoints[1]),
+        toPoint(m_frankfurtPoints[2]),
+        toPoint(m_frankfurtPoints[3]),
+    };
+    const OrientationCore::FrankfurtAlignment alignment =
+        OrientationCore::AlignFrankfurt(points, std::array<double, 3>{ cx, cy, cz });
+    if (!alignment.valid) {
+        QMessageBox::warning(this, tr("Plano de Frankfort"),
+            tr("No se pudo orientar: los cuatro puntos no definen un plano."));
+        return;
+    }
+
     auto t = vtkSmartPointer<vtkTransform>::New();
-    t->Translate( cx,  cy,  cz);
-    t->RotateWXYZ(angleDeg, axis.x(), axis.y(), axis.z());
-    t->Translate(-cx, -cy, -cz);
+    t->SetMatrix(alignment.level);
+    auto yawTransform = vtkSmartPointer<vtkTransform>::New();
+    yawTransform->SetMatrix(alignment.yaw);
 
     auto transformPoint = [](vtkTransform* tx, const QVector3D& pt) {
         double in[4]  = { pt.x(), pt.y(), pt.z(), 1.0 };
@@ -10679,29 +10760,6 @@ void MainWindow::alignFrankfurtPlane()
                          static_cast<float>(out[1]),
                          static_cast<float>(out[2]));
     };
-
-    QVector<QVector3D> leveledPoints = m_frankfurtPoints;
-    for (auto& pt : leveledPoints)
-        pt = transformPoint(t, pt);
-
-    QVector3D leftRight = leveledPoints[1] - leveledPoints[0]; // Porion I - Porion D
-    leftRight.setZ(0.0f);
-    double yawDeg = 0.0;
-    if (leftRight.length() >= 1e-6f) {
-        leftRight.normalize();
-        double yawRad = std::atan2(static_cast<double>(leftRight.y()),
-                                   static_cast<double>(leftRight.x()));
-        if (yawRad > M_PI * 0.5)
-            yawRad -= M_PI;
-        else if (yawRad < -M_PI * 0.5)
-            yawRad += M_PI;
-        yawDeg = -yawRad * 180.0 / M_PI;
-    }
-
-    auto yawTransform = vtkSmartPointer<vtkTransform>::New();
-    yawTransform->Translate( cx,  cy,  cz);
-    yawTransform->RotateZ(yawDeg);
-    yawTransform->Translate(-cx, -cy, -cz);
 
     // Apply to both composite meshes in-place
     auto applyTransform = [&](vtkSmartPointer<vtkPolyData>& mesh, vtkTransform* tx) {
@@ -10828,9 +10886,11 @@ void MainWindow::alignFrankfurtPlane()
 
     LoggerCore::instance().logCustom(QStringLiteral("FRANKFORT"),
         QStringLiteral("Alignment applied: level=%1 deg, yaw=%2 deg, axis=(%3,%4,%5)")
-            .arg(angleDeg, 0, 'f', 2)
-            .arg(yawDeg, 0, 'f', 2)
-            .arg(axis.x(), 0, 'f', 4).arg(axis.y(), 0, 'f', 4).arg(axis.z(), 0, 'f', 4));
+            .arg(alignment.levelDegrees, 0, 'f', 2)
+            .arg(alignment.yawDegrees, 0, 'f', 2)
+            .arg(alignment.levelAxis[0], 0, 'f', 4)
+            .arg(alignment.levelAxis[1], 0, 'f', 4)
+            .arg(alignment.levelAxis[2], 0, 'f', 4));
     statusBar()->showMessage(tr("Frankfort alineado. Ajuste linea media con el gizmo o guarde la orientacion."));
 }
 
@@ -13649,6 +13709,7 @@ void MainWindow::clearDentalRegistrationPoints()
     m_upperArchPoints.clear();
     m_mandibleBonePoints.clear();
     m_lowerArchPoints.clear();
+    m_dentalPointUndo.clear();
     m_dentalPointSet = DentalPointSet::None;
     if (m_mesh3DView) {
         m_mesh3DView->setPointPickMode(false);
@@ -14683,7 +14744,7 @@ void MainWindow::onBoneSplitFinished(const QString& outputPath)
         const int smoothingIterations = smoothingIterationsForPreset(MeshSmoothingPreset::Optimal);
         m_maskSmoothingIterations[label] = smoothingIterations;
         auto mesh = MeshGenerator::generateMesh(
-            m_segmentationLabelmap, label, true, smoothingIterations, &meshError);
+            m_segmentationLabelmap, label, true, smoothingIterations, &meshError, true, m_volume);
         if (mesh) {
             publishSegmentationMesh(label, mesh);
         } else if (!meshError.isEmpty()) {

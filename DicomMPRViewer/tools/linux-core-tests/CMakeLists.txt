@@ -64,4 +64,5 @@ add_core_test(ProjectSerializerTests tests/ProjectSerializerTests.cpp
     src/ProjectSerializer.cpp src/NrrdVolumeExporter.cpp src/SegmentationImporter.cpp
     src/SplintDesignCore.cpp src/SplintHeightmapGenerator.cpp
     src/GuidePlanCore.cpp src/PlateCore.cpp ${GUIDE_CORE})
+add_core_test(OrientationCoreTests tests/OrientationCoreTests.cpp src/OrientationCore.cpp)
 target_link_libraries(ProjectSerializerTests PRIVATE Qt6::Gui)

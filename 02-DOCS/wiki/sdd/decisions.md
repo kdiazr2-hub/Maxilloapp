@@ -160,3 +160,17 @@ Decision — each guide is the rounded convex hull of sleeves, screws, labels an
            5 mm clear; the surgeon picks the screw and the hole is its pilot drill (2.0 → 1.6). Foramen detection
            is manual: on segmented bone a foramen and a perforation of the sinus wall look alike.
 
+## 2026-10-18 — Plataforma modular: se consolida ortognática
+
+El usuario pidió evolucionar el producto a ortognática, oncología maxilofacial, trauma facial y anomalías craneofaciales, y delegó el orden. La auditoría (`plataforma/auditoria.md`) encontró un planificador de escritorio ya ortognático y cero código de las otras tres especialidades.
+
+- **Alcance.** Opciones: abrir las cuatro especialidades a la vez / especificar ya una nueva / consolidar ortognática primero.
+  **Elegido:** consolidar ortognática. No se implementa ni se redacta todavía oncología, trauma ni anomalías. La candidata siguiente, cuando se abra esa fase, es trauma facial, porque reutiliza transformaciones rígidas y colisión. Por qué: `MainWindow.cpp` ya concentra el producto; otra especialidad ahí agranda la regresión. Cefalometría queda fuera.
+- **Datos.** Opciones: archivo local / registro de pacientes / cuentas y red.
+  **Elegido:** `.maxilloproject` local, versión 1, claves opcionales. Sin ficha de paciente, sin login, sin historial de ediciones (esta última sigue como recomendación; el usuario confirmó archivo local, sin pacientes y sin login).
+- **Equipo.** **Elegido:** nueve subagentes en `.cursor/agents/`, invocados bajo demanda. No corren solos.
+- **Código legado.** Opciones: borrar el ribbon viejo de osteotomía y `SplintGenerator` / dejarlos ocultos y compilados.
+  **Elegido:** dejarlos. Por qué: ocultarlos ya saca el camino muerto de la interfaz; borrarlos es una limpieza distinta y fácil de mezclar con una regresión.
+
+Abiertas, no preguntadas en esa respuesta: cuándo cumplir el modo claro de la constitución §16 (recomendación: fase 3, sin rediseñar el ribbon) y si el proyecto guardará historial de ediciones (recomendación: no).
+

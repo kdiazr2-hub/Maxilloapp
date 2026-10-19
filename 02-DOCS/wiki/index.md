@@ -32,6 +32,16 @@ tags: [index]
 |------|--------|-------|
 | Guía de corte Le Fort I generada a partir del movimiento | PASS (re-run) | `sdd/analysis/guia-lefort-por-movimiento.md` |
 
+## plataforma
+
+| What | Where |
+|------|-------|
+| Auditoría 2026-10-18 (ortognática real; otras especialidades ausentes) | `plataforma/auditoria.md` |
+| Geometría que todavía calcula MainWindow | `plataforma/inventario-mainwindow.md` |
+| Orientación: plano de los cuatro puntos (disponible) | `plataforma/orientacion-frankfurt.md` |
+| Flujo del riel, Atrás, y cuándo cerrar el escaneo | `plataforma/flujo-ortognatica.md` |
+| Agentes del equipo (Cursor, `.cursor/agents/`) | citados en esa auditoría |
+
 ## harness
 
 | What | Where |

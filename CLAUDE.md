@@ -65,7 +65,9 @@ cmake --build build-linux-core --parallel && ctest --test-dir build-linux-core -
 ## Architecture
 
 - `MainWindow.cpp` (~12.7k lines) holds every workspace and the guided workflow:
-  MPR/segmentation → Modelos (STL arch registration, composites) → Orientación (Frankfurt plane)
+  MPR/segmentation → Modelos (STL arch registration, composites) → Orientación (Frankfurt plane;
+  `OrientationCore::AlignFrankfurt` levels the four marked points onto Z+ and yaws the porions onto X;
+  `MainWindow::alignFrankfurtPlane` still draws the disc)
   → Osteotomía (Le Fort I, BSSO, genioplasty) → Registro de mordida → Reposición → Férulas.
   Prefer putting new logic in separate core classes (like `TransformCore`, `SplintGenerator`) that tests can link without Qt widgets.
 - DICOM load: `AsyncDicomLoader` (worker thread) → `DicomSeriesIndexer` → `VolumeCacheManager` (.mha cache in `%LOCALAPPDATA%`) → `DicomVolumeLoader`.
