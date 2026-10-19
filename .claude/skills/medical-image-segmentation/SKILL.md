@@ -18,7 +18,12 @@ origin: maxilloapp
   - `fill_bone_interiors`: rellena **solo** cavidades cerradas en 3D, de radio ≤ 6 mm y sin ningún vóxel < −300 HU;
   - `thicken_thin_bone` y `bone_thickening_params`: el maxilar sella hasta 3,5 mm / −700 HU, la mandíbula 2,5 mm / −200 HU;
   - `cap_canal_openings`.
-- Pruebas: `DicomMPRViewer/tests/test_bone_segmentation.py` (`BoneInteriorTests`, `ThinBoneTests`, foramen mentoniano).
+- `fill_medullary_bone` (2026-10-19): sella los poros solo para la prueba, y rellena lo que la cortical encierra.
+  Desactivable con `DENTALSEGMENTATOR_MEDULLA_FILL=0`. Después corre `fill_bone_interiors`, más estricto.
+- `refine_coarse_bone_mask`: relee del TC el borde de una máscara gruesa, como la de TotalSegmentator a 1,5 mm.
+  Se activa con `DENTALSEGMENTATOR_REFINE_COARSE_BONE=1`.
+- Pruebas: `DicomMPRViewer/tests/test_bone_segmentation.py` (`BoneInteriorTests`, `ThinBoneTests`,
+  `MedullaryFillTests`, `CoarseMaskRefinementTests`, foramen mentoniano).
 - TotalSegmentator para maxilar y mandíbula: lo integró el usuario en su equipo y **no está en el repositorio**
   (a 2026-10-19). Antes de opinar sobre él, pedir el código o leerlo en su rama.
 

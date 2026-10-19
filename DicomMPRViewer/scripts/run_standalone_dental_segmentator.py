@@ -405,7 +405,7 @@ def bone_thickening_params(source_label):
 
 
 def thicken_thin_bone(mask, prediction, intensities, spacing_zyx, grow_mm=1.2, grow_hu=100.0,
-                      seal_mm=2.5, seal_min_hu=-200.0):
+                      seal_mm=2.5, seal_min_hu=-200.0, report=True):
     """Recover the thin walls DentalSegmentator under-segments and seal the pinholes they leave.
 
     The anterior maxilla and the sinus walls are often under a millimetre thick, so partial volume keeps them
@@ -471,8 +471,171 @@ def thicken_thin_bone(mask, prediction, intensities, spacing_zyx, grow_mm=1.2, g
                 if not np.any(sealed):
                     break
                 result[roi] |= sealed
-    added = int(np.count_nonzero(result & ~mask))
-    log(f"    [Hueso] Engrosado de paredes finas: {added} voxeles.")
+    if report:
+        log(f"    [Hueso] Engrosado de paredes finas: {int(np.count_nonzero(result & ~mask))} voxeles.")
+    return result
+
+
+def medulla_fill_params(source_label):
+    """`fill_medullary_bone` settings per bone, each overridable by environment variable.
+
+    The mandible's marrow can be fatty (down to about -100 HU in older patients) and its body and angle are far
+    wider than the 6 mm `fill_bone_interiors` allows, so it gets no size limit: its canal has its own label. The
+    upper label is the whole skull: there only cancellous density counts (>= 100 HU) and a cavity may not be
+    wider than marrow (`max_radius_mm`), so neither the sinus mucosa nor the brain is ever taken for bone."""
+    def env(name, default_value):
+        try:
+            return float(os.environ.get(name, str(default_value)).strip())
+        except Exception:
+            return default_value
+
+    if source_label == 1:
+        return {"seal_mm": env("DENTALSEGMENTATOR_MAXILLA_MEDULLA_SEAL_MM", 3.5),
+                "min_hu": env("DENTALSEGMENTATOR_MAXILLA_MEDULLA_MIN_HU", 100.0),
+                "max_radius_mm": env("DENTALSEGMENTATOR_MAXILLA_MEDULLA_MAX_RADIUS_MM", 8.0)}
+    return {"seal_mm": env("DENTALSEGMENTATOR_MEDULLA_SEAL_MM", 2.5),
+            "min_hu": env("DENTALSEGMENTATOR_MEDULLA_MIN_HU", -100.0),
+            "max_radius_mm": env("DENTALSEGMENTATOR_MEDULLA_MAX_RADIUS_MM", 0.0)}
+
+
+def fill_medullary_bone(mask, prediction, intensities, spacing_zyx, source_label, seal_mm=None, min_hu=None,
+                        max_radius_mm=None):
+    """Make the bone solid between its cortices (user's report, 2026-10-19: the medulla came out empty and the
+    osteotomies showed two shells with nothing between them).
+
+    `fill_bone_interiors` stays strict and is still run after this, but on a real jaw it leaves the marrow empty:
+    one pore in the cortex opens the cavity, one voxel under -300 HU rejects all of it, and the body and angle of
+    the mandible are wider than its 6 mm. Here:
+    - pores up to about 2 x `seal_mm` are sealed as `thicken_thin_bone` seals them (bone on both sides along two
+      grid axes), for this test only;
+    - what that sealed shell encloses is marrow, and so are the sealed pores next to it; anything open to the
+      outside — a groove, a notch, the edge of the scan — is not;
+    - only voxels the network left unlabelled, with finite intensity of at least `min_hu`, are added: air pockets
+      stay air, teeth, the canal and other labels keep theirs;
+    - a cavity wider than `max_radius_mm` (when > 0) is not marrow and is left as it is."""
+    import scipy.ndimage as ndi
+
+    if source_label not in (1, 2):
+        raise ValueError("El relleno medular solo admite maxilar y mandibula.")
+    if mask.shape != prediction.shape or mask.shape != intensities.shape:
+        raise ValueError("El hueso y la imagen deben compartir la misma cuadricula.")
+    params = medulla_fill_params(source_label)
+    seal_mm = params["seal_mm"] if seal_mm is None else seal_mm
+    min_hu = params["min_hu"] if min_hu is None else min_hu
+    max_radius_mm = params["max_radius_mm"] if max_radius_mm is None else max_radius_mm
+    name = "Maxilar" if source_label == 1 else "Mandibula"
+    # Teeth close the jaw's outline (as in fill_bone_interiors) but keep their own label.
+    enclosure = mask | (prediction == (3 if source_label == 1 else 4))
+    if not np.any(enclosure):
+        return mask
+    occupied = np.argwhere(enclosure)
+    pad = [int(np.ceil(seal_mm / max(1e-6, sp))) + 2 for sp in spacing_zyx]
+    lo = [max(0, int(occupied[:, a].min()) - pad[a]) for a in range(3)]
+    hi = [min(mask.shape[a], int(occupied[:, a].max()) + pad[a] + 1) for a in range(3)]
+    roi = tuple(slice(lo[a], hi[a]) for a in range(3))
+    bone = enclosure[roi]
+    # Seal the pores for this test only, as thicken_thin_bone seals them (a ball closing cannot: it passes
+    # through a hole in a wall one or two voxels thick). The scan's own edge counts as outside, so a bone the
+    # scan cuts open stays open (fill_bone_interiors' rule).
+    framed = np.pad(bone, 1)
+    if seal_mm > 0:
+        sealed = thicken_thin_bone(framed, np.zeros(framed.shape, dtype=np.uint8),
+                                   np.zeros(framed.shape, dtype=np.float32), spacing_zyx,
+                                   grow_mm=0.0, seal_mm=seal_mm, seal_min_hu=-1.0, report=False)
+    else:
+        sealed = framed
+    connectivity = np.ones((3, 3, 3), dtype=bool)
+    enclosed = ndi.binary_fill_holes(sealed, structure=connectivity)[1:-1, 1:-1, 1:-1]
+    sealed = sealed[1:-1, 1:-1, 1:-1]
+    holes = enclosed & ~sealed
+    if not np.any(holes):
+        log(f"    [Hueso - {name}] Relleno medular: sin interior cerrado.")
+        return mask
+    # The seal also took marrow next to the caps and corners, and the pores themselves: take every free voxel
+    # inside the sealed shell that is connected to the marrow, never through bone. A groove the seal closed on
+    # the outside is not connected to it, and stays out.
+    free = enclosed & ~bone
+    struct = ndi.generate_binary_structure(3, 1)
+    components, _ = ndi.label(free, structure=struct)
+    inner_ids = np.unique(components[holes & (components > 0)])
+    reach = np.isin(components, inner_ids) & (components > 0)
+    values = intensities[roi]
+    marrow = reach & (prediction[roi] == 0) & np.isfinite(values) & (values >= min_hu)
+    rejected = 0
+    if max_radius_mm and max_radius_mm > 0 and np.any(marrow):
+        labels, count = ndi.label(holes, structure=connectivity)
+        for cavity_id, region in enumerate(ndi.find_objects(labels), start=1):
+            if region is None:
+                continue
+            component = labels[region] == cavity_id
+            depth = ndi.distance_transform_edt(np.pad(component, 1), sampling=spacing_zyx)
+            if depth.max() > max_radius_mm:
+                # Too wide for marrow (a sinus, the cranial cavity): neither it nor its rim is filled.
+                marrow &= ~np.isin(components, np.unique(components[labels == cavity_id]))
+                rejected += 1
+    added = int(np.count_nonzero(marrow))
+    log(f"    [Hueso - {name}] Relleno medular: {added} voxeles (sellado {seal_mm:.1f} mm, >= {min_hu:.0f} HU"
+        + (f", {rejected} cavidad(es) demasiado anchas omitidas" if rejected else "") + ").")
+    if not added:
+        return mask
+    result = mask.copy()
+    result[roi] |= marrow
+    return result
+
+
+def refine_coarse_bone_mask(mask, prediction, intensities, spacing_zyx, band_mm=2.0, add_hu=250.0, remove_hu=100.0):
+    """Re-read a coarse bone mask's boundary from the CT at full resolution.
+
+    A network that predicts on a 1.5 mm grid (TotalSegmentator) hands its mask back on the CT's grid as 1.5 mm
+    blocks, and the mesh shows every block as a terrace (user's report, 2026-10-19). Within `band_mm` of the
+    mask's boundary only:
+    - unlabelled voxels of at least `add_hu`, connected to the mask, are added (the bone the blocks cut off);
+    - mask voxels under `remove_hu` reached from the outside through such voxels are removed (the soft tissue the
+      blocks took in). Carving only from the outside keeps a low-density marrow behind its cortex.
+    Other labels are never touched. Meant for coarse predictions: a native-resolution mask (DentalSegmentator)
+    does not need it, and on the thin maxillary walls, whose partial volume reads below `remove_hu`, it would
+    thin them."""
+    import scipy.ndimage as ndi
+
+    if mask.shape != prediction.shape or mask.shape != intensities.shape:
+        raise ValueError("El hueso y la imagen deben compartir la misma cuadricula.")
+    if not np.any(mask) or band_mm <= 0:
+        return mask
+    occupied = np.argwhere(mask)
+    pad = [int(np.ceil(band_mm / max(1e-6, sp))) + 2 for sp in spacing_zyx]
+    lo = [max(0, int(occupied[:, a].min()) - pad[a]) for a in range(3)]
+    hi = [min(mask.shape[a], int(occupied[:, a].max()) + pad[a] + 1) for a in range(3)]
+    roi = tuple(slice(lo[a], hi[a]) for a in range(3))
+    bone = mask[roi]
+    values = intensities[roi]
+    finite = np.isfinite(values)
+    free = (prediction[roi] == 0) & ~bone
+    struct = ndi.generate_binary_structure(3, 1)
+    outside_distance = ndi.distance_transform_edt(~bone, sampling=spacing_zyx)
+    inside_distance = ndi.distance_transform_edt(bone, sampling=spacing_zyx)
+
+    # Carve: soft tissue inside the outer band, reached from outside the mask.
+    soft = bone & (inside_distance <= band_mm) & finite & (values < remove_hu)
+    exterior = ~bone & ~(free & finite & (values >= add_hu))
+    labels, count = ndi.label(soft | exterior, structure=struct)
+    removed = np.zeros_like(bone)
+    if count:
+        outside_ids = np.unique(labels[exterior & (labels > 0)])
+        removed = soft & np.isin(labels, outside_ids)
+
+    # Add: dense free voxels in the outer band, connected to what remains of the mask.
+    kept = bone & ~removed
+    dense = free & finite & (values >= add_hu) & (outside_distance <= band_mm)
+    labels, count = ndi.label(dense | kept, structure=struct)
+    added = np.zeros_like(bone)
+    if count:
+        kept_ids = np.unique(labels[kept & (labels > 0)])
+        added = dense & np.isin(labels, kept_ids)
+
+    log(f"    [Hueso] Borde refinado con el TC: +{int(np.count_nonzero(added))} / "
+        f"-{int(np.count_nonzero(removed))} voxeles (banda {band_mm:.1f} mm).")
+    result = mask.copy()
+    result[roi] = kept | added
     return result
 
 
@@ -595,9 +758,15 @@ def remap_prediction(input_path, prediction_path, output_path, target, seed=None
         if label_value in (1, 2):
             image, intensities = source_image()
 
-            mask = thicken_thin_bone(mask, arr, intensities, image.GetSpacing()[::-1],
-                                     **bone_thickening_params(label_value))
-            mask = fill_bone_interiors(mask, arr, intensities, image.GetSpacing()[::-1], label_value)
+            spacing_zyx = image.GetSpacing()[::-1]
+            # A mask predicted on a coarser grid (TotalSegmentator, 1.5 mm) is re-read from the CT near its
+            # boundary first; off by default because DentalSegmentator's masks are already at full resolution.
+            if os.environ.get("DENTALSEGMENTATOR_REFINE_COARSE_BONE", "0").strip() == "1":
+                mask = refine_coarse_bone_mask(mask, arr, intensities, spacing_zyx)
+            mask = thicken_thin_bone(mask, arr, intensities, spacing_zyx, **bone_thickening_params(label_value))
+            if os.environ.get("DENTALSEGMENTATOR_MEDULLA_FILL", "1").strip() != "0":
+                mask = fill_medullary_bone(mask, arr, intensities, spacing_zyx, label_value)
+            mask = fill_bone_interiors(mask, arr, intensities, spacing_zyx, label_value)
         return mask
 
     target = target.lower()

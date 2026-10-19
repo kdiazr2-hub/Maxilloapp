@@ -224,6 +224,150 @@ class ThinBoneTests(unittest.TestCase):
         self.assertFalse(np.any(result[labels == 3]) or result[10, 9, 9], "another label was taken as bone")
 
 
+def mandible_body(shape=(120, 40, 36), spacing=(0.5, 0.5, 0.5)):
+    """A closed 5 x 1.6 x 1.2 cm body of cortex (1 mm) round a medulla of cancellous bone, as the network leaves a
+    jaw: pores in the cortex, partial-volume voxels under -300 HU in the marrow, and a medulla far wider than the
+    6 mm `fill_bone_interiors` accepts. Soft tissue round it."""
+    labels = np.zeros(shape, dtype=np.uint8)
+    hu = np.full(shape, 40.0, dtype=np.float32)
+    outer = (slice(10, 110), slice(4, 36), slice(6, 30))
+    inner = (slice(12, 108), slice(6, 34), slice(8, 28))  # 4.8 x 1.4 x 1.0 cm of marrow
+    labels[outer] = 2
+    hu[outer] = 1200.0
+    labels[inner] = 0
+    hu[inner] = 300.0
+    for z in (30, 60, 90):                                 # three 2 mm pores through the cortex
+        labels[z:z + 4, 4:6, 16:20] = 0
+        hu[z:z + 4, 4:6, 16:20] = 40.0
+    hu[50, 20, 18] = -350.0                                # one noisy voxel in the marrow
+    medulla = np.zeros(shape, dtype=bool)
+    medulla[inner] = True
+    medulla &= hu >= -300
+    outside = np.ones(shape, dtype=bool)
+    outside[outer] = False
+    return labels, hu, medulla, outside, spacing
+
+
+class MedullaryFillTests(unittest.TestCase):
+    """The medulla between the cortices is bone (user's report, 2026-10-19: "no sale el relleno en la medular,
+    al hacer las osteotomías no necesito que se vea eso vacío")."""
+
+    def fill(self, labels, hu, spacing, source_label=2, **params):
+        before = labels.copy()
+        mask = labels == source_label
+        result = segmentator.fill_medullary_bone(mask, labels, hu, spacing, source_label, **params)
+        np.testing.assert_array_equal(labels, before)
+        return result, mask
+
+    def test_a_porous_wide_medulla_is_filled(self):
+        labels, hu, medulla, outside, spacing = mandible_body()
+        strict = segmentator.fill_bone_interiors(labels == 2, labels, hu, spacing, 2)
+        self.assertEqual(int(np.count_nonzero(strict & medulla)), 0,
+                         "the fixture should defeat the closed-cavity fill, as the real jaw did")
+        result, _ = self.fill(labels, hu, spacing)
+        self.assertGreaterEqual(np.count_nonzero(result & medulla) / np.count_nonzero(medulla), 0.98)
+        self.assertEqual(int(np.count_nonzero(result & outside)), 0, "the fill grew outside the cortex")
+        self.assertFalse(result[50, 20, 18], "an air voxel became bone")
+
+    def test_an_outer_groove_stays_open(self):
+        # Two walls 4 mm apart on a floor: soft tissue in the groove has bone on two sides, but it opens to
+        # the outside, so it is not marrow.
+        shape, spacing = (60, 40, 40), (0.5, 0.5, 0.5)
+        labels = np.zeros(shape, dtype=np.uint8)
+        hu = np.full(shape, 40.0, dtype=np.float32)
+        labels[:, 5:30, 8:12] = 2
+        labels[:, 5:30, 20:24] = 2
+        labels[:, 5:9, 8:24] = 2
+        hu[labels == 2] = 1200.0
+        result, mask = self.fill(labels, hu, spacing)
+        self.assertEqual(int(np.count_nonzero(result & ~mask)), 0, "a groove open to the outside was filled")
+
+    def test_a_bone_the_scan_cuts_open_stays_open(self):
+        labels, hu, medulla, outside, spacing = mandible_body()
+        labels, hu, medulla = labels[20:], hu[20:], medulla[20:]   # the scan starts inside the bone
+        result, mask = self.fill(labels, hu, spacing)
+        self.assertEqual(int(np.count_nonzero(result & ~mask)), 0, "a cavity open at the scan's edge was filled")
+
+    def test_protected_labels_are_not_replaced(self):
+        labels, hu, medulla, outside, spacing = mandible_body()
+        labels[40:80, 18:20, 16:18] = 5      # the canal runs through the medulla
+        result, _ = self.fill(labels, hu, spacing)
+        self.assertFalse(np.any(result[40:80, 18:20, 16:18]), "the canal was taken")
+
+    def test_the_maxilla_needs_cancellous_density_and_marrow_size(self):
+        labels, hu, medulla, outside, spacing = mandible_body()
+        labels[labels == 2] = 1
+        hu[medulla] = 40.0                   # mucosa-like, not cancellous bone
+        result, mask = self.fill(labels, hu, spacing, source_label=1)
+        self.assertEqual(int(np.count_nonzero(result & ~mask)), 0, "soft tissue in the maxilla was filled")
+        hu[medulla] = 300.0
+        result, _ = self.fill(labels, hu, spacing, source_label=1, max_radius_mm=4.0)
+        self.assertEqual(int(np.count_nonzero(result & ~mask)), 0, "a cavity wider than marrow was filled")
+        result, _ = self.fill(labels, hu, spacing, source_label=1)
+        self.assertGreaterEqual(np.count_nonzero(result & medulla) / np.count_nonzero(medulla), 0.98)
+
+    def test_millimetres_not_voxels(self):
+        # The same body on a grid twice as fine fills the same way.
+        labels, hu, medulla, outside, spacing = mandible_body()
+        fine = lambda a: np.repeat(np.repeat(np.repeat(a, 2, 0), 2, 1), 2, 2)
+        result, _ = self.fill(fine(labels), fine(hu), (0.25, 0.25, 0.25))
+        self.assertGreaterEqual(np.count_nonzero(result & fine(medulla)) / np.count_nonzero(fine(medulla)), 0.98)
+        self.assertEqual(int(np.count_nonzero(result & fine(outside))), 0)
+
+
+def coarse_sphere(block_mm=1.5, spacing=(0.4, 0.4, 0.4), shape=(60, 60, 60), radius=8.0):
+    z, y, x = np.indices(shape).astype(np.float32)
+    centre = [0.5 * (n - 1) for n in shape]
+    true = ((z - centre[0]) * spacing[0]) ** 2 + ((y - centre[1]) * spacing[1]) ** 2 + \
+           ((x - centre[2]) * spacing[2]) ** 2 <= radius ** 2
+
+    def snap(i, axis):
+        v = (i - centre[axis]) * spacing[axis]
+        return (np.floor(v / block_mm) + 0.5) * block_mm
+
+    coarse = snap(z, 0) ** 2 + snap(y, 1) ** 2 + snap(x, 2) ** 2 <= radius ** 2
+    hu = np.where(true, 1000.0, 40.0).astype(np.float32)
+    return true, coarse, hu, spacing
+
+
+class CoarseMaskRefinementTests(unittest.TestCase):
+    """A bone mask predicted on a 1.5 mm grid (TotalSegmentator) and brought back on the CT's grid is made of
+    blocks, and the mesh shows them as terraces (user's report, 2026-10-19: "sale muy rugosa"). Near its
+    boundary the bone is re-read from the CT at full resolution."""
+
+    def test_the_blocks_follow_the_bone_again(self):
+        true, coarse, hu, spacing = coarse_sphere()
+        labels = np.zeros(true.shape, dtype=np.uint8)
+        refined = segmentator.refine_coarse_bone_mask(coarse, labels, hu, spacing)
+        before = np.count_nonzero(coarse ^ true)
+        after = np.count_nonzero(refined ^ true)
+        self.assertLess(after, 0.1 * before, f"{after} voxels still off the bone (were {before})")
+
+    def test_only_near_the_boundary(self):
+        true, coarse, hu, spacing = coarse_sphere()
+        hu[:, :, :6] = 1000.0                # other dense bone 4 mm off the sphere, not part of it
+        labels = np.zeros(true.shape, dtype=np.uint8)
+        refined = segmentator.refine_coarse_bone_mask(coarse, labels, hu, spacing)
+        self.assertFalse(np.any(refined[:, :, :6]), "the refinement reached bone far from the mask")
+
+    def test_the_medulla_behind_the_cortex_is_kept(self):
+        true, coarse, hu, spacing = coarse_sphere(radius=9.0)
+        z, y, x = np.indices(true.shape)
+        c = 29.5
+        inner = ((z - c) ** 2 + (y - c) ** 2 + (x - c) ** 2) * spacing[0] ** 2 <= 7.0 ** 2
+        hu[inner] = 20.0                     # fatty marrow, low density, behind a 2 mm cortex
+        labels = np.zeros(true.shape, dtype=np.uint8)
+        refined = segmentator.refine_coarse_bone_mask(coarse, labels, hu, spacing)
+        self.assertTrue(np.all(refined[inner & coarse]), "the refinement carved the medulla")
+
+    def test_other_labels_are_untouched(self):
+        true, coarse, hu, spacing = coarse_sphere()
+        labels = np.zeros(true.shape, dtype=np.uint8)
+        labels[true & ~coarse] = 3           # teeth where the blocks fell short
+        refined = segmentator.refine_coarse_bone_mask(coarse, labels, hu, spacing)
+        self.assertFalse(np.any(refined & (labels == 3)), "a tooth became bone")
+
+
 class BoneRemapTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

@@ -70,10 +70,25 @@ cmake --build build-linux-core --parallel && ctest --test-dir build-linux-core -
   Prefer putting new logic in separate core classes (like `TransformCore`, `SplintGenerator`) that tests can link without Qt widgets.
 - DICOM load: `AsyncDicomLoader` (worker thread) → `DicomSeriesIndexer` → `VolumeCacheManager` (.mha cache in `%LOCALAPPDATA%`) → `DicomVolumeLoader`.
 - `MPRView` (2D reslice views), `Mesh3DView` (3D scenes, gizmos, picking).
-- `MeshGenerator::generateMesh`: bone labels with ≥ 25 smoothing iterations are Gaussian-blurred before
-  marching cubes; every voxel of the label is floored at 0.55 so a one-voxel wall can never blur under the 0.5
-  contour (it used to, and thin maxillary/orbital walls came out as holes — user's report, 2026-10-05).
+- `MeshGenerator::generateMesh`: bone labels with ≥ 25 smoothing iterations are contoured from a smooth field
+  (`smoothBoneField`): the label's signed distance in mm, cropped to its bounding box, Gaussian-blurred in mm
+  (σ 0.6 / 0.8 / 1.0 mm at 25 / 40 / 70 iterations), refined to near-isotropic voxels by linear interpolation on
+  thick slices, then marching cubes at 0. Only the medial voxels of thin parts (a ridge of the inside distance
+  ≤ 1.5 mm) are forced inside, so a one-voxel wall never vanishes (user's report, 2026-10-05) while block corners
+  round off; the old 0.55 floor on every voxel kept every block (user's report, 2026-10-19: "sale muy rugosa").
+  `MeshGeneratorTests` "thick slices": sphere wobble 0.104 → 0.055 mm at 2.5 mm slices. A mask in 1.5 mm blocks
+  (TotalSegmentator) cannot be smoothed round without losing anatomy: it is re-read from the CT with
+  `refine_coarse_bone_mask` in the segmentation script (below).
 - AI segmentation: `StandaloneDentalSegmentatorService` launches `scripts/run_standalone_dental_segmentator.py` (nnU-Net DentalSegmentator, weights in `%LOCALAPPDATA%/DicomMPRViewer/DentalSegmentator/ML`).
+  Bone post-processing per jaw (`conservative_mask`): optional `refine_coarse_bone_mask` (env
+  `DENTALSEGMENTATOR_REFINE_COARSE_BONE=1`; for coarse predictions such as TotalSegmentator's: within 2 mm of the
+  boundary adds connected voxels ≥ 250 HU and carves from the outside voxels < 100 HU, never other labels) →
+  `thicken_thin_bone` → `fill_medullary_bone` (env `DENTALSEGMENTATOR_MEDULLA_FILL=0` disables it; pores sealed
+  as thicken seals them, only for the test; what the sealed shell encloses and its sealed pores become bone if
+  unlabelled and ≥ min HU — mandible −100 HU, no size limit; maxilla/skull 100 HU and ≤ 8 mm radius, so neither
+  sinus mucosa nor brain; open to the outside or to the scan's edge stays open; user's report 2026-10-19: "no sale
+  el relleno en la medular") → the stricter `fill_bone_interiors`. The TotalSegmentator integration lives on the
+  user's PC, not in the repo (2026-10-19).
 - `ProjectSerializer` saves/loads `.maxilloproject` files; new keys must stay optional so older projects load.
 - Splints: `SplintHeightmapGenerator` (height-map splint, Prepare/Build), `SplintDesignCore` (named designs, JSON),
   `SplintContourEditCore`, `SplintPreviewScheduler` (background preview); UI in `SplintDesignPanel` and
