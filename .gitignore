@@ -3,6 +3,7 @@
 
 # CMake / MSBuild output
 build/
+build-laptop/
 out/
 CMakeUserPresets.json
 .vs/

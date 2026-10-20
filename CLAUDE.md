@@ -42,7 +42,11 @@ Qt, VTK and GDCM DLLs are deployed in `build/Release`. Scripts in `scripts/` are
 Machines: a PC with VS 18 Insiders; the laptop (`C:\MaxilloApp`, VS 2022 Build Tools, hybrid Intel UHD + RTX 3050:
 `RepositionWorkspaceTests` fails on the Intel GPU with "Foreground opacity was not blended" and passes once
 Windows → Pantalla → Gráficos sets its exe to «Alto rendimiento»; run render tests on the discrete GPU); and
-`C:\Users\Kevin\Documents\MaxilloApp`, which has no toolchain and can only run already-built binaries. Its
+`C:\Users\Kevin\Documents\MaxilloApp`, which builds since 2026-10-20: VS 2022 Build Tools (cmake not on PATH),
+Qt 6.11.0 in `C:\Qt\6.11.0\msvc2022_64` unpacked from download.qt.io (aqtinstall 3.3 does not know 6.11's repository
+layout), VTK 9.5.2 built in `C:\VTK\build` with Qt, GDCM from `C:\vcpkg`; same configure line plus
+`SEGMENTATION_TEST_PYTHON` = the `dentalgpu` python; after a fresh build run `windeployqt` and copy
+`C:\VTK\build\bin\Release\*.dll` next to the exe. Its old laptop-configured tree is `DicomMPRViewer\build-laptop`. Its
 `dentalgpu` env (Miniforge, Python 3.11) has torch 2.11.0+cu128 for its RTX 5050 (Blackwell, sm_120); installing
 nnunetv2 pulls a newer torchvision that swaps torch for a CPU-only build, so reinstall torch and torchvision
 together from the cu128 index afterwards.
@@ -60,7 +64,9 @@ Tests (CTest):
 - `RepositionWorkspaceTests`, `SplintWorkspaceTests` instantiate `MainWindow` (declared `friend`), render offscreen
   and write PNGs to `build/workspace-test-artifacts`; `SplintWorkspaceTests` also covers the composite block flow
   and the osteotomy wizard. `Mesh3DViewInteractionTests` drives `Mesh3DView` with synthetic mouse events. All three
-  need a GPU and are not in CI.
+  need a GPU and are not in CI. They already failed at 135b30c and still do: `RepositionWorkspaceTests` "Hiding the
+  objects left their masks hidden in 3D", `SplintWorkspaceTests` "teeth and gingiva are not the default composite
+  method".
 - `BoneSegmentationPythonTests` — `tests/test_bone_segmentation.py`, runs with `DENTALSEGMENTATOR_PYTHON`
   (conda env `dentalgpu`); needs only numpy, scipy and SimpleITK.
 
