@@ -30,8 +30,9 @@ FOLDS = "0"
 
 # DentalSegmentator model labels:
 #   1 Maxilla & Upper Skull, 2 Mandible, 3 Upper Teeth, 4 Lower Teeth, 5 Mandibular canal
-# Bone (1 and 2) is replaced by TotalSegmentator, which runs first. Teeth (3, 4) stay
-# DentalSegmentator. The canal (5) is not a result: those voxels become mandible.
+# Bone (1 and 2) comes from DentalSegmentator (user's decision, 2026-10-19: TotalSegmentator's skull looked wrong
+# from below). DENTALSEGMENTATOR_BONE_SOURCE=totalsegmentator replaces it with TotalSegmentator, which then runs
+# first. The canal (5) is not a result: those voxels become mandible.
 # App labels:
 #   5 Maxilar + dientes superiores, 6 Mandibula + dientes inferiores, 2 Tejido blando
 APP_LABEL_MAP = {1: 5, 2: 6, 3: 5, 4: 6, 5: 6}
@@ -711,6 +712,199 @@ def fill_medullary_bone(mask, prediction, intensities, spacing_zyx, source_label
     return result
 
 
+def solid_bone_mask(mask, prediction, intensities, spacing_zyx, source_label, air_hu=-300.0, max_radius_mm=8.0,
+                    reach_mm=15.0, max_escapes=3, air_margin_mm=2.0):
+    """The bone as a solid: cortex and marrow, whatever the marrow's density (user's request, 2026-10-19:
+    "rellena todo dentro de las corticales ... no rellenar las orbitas ni la nariz").
+
+    - Closed cavities: what the bone encloses in 3D is filled, if no wider than `max_radius_mm`.
+    - Enclosed marrow: a free voxel is marrow when, of the 26 grid directions, at most `max_escapes` reach
+      `reach_mm` without meeting this bone (teeth and the canal count as its walls). The cortex has to surround
+      it on every side; the fill stops where a foramen or an opening lets more directions out, and the orbits,
+      the cranial cavity and the pharynx are far too open. A tube of marrow along the mandibular body loses only
+      the two or three directions along its axis.
+    - Never air (< `air_hu`), never within `air_margin_mm` of air: the mucosa of the nasal cavity and the sinuses
+      lines air, and the nose's meatuses are tubes the rule above would otherwise call enclosed.
+    No lower HU limit otherwise: fatty marrow reads below 0 HU, in CBCT lower still. Teeth, the canal and every
+    other label keep their voxels. A pit narrower than `reach_mm` in the surface counts as enclosed, as a
+    closing would."""
+    import scipy.ndimage as ndi
+
+    if source_label not in (1, 2):
+        raise ValueError("El hueso solido solo admite maxilar y mandibula.")
+    if mask.shape != prediction.shape or mask.shape != intensities.shape:
+        raise ValueError("El hueso y la imagen deben compartir la misma cuadricula.")
+    name = "Maxilar" if source_label == 1 else "Mandibula"
+    if not np.any(mask):
+        return mask
+    walls = mask | (prediction == (3 if source_label == 1 else 4))
+    if source_label == 2:
+        walls |= prediction == 5
+    pad = [int(np.ceil(reach_mm / max(1e-6, sp))) + 2 for sp in spacing_zyx]
+    occupied = np.argwhere(walls)
+    lo = [max(0, int(occupied[:, a].min()) - pad[a]) for a in range(3)]
+    hi = [min(mask.shape[a], int(occupied[:, a].max()) + pad[a] + 1) for a in range(3)]
+    roi = tuple(slice(lo[a], hi[a]) for a in range(3))
+    bone = mask[roi]
+    wall = walls[roi]
+    values = intensities[roi]
+    finite = np.isfinite(values)
+    air = ~finite | (values < air_hu)
+    free = (prediction[roi] == 0) & ~bone & ~air
+
+    def narrow(holes, sampling):
+        labels, count = ndi.label(holes)
+        if not count:
+            return holes
+        depth = ndi.distance_transform_edt(holes, sampling=sampling)
+        widest = ndi.maximum(depth, labels, index=np.arange(1, count + 1))
+        keep = np.zeros(count + 1, dtype=bool)
+        keep[1:] = np.asarray(widest) <= max_radius_mm
+        return keep[labels]
+
+    # Closed cavities (the scan's edge is outside: a bone the scan cuts open stays open there).
+    enclosure = np.pad(wall, 1)
+    holes = (ndi.binary_fill_holes(enclosure) & ~enclosure)[1:-1, 1:-1, 1:-1]
+    cavities = narrow(holes, spacing_zyx) & free
+    wall = wall | cavities
+
+    # Enclosed marrow: count, for every voxel, the directions that meet the wall within reach.
+    candidates = free & ~cavities
+    if air_margin_mm > 0 and np.any(air):
+        candidates &= ndi.distance_transform_edt(~air, sampling=spacing_zyx) > air_margin_mm
+    candidates &= ndi.distance_transform_edt(~wall, sampling=spacing_zyx) <= reach_mm
+    marrow = np.zeros(bone.shape, dtype=bool)
+    if np.any(candidates):
+        box = np.argwhere(candidates)
+        c_lo = box.min(axis=0)
+        c_hi = box.max(axis=0) + 1
+        hits = np.zeros(tuple(c_hi - c_lo), dtype=np.uint8)
+        for dz in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    if dz == dy == dx == 0:
+                        continue
+                    step = np.sqrt((dz * spacing_zyx[0]) ** 2 + (dy * spacing_zyx[1]) ** 2
+                                   + (dx * spacing_zyx[2]) ** 2)
+                    seen = np.zeros(hits.shape, dtype=bool)
+                    for k in range(1, int(reach_mm / step) + 1):
+                        src_lo = c_lo + k * np.array((dz, dy, dx))
+                        src_hi = c_hi + k * np.array((dz, dy, dx))
+                        # The part of the shifted box inside the ROI; beyond it there is no wall.
+                        a = np.maximum(src_lo, 0)
+                        z = np.minimum(src_hi, wall.shape)
+                        if np.any(z <= a):
+                            break
+                        dst = tuple(slice(int(a[n] - src_lo[n]), int(z[n] - src_lo[n])) for n in range(3))
+                        seen[dst] |= wall[a[0]:z[0], a[1]:z[1], a[2]:z[2]]
+                    hits += seen
+        inner = hits >= 26 - max_escapes
+        marrow[c_lo[0]:c_hi[0], c_lo[1]:c_hi[1], c_lo[2]:c_hi[2]] = inner
+        marrow &= candidates
+
+    log(f"    [Hueso - {name}] Solido: cavidades cerradas +{int(cavities.sum())}, medular encerrada "
+        f"+{int(marrow.sum())} voxeles (encierro a {reach_mm:.0f} mm con <= {max_escapes} de 26 direcciones "
+        f"libres; nunca aire ni a < {air_margin_mm:.0f} mm de aire; sin umbral de HU).")
+    result = mask.copy()
+    result[roi] = bone | cavities | marrow
+    return result
+
+
+def drop_bone_islands(mask, spacing_zyx, source_label, min_mm3=50.0):
+    """Fragments smaller than `min_mm3` are debris, not bone: on the user's CT (2026-10-19) the skull came out in
+    90 pieces and the mandible in 8, each a loose speck in the 3D view."""
+    import scipy.ndimage as ndi
+
+    labels, count = ndi.label(mask, structure=np.ones((3, 3, 3), dtype=bool))
+    if count <= 1:
+        return mask
+    voxel_mm3 = float(np.prod(spacing_zyx))
+    sizes = np.bincount(labels.ravel()) * voxel_mm3
+    small = sizes < min_mm3
+    small[0] = False
+    dropped = int(small.sum())
+    if not dropped:
+        return mask
+    name = "Maxilar" if source_label == 1 else "Mandibula"
+    log(f"    [Hueso - {name}] {dropped} fragmento(s) < {min_mm3:.0f} mm3 quitados; quedan {count - dropped}.")
+    return mask & ~small[labels]
+
+
+def split_cortical_medullary(solid, intensities, cortical_hu=500.0, air_hu=-300.0, min_island_voxels=27):
+    """Cortex = solid at cortical density, without islands; marrow = the rest of the solid that is not air.
+    Returns (cortical, medullary, air): disjoint masks whose union is `solid`."""
+    import scipy.ndimage as ndi
+
+    finite = np.isfinite(intensities)
+    cortical = solid & finite & (intensities >= cortical_hu)
+    labels, count = ndi.label(cortical)
+    if count:
+        sizes = np.bincount(labels.ravel())
+        small = sizes < min_island_voxels
+        small[0] = False
+        cortical &= ~small[labels]
+    air = solid & ~cortical & (~finite | (intensities < air_hu))
+    medullary = solid & ~cortical & ~air
+    return cortical, medullary, air
+
+
+def bone_surface_mesh(mask, spacing_zyx, sigma_voxels=0.75):
+    """A closed surface of a mask, for checking it: float mask, Gaussian of `sigma_voxels`, marching cubes at 0.5
+    in millimetres, padded so a bone at the scan's edge still closes. Returns a trimesh.Trimesh, or None."""
+    import scipy.ndimage as ndi
+    import trimesh
+    from skimage.measure import marching_cubes
+
+    if not np.any(mask):
+        return None
+    occupied = np.argwhere(mask)
+    pad = int(np.ceil(3 * sigma_voxels)) + 2
+    lo = np.maximum(occupied.min(axis=0) - pad, 0)
+    hi = occupied.max(axis=0) + pad + 1
+    sub = np.pad(mask[lo[0]:hi[0], lo[1]:hi[1], lo[2]:hi[2]].astype(np.float32), pad)
+    field = ndi.gaussian_filter(sub, sigma_voxels)
+    vertices, faces, _, _ = marching_cubes(field, level=0.5, spacing=tuple(float(s) for s in spacing_zyx))
+    return trimesh.Trimesh(vertices=vertices, faces=faces, process=True)
+
+
+def log_volume_spacing(spacing_xyz):
+    """Spacing in millimetres; a ratio over 1.5 between the coarsest and finest axes steps the surfaces."""
+    ratio = max(spacing_xyz) / max(1e-6, min(spacing_xyz))
+    log("    [Diagnostico] Spacing del volumen (x, y, z): "
+        + ", ".join(f"{s:.3f}" for s in spacing_xyz) + f" mm; anisotropia {ratio:.2f}.")
+    if ratio > 1.5:
+        log(f"    [Diagnostico] AVISO: max/min spacing = {ratio:.2f} > 1.5; la malla se contorna sobre un campo "
+            "refinado a voxel casi isotropico para no mostrar escalones.")
+    return ratio
+
+
+def log_bone_report(solid, intensities, spacing_zyx, source_label, check_mesh=True):
+    """Voxel counts of the cortex and the marrow, and the closure of the surface, for one bone."""
+    name = "Maxilar" if source_label == 1 else "Mandibula"
+    voxel_cm3 = float(np.prod(spacing_zyx)) / 1000.0
+    cortical, medullary, air = split_cortical_medullary(solid, intensities)
+    total = int(solid.sum())
+    disjoint = not np.any(cortical & medullary)
+    covers = np.array_equal(cortical | medullary | air, solid)
+    log(f"    [Diagnostico - {name}] solido {total} voxeles ({total * voxel_cm3:.1f} cm3): cortical "
+        f"{int(cortical.sum())}, medular {int(medullary.sum())}, aire {int(air.sum())}; "
+        f"disjuntos {'si' if disjoint else 'NO'}, union = solido {'si' if covers else 'NO'}.")
+    if total and medullary.sum() < 0.01 * total:
+        log(f"    [Diagnostico - {name}] AVISO: la medular es ~0: el hueco esta en la mascara, no en la malla.")
+    if not check_mesh or not total:
+        return
+    try:
+        mesh = bone_surface_mesh(solid, spacing_zyx)
+        import trimesh
+    except ImportError as exc:
+        log(f"    [Diagnostico - {name}] Malla sin revisar (falta {exc.name}: pip install trimesh scikit-image).")
+        return
+    components = len(trimesh.graph.connected_components(mesh.face_adjacency, nodes=np.arange(len(mesh.faces))))
+    volume = f"{abs(mesh.volume) / 1000.0:.1f} cm3" if mesh.is_watertight else "no definido (abierta)"
+    log(f"    [Diagnostico - {name}] Malla: watertight {'si' if mesh.is_watertight else 'NO'}, "
+        f"{components} componente(s), volumen {volume}, {len(mesh.faces)} triangulos.")
+
+
 def refine_coarse_bone_mask(mask, prediction, intensities, spacing_zyx, band_mm=2.0, add_hu=250.0, remove_hu=100.0):
     """Re-read a coarse bone mask's boundary from the CT at full resolution.
 
@@ -867,6 +1061,7 @@ def remap_prediction(input_path, prediction_path, output_path, target, seed=None
         nonlocal input_image, input_array
         if input_image is None:
             input_image = sitk.ReadImage(str(input_path))
+            log_volume_spacing(input_image.GetSpacing())
             # Do not assign CT intensities to prediction voxels by array index
             # unless the complete physical grids agree (including NIfTI rounding).
             if (input_image.GetSize() != seg.GetSize()
@@ -895,12 +1090,17 @@ def remap_prediction(input_path, prediction_path, output_path, target, seed=None
         # TotalSegmentator already returns the skull and the mandible. The DentalSegmentator
         # closing would grow that surface and fill openings the craniofacial model left empty.
         if label_value in (1, 2) and bone_from_totalsegmentator:
-            # Its 1.5 mm grid comes back as blocks, terraces on the mesh: re-read the boundary from the CT,
-            # opt-in until it is checked on a real maxilla (its thinnest walls read under 100 HU).
-            if os.environ.get("DENTALSEGMENTATOR_REFINE_COARSE_BONE", "0").strip() == "1":
-                image, intensities = source_image()
-                mask = refine_coarse_bone_mask(mask, arr, intensities, image.GetSpacing()[::-1])
-            return mask
+            image, intensities = source_image()
+            spacing_zyx = image.GetSpacing()[::-1]
+            # Its 1.5 mm grid comes back as blocks, ripples on the mesh: the boundary is re-read from the CT.
+            # Checked on the user's CT (2026-10-19): smooth jaws, but the maxilla's walls that read under 100 HU
+            # open, so its pores are sealed without growing the bone (the TotalSegmentator wall is already full
+            # thickness; growing it put 3 % of the sinus in the bone, sealing only 2.7 %).
+            if os.environ.get("DENTALSEGMENTATOR_REFINE_COARSE_BONE", "1").strip() != "0":
+                mask = refine_coarse_bone_mask(mask, arr, intensities, spacing_zyx)
+            seal = dict(bone_thickening_params(label_value), grow_mm=0.0)
+            mask = thicken_thin_bone(mask, arr, intensities, spacing_zyx, **seal)
+            return complete_bone(mask, label_value, intensities, spacing_zyx)
 
         # DentalSegmentator may keep very thin bracket/metal spikes. A tiny
         # binary opening + closing keeps anatomy while softening serrated masks.
@@ -935,9 +1135,18 @@ def remap_prediction(input_path, prediction_path, output_path, target, seed=None
             if os.environ.get("DENTALSEGMENTATOR_REFINE_COARSE_BONE", "0").strip() == "1":
                 mask = refine_coarse_bone_mask(mask, arr, intensities, spacing_zyx)
             mask = thicken_thin_bone(mask, arr, intensities, spacing_zyx, **bone_thickening_params(label_value))
-            if os.environ.get("DENTALSEGMENTATOR_MEDULLA_FILL", "1").strip() != "0":
-                mask = fill_medullary_bone(mask, arr, intensities, spacing_zyx, label_value)
-            mask = fill_bone_interiors(mask, arr, intensities, spacing_zyx, label_value)
+            mask = complete_bone(mask, label_value, intensities, spacing_zyx)
+        return mask
+
+    def complete_bone(mask, label_value, intensities, spacing_zyx):
+        """The bone as one solid, cortex and marrow (`solid_bone_mask`), whichever network gave it; then the
+        strict small-cavity fill and the diagnostic report."""
+        if os.environ.get("DENTALSEGMENTATOR_MEDULLA_FILL", "1").strip() != "0":
+            mask = solid_bone_mask(mask, arr, intensities, spacing_zyx, label_value)
+        mask = fill_bone_interiors(mask, arr, intensities, spacing_zyx, label_value)
+        mask = drop_bone_islands(mask, spacing_zyx, label_value)
+        log_bone_report(mask, intensities, spacing_zyx, label_value,
+                        check_mesh=os.environ.get("DENTALSEGMENTATOR_MESH_CHECK", "1").strip() != "0")
         return mask
 
     target = target.lower()
@@ -1358,7 +1567,8 @@ def run_dentalsegmentator_nnunet(input_path, output_path, target, seed=None, see
     log(f"Python: {sys.executable}")
 
     bone_from_totalsegmentator = False
-    if target.lower() not in ("teeth", "dientes"):
+    bone_source = os.environ.get("DENTALSEGMENTATOR_BONE_SOURCE", "dentalsegmentator").strip().lower()
+    if target.lower() not in ("teeth", "dientes") and bone_source == "totalsegmentator":
         ts_path = pred_dir / "totalsegmentator_craniofacial.nii.gz"
         run_totalsegmentator_bone(case_input, ts_path, device)
         bone_from_totalsegmentator = True

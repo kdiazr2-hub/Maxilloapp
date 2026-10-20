@@ -13,6 +13,7 @@
 #include "MainWindow.h"
 
 #include "Mesh3DView.h"
+#include "ClinicalNotice.h"
 #include "CranioPalette.h"
 #include "GuideSculptCore.h"
 #include "LeFortGuideCore.h"
@@ -3544,6 +3545,7 @@ bool MainWindow::exportGuidePlateFiles(const QString& folder, QString* report)
         return fail(tr("No se pudo escribir el informe."));
     QTextStream out(&file);
     out << "INFORME DE PLACAS A MEDIDA - LE FORT I\n";
+    out << QString::fromUtf8(ClinicalNotice::kReport) << "\n";
     out << "Fecha: " << QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm")) << "\n\n";
     out << "Placas: espesor " << plate.thicknessMm << " mm, ancho " << plate.widthMm << " mm, agujero Ø"
         << plate.holeDiameterMm << " mm con avellanado Ø" << plate.countersinkDiameterMm << " x "

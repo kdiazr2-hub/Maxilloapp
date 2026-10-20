@@ -3,6 +3,7 @@
 #include "AppStateManager.h"
 #include "BoneSplitterService.h"
 #include "BoneCavityFill.h"
+#include "ClinicalNotice.h"
 #include "CompositeModelCore.h"
 #include "CranioPalette.h"
 #include "LoggerCore.h"
@@ -10,6 +11,7 @@
 #include "OsteotomyWizardPanel.h"
 #include "NrrdVolumeExporter.h"
 #include "ProjectSerializer.h"
+#include "RegistrationCore.h"
 #include "RegistrationResult.h"
 #include "SegmentationMaskEditor.h"
 #include "AngleMeasurementTool.h"
@@ -572,6 +574,10 @@ MainWindow::MainWindow(QWidget* parent)
     m_progressBar->setValue(0);
     m_progressBar->setVisible(false);
     statusBar()->addPermanentWidget(m_progressBar);
+
+    auto* researchNotice = new QLabel(QString::fromUtf8(ClinicalNotice::kShort), this);
+    researchNotice->setStyleSheet(QStringLiteral("color: %1; padding: 0 8px;").arg(CranioPalette::MutedText));
+    statusBar()->addPermanentWidget(researchNotice);
 
     // ── Cache directory ────────────────────────────────────────────────────
     m_cacheDir = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation)
@@ -3553,269 +3559,52 @@ void MainWindow::onBiteGizmoMeshUpdated(int meshLabel, vtkSmartPointer<vtkPolyDa
     updateBiteRegistrationUi();
 }
 
+namespace {
+
+std::vector<RegistrationCore::Point> registrationPoints(const QVector<QVector3D>& points)
+{
+    std::vector<RegistrationCore::Point> out;
+    out.reserve(static_cast<size_t>(points.size()));
+    for (const QVector3D& p : points)
+        out.push_back({p.x(), p.y(), p.z()});
+    return out;
+}
+
+} // namespace
+
 vtkSmartPointer<vtkPolyData> MainWindow::refineBiteRegistrationWithIcp(
     vtkPolyData* moving, vtkPolyData* biteScan, QString* report, QString* error,
     const QVector<QVector3D>& movingLandmarks,
     const QVector<QVector3D>& targetLandmarks,
     vtkMatrix4x4* outputMatrix) const
 {
-    if (outputMatrix) outputMatrix->Identity();
+    const auto result = RegistrationCore::RefineBite(moving, biteScan, registrationPoints(movingLandmarks),
+                                                     registrationPoints(targetLandmarks));
+    if (outputMatrix)
+        outputMatrix->DeepCopy(result.matrix);
 
-    if (!moving || !biteScan ||
-        moving->GetNumberOfPoints() == 0 || biteScan->GetNumberOfPoints() == 0) {
+    switch (result.status) {
+    case RegistrationCore::IcpStatus::EmptyInput:
         if (error) *error = tr("No hay mallas validas para refinar el registro de mordida.");
         return nullptr;
-    }
-
-    auto cleanTri = [](vtkPolyData* input) -> vtkSmartPointer<vtkPolyData> {
-        auto clean = vtkSmartPointer<vtkCleanPolyData>::New();
-        clean->SetInputData(input);
-        clean->Update();
-
-        auto tri = vtkSmartPointer<vtkTriangleFilter>::New();
-        tri->SetInputConnection(clean->GetOutputPort());
-        tri->Update();
-
-        auto out = vtkSmartPointer<vtkPolyData>::New();
-        out->DeepCopy(tri->GetOutput());
-        return out;
-    };
-
-    auto cropByBox = [](vtkPolyData* input, const double box[6]) -> vtkSmartPointer<vtkPolyData> {
-        if (!input || input->GetNumberOfCells() == 0) return nullptr;
-        auto polys = vtkSmartPointer<vtkCellArray>::New();
-        auto ids = vtkSmartPointer<vtkIdList>::New();
-        double p[3] = {};
-        double c[3] = {};
-
-        for (vtkIdType cellId = 0; cellId < input->GetNumberOfCells(); ++cellId) {
-            input->GetCellPoints(cellId, ids);
-            const vtkIdType n = ids->GetNumberOfIds();
-            if (n < 3) continue;
-            c[0] = c[1] = c[2] = 0.0;
-            for (vtkIdType i = 0; i < n; ++i) {
-                input->GetPoint(ids->GetId(i), p);
-                c[0] += p[0]; c[1] += p[1]; c[2] += p[2];
-            }
-            c[0] /= static_cast<double>(n);
-            c[1] /= static_cast<double>(n);
-            c[2] /= static_cast<double>(n);
-
-            const bool inside = c[0] >= box[0] && c[0] <= box[1] &&
-                                c[1] >= box[2] && c[1] <= box[3] &&
-                                c[2] >= box[4] && c[2] <= box[5];
-            if (inside) polys->InsertNextCell(ids);
-        }
-
-        auto out = vtkSmartPointer<vtkPolyData>::New();
-        out->SetPoints(input->GetPoints());
-        out->SetPolys(polys);
-
-        auto clean = vtkSmartPointer<vtkCleanPolyData>::New();
-        clean->SetInputData(out);
-        clean->Update();
-
-        auto result = vtkSmartPointer<vtkPolyData>::New();
-        result->DeepCopy(clean->GetOutput());
-        return result;
-    };
-
-    auto keepNearTarget = [](vtkPolyData* input, vtkPolyData* target,
-                             double maxDistance) -> vtkSmartPointer<vtkPolyData> {
-        if (!input || !target || input->GetNumberOfCells() == 0 || target->GetNumberOfPoints() == 0)
-            return nullptr;
-
-        auto distance = vtkSmartPointer<vtkImplicitPolyDataDistance>::New();
-        distance->SetInput(target);
-
-        auto polys = vtkSmartPointer<vtkCellArray>::New();
-        auto ids = vtkSmartPointer<vtkIdList>::New();
-        double p[3] = {};
-        double c[3] = {};
-        for (vtkIdType cellId = 0; cellId < input->GetNumberOfCells(); ++cellId) {
-            input->GetCellPoints(cellId, ids);
-            const vtkIdType n = ids->GetNumberOfIds();
-            if (n < 3) continue;
-
-            c[0] = c[1] = c[2] = 0.0;
-            for (vtkIdType i = 0; i < n; ++i) {
-                input->GetPoint(ids->GetId(i), p);
-                c[0] += p[0]; c[1] += p[1]; c[2] += p[2];
-            }
-            c[0] /= static_cast<double>(n);
-            c[1] /= static_cast<double>(n);
-            c[2] /= static_cast<double>(n);
-
-            bool keep = std::abs(distance->EvaluateFunction(c)) <= maxDistance;
-            if (!keep) {
-                for (vtkIdType i = 0; i < n; ++i) {
-                    input->GetPoint(ids->GetId(i), p);
-                    if (std::abs(distance->EvaluateFunction(p)) <= maxDistance) {
-                        keep = true;
-                        break;
-                    }
-                }
-            }
-            if (keep) polys->InsertNextCell(ids);
-        }
-
-        auto out = vtkSmartPointer<vtkPolyData>::New();
-        out->SetPoints(input->GetPoints());
-        out->SetPolys(polys);
-
-        auto clean = vtkSmartPointer<vtkCleanPolyData>::New();
-        clean->SetInputData(out);
-        clean->Update();
-
-        auto result = vtkSmartPointer<vtkPolyData>::New();
-        result->DeepCopy(clean->GetOutput());
-        return result;
-    };
-
-    auto keepNearLandmarks = [](vtkPolyData* input, const QVector<QVector3D>& landmarks,
-                                double radius) -> vtkSmartPointer<vtkPolyData> {
-        if (!input || landmarks.isEmpty() || input->GetNumberOfCells() == 0)
-            return nullptr;
-        const double radiusSquared = radius * radius;
-        const auto closeToHint = [&](const double p[3]) {
-            for (const QVector3D& hint : landmarks) {
-                const double dx = p[0] - hint.x();
-                const double dy = p[1] - hint.y();
-                const double dz = p[2] - hint.z();
-                if (dx * dx + dy * dy + dz * dz <= radiusSquared)
-                    return true;
-            }
-            return false;
-        };
-        auto polys = vtkSmartPointer<vtkCellArray>::New();
-        auto ids = vtkSmartPointer<vtkIdList>::New();
-        double p[3] = {};
-        double center[3] = {};
-        for (vtkIdType cellId = 0; cellId < input->GetNumberOfCells(); ++cellId) {
-            input->GetCellPoints(cellId, ids);
-            const vtkIdType count = ids->GetNumberOfIds();
-            if (count < 3) continue;
-            center[0] = center[1] = center[2] = 0.0;
-            bool keep = false;
-            for (vtkIdType i = 0; i < count; ++i) {
-                input->GetPoint(ids->GetId(i), p);
-                center[0] += p[0]; center[1] += p[1]; center[2] += p[2];
-                keep = keep || closeToHint(p);
-            }
-            center[0] /= count; center[1] /= count; center[2] /= count;
-            if (keep || closeToHint(center))
-                polys->InsertNextCell(ids);
-        }
-        auto selected = vtkSmartPointer<vtkPolyData>::New();
-        selected->SetPoints(input->GetPoints());
-        selected->SetPolys(polys);
-        auto clean = vtkSmartPointer<vtkCleanPolyData>::New();
-        clean->SetInputData(selected);
-        clean->Update();
-        auto result = vtkSmartPointer<vtkPolyData>::New();
-        result->DeepCopy(clean->GetOutput());
-        return result;
-    };
-
-    auto movingTri = cleanTri(moving);
-    auto biteTri = cleanTri(biteScan);
-    if (!movingTri || !biteTri || movingTri->GetNumberOfPoints() == 0 || biteTri->GetNumberOfPoints() == 0) {
+    case RegistrationCore::IcpStatus::CleanFailed:
         if (error) *error = tr("No se pudieron limpiar las mallas para ICP de mordida.");
         return nullptr;
+    case RegistrationCore::IcpStatus::RoiTooSmall:
+        if (report) *report = tr("ICP local mordida: omitido; ROI insuficiente despues de landmarks.");
+        return result.mesh;
+    case RegistrationCore::IcpStatus::Ok:
+        break;
     }
 
-    double biteBounds[6] = {};
-    biteTri->GetBounds(biteBounds);
-    const double sx = std::max(1.0, biteBounds[1] - biteBounds[0]);
-    const double sy = std::max(1.0, biteBounds[3] - biteBounds[2]);
-    const double sz = std::max(1.0, biteBounds[5] - biteBounds[4]);
-    const double biteDiag = std::sqrt(sx * sx + sy * sy + sz * sz);
-    const double pad = std::clamp(biteDiag * 0.08, 4.0, 12.0);
-    double roiBox[6] = {
-        biteBounds[0] - pad, biteBounds[1] + pad,
-        biteBounds[2] - pad, biteBounds[3] + pad,
-        biteBounds[4] - pad, biteBounds[5] + pad
-    };
-
-    auto movingRoi = cropByBox(movingTri, roiBox);
-    const double keepDistance = std::clamp(biteDiag * 0.05, 3.0, 7.0);
-    auto movingLocal = keepNearTarget(movingRoi, biteTri, keepDistance);
-    auto hintedMoving = keepNearLandmarks(movingTri, movingLandmarks, 12.0);
-    auto targetLocal = keepNearLandmarks(biteTri, targetLandmarks, 12.0);
-    if (hintedMoving && hintedMoving->GetNumberOfPoints() >= 50)
-        movingLocal = hintedMoving;
-    if (!targetLocal || targetLocal->GetNumberOfPoints() < 50)
-        targetLocal = biteTri;
-    if (!movingLocal || movingLocal->GetNumberOfPoints() < 50) {
-        movingLocal = movingRoi;
-    }
-
-    if (!movingLocal || movingLocal->GetNumberOfPoints() < 50 || targetLocal->GetNumberOfPoints() < 50) {
-        if (report) {
-            *report = tr("ICP local mordida: omitido; ROI insuficiente despues de landmarks.");
-        }
-        auto out = vtkSmartPointer<vtkPolyData>::New();
-        out->DeepCopy(movingTri);
-        return out;
-    }
-
-    auto icp = vtkSmartPointer<vtkIterativeClosestPointTransform>::New();
-    icp->SetSource(movingLocal);
-    icp->SetTarget(targetLocal);
-    icp->GetLandmarkTransform()->SetModeToRigidBody();
-    icp->StartByMatchingCentroidsOff();
-    icp->CheckMeanDistanceOn();
-    icp->SetMaximumNumberOfLandmarks(5000);
-    icp->SetMaximumNumberOfIterations(120);
-    icp->SetMaximumMeanDistance(0.001);
-    icp->Update();
-
-    if (outputMatrix)
-        outputMatrix->DeepCopy(icp->GetMatrix());
-
-    auto fullFilter = vtkSmartPointer<vtkTransformPolyDataFilter>::New();
-    fullFilter->SetInputData(movingTri);
-    fullFilter->SetTransform(icp);
-    fullFilter->Update();
-
-    auto localFilter = vtkSmartPointer<vtkTransformPolyDataFilter>::New();
-    localFilter->SetInputData(movingLocal);
-    localFilter->SetTransform(icp);
-    localFilter->Update();
-
-    auto distance = vtkSmartPointer<vtkImplicitPolyDataDistance>::New();
-    distance->SetInput(targetLocal);
-
-    vtkPolyData* local = localFilter->GetOutput();
-    const vtkIdType total = local ? local->GetNumberOfPoints() : 0;
-    const vtkIdType step = std::max<vtkIdType>(1, total / 25000);
-    double p[3] = {};
-    double sum = 0.0;
-    double sumSq = 0.0;
-    double maxDist = 0.0;
-    vtkIdType count = 0;
-    for (vtkIdType i = 0; i < total; i += step) {
-        local->GetPoint(i, p);
-        const double d = std::abs(distance->EvaluateFunction(p));
-        sum += d;
-        sumSq += d * d;
-        maxDist = std::max(maxDist, d);
-        ++count;
-    }
-
-    const double mean = count > 0 ? sum / static_cast<double>(count) : 0.0;
-    const double rmse = count > 0 ? std::sqrt(sumSq / static_cast<double>(count)) : 0.0;
     if (report) {
         *report = tr("ICP local mordida: RMSE %1 mm | media %2 mm | max %3 mm | puntos ROI %4")
-            .arg(rmse, 0, 'f', 3)
-            .arg(mean, 0, 'f', 3)
-            .arg(maxDist, 0, 'f', 3)
-            .arg(count);
+            .arg(result.fit.rmseMm, 0, 'f', 3)
+            .arg(result.fit.meanMm, 0, 'f', 3)
+            .arg(result.fit.maxMm, 0, 'f', 3)
+            .arg(result.fit.samples);
     }
-
-    auto out = vtkSmartPointer<vtkPolyData>::New();
-    out->DeepCopy(fullFilter->GetOutput());
-    return out;
+    return result.mesh;
 }
 
 void MainWindow::alignLeFortToBiteScan()
@@ -6283,6 +6072,8 @@ ProjectState MainWindow::collectProjectState() const
     // Hidden labels
     for (int lbl : m_hiddenMaskLabels)
         state.hiddenMaskLabels.append(lbl);
+    for (int lbl : m_solidBoneLabels)
+        state.solidBoneLabels.append(lbl);
 
     // Mask table rows
     if (m_maskTable) {
@@ -6420,6 +6211,7 @@ void MainWindow::applyProjectState(const ProjectState& state)
     m_hiddenMaskLabels.clear();
     for (int lbl : state.hiddenMaskLabels)
         m_hiddenMaskLabels.insert(lbl);
+    m_solidBoneLabels = std::set<int>(state.solidBoneLabels.begin(), state.solidBoneLabels.end());
     refreshSegmentationOverlays();
 
     // ── Window / level preset ─────────────────────────────────────────────
@@ -6630,6 +6422,7 @@ void MainWindow::loadVolume(const QString& folderPath)
     m_segmentationLabelmap = nullptr;
     m_maskSmoothingIterations.clear();
     m_hiddenMaskLabels.clear();
+    m_solidBoneLabels.clear();
     refreshSegmentationOverlays();
     if (m_mesh3DView) m_mesh3DView->clearMeshes();
     for (Mesh3DView* v : {m_modelMaxillaView, m_modelUpperArchView,
@@ -8243,6 +8036,10 @@ void MainWindow::onSegmentationFinished(const QString& outputSegmentationPath)
     // ── Merge into the existing labelmap (keeps other labels intact) ──────
     const bool merged = mergeIntoLabelmap(m_segmentationLabelmap, newLabelmap);
     Q_UNUSED(merged)
+    // The script delivers the maxilla and the mandible solid (solid_bone_mask): no chord fill on top.
+    for (int label : newLabels)
+        if (label == 5 || label == 6)
+            m_solidBoneLabels.insert(label);
 
     refreshSegmentationOverlays();
     if (m_progressBar) m_progressBar->setVisible(false);
@@ -8281,7 +8078,8 @@ void MainWindow::onSegmentationFinished(const QString& outputSegmentationPath)
             : smoothingIterationsForPreset(MeshSmoothingPreset::Moderate);
         m_maskSmoothingIterations[currentLabel] = smoothingIterations;
         auto mesh = MeshGenerator::generateMesh(
-            m_segmentationLabelmap, currentLabel, true, smoothingIterations, &meshError, true, m_volume);
+            m_segmentationLabelmap, currentLabel, true, smoothingIterations, &meshError,
+            closeCorticesFor(currentLabel), m_volume);
         if (!mesh) {
             statusBar()->showMessage(
                 tr("Malla %1: %2").arg(meshLabelName(currentLabel), meshError));
@@ -8527,13 +8325,15 @@ void MainWindow::fillBoneCavityAt(const std::array<double, 3>& point)
     QFutureWatcher<Candidate> watcher;
     connect(&watcher, &QFutureWatcher<Candidate>::finished, &progress, &QDialog::accept);
     const auto volume = m_volume;
-    watcher.setFuture(QtConcurrent::run([input, label, point, iterations, volume] {
+    const bool closeCortices = closeCorticesFor(label);
+    watcher.setFuture(QtConcurrent::run([input, label, point, iterations, volume, closeCortices] {
         Candidate candidate;
         try {
             candidate.fill = fillEnclosedBoneCavity(input, label, point);
             if (candidate.fill.labelmap)
                 candidate.mesh = MeshGenerator::generateMesh(candidate.fill.labelmap, label, true,
-                                                              iterations, &candidate.fill.error, true, volume);
+                                                              iterations, &candidate.fill.error, closeCortices,
+                                                              volume);
         } catch (const std::exception& e) {
             candidate.fill.error = QString::fromUtf8(e.what());
         }
@@ -8606,7 +8406,8 @@ void MainWindow::fillBoneCavityAt(const std::array<double, 3>& point)
     meshView->setMeshColor(label, maskColorForLabel(label));
     meshView->setStandardView(0);
     grid->addWidget(meshView, 1, 1);
-    const auto originalMesh = MeshGenerator::generateMesh(original, label, true, iterations, nullptr, true, m_volume);
+    const auto originalMesh = MeshGenerator::generateMesh(original, label, true, iterations, nullptr,
+                                                          closeCorticesFor(label), m_volume);
     connect(compare, &QCheckBox::toggled, &preview, [=](bool filled) {
         for (auto* view : views) {
             view->setSegmentationLabelmap(filled ? candidate.fill.labelmap : original);
@@ -9304,7 +9105,7 @@ QString MainWindow::refreshEditedSegmentationMesh(int label)
     QString meshError;
     const int smoothingIterations = m_maskSmoothingIterations.value(label, 20);
     auto mesh = MeshGenerator::generateMesh(
-        m_segmentationLabelmap, label, true, smoothingIterations, &meshError, true, m_volume);
+        m_segmentationLabelmap, label, true, smoothingIterations, &meshError, closeCorticesFor(label), m_volume);
     publishSegmentationMesh(label, mesh);
     QString derivedNote;
     if (mesh) {
@@ -9539,7 +9340,7 @@ void MainWindow::undoLastEdit()
                 QString err;
                 const int smoothingIterations = m_maskSmoothingIterations.value(lbl, 20);
                 auto mesh = MeshGenerator::generateMesh(
-                    m_segmentationLabelmap, lbl, true, smoothingIterations, &err, true, m_volume);
+                    m_segmentationLabelmap, lbl, true, smoothingIterations, &err, closeCorticesFor(lbl), m_volume);
                 publishSegmentationMesh(lbl, mesh);
             }
         }
@@ -9602,70 +9403,31 @@ vtkSmartPointer<vtkPolyData> MainWindow::transformMesh(
         if (error) *error = tr("No hay malla STL para registrar.");
         return nullptr;
     }
-    const int pairCount = std::min(moving.size(), fixed.size());
-    if (pairCount < 3) {
+    const auto fit = RegistrationCore::FitLandmarks(registrationPoints(moving), registrationPoints(fixed));
+    if (!fit.valid) {
         if (error) {
             *error = tr("Se necesitan al menos 3 pares de puntos correspondientes.");
         }
         return nullptr;
     }
-
-    auto source = vtkSmartPointer<vtkPoints>::New();
-    auto target = vtkSmartPointer<vtkPoints>::New();
-    for (int i = 0; i < pairCount; ++i) {
-        source->InsertNextPoint(moving[i].x(), moving[i].y(), moving[i].z());
-        target->InsertNextPoint(fixed[i].x(), fixed[i].y(), fixed[i].z());
-    }
     if (moving.size() != fixed.size()) {
         qInfo().noquote() << QString("Landmarks: conteo desigual moving=%1 fixed=%2; usando %3 pares.")
             .arg(moving.size())
             .arg(fixed.size())
-            .arg(pairCount);
+            .arg(fit.pairs);
     }
-
-    auto landmark = vtkSmartPointer<vtkLandmarkTransform>::New();
-    landmark->SetSourceLandmarks(source);
-    landmark->SetTargetLandmarks(target);
-    landmark->SetModeToRigidBody();
-    landmark->Update();
-
-    double sumSq = 0.0;
-    double maxErr = 0.0;
-    double in[3] = {};
-    double outPt[3] = {};
-    double tgt[3] = {};
-    for (int i = 0; i < pairCount; ++i) {
-        in[0] = moving[i].x(); in[1] = moving[i].y(); in[2] = moving[i].z();
-        tgt[0] = fixed[i].x(); tgt[1] = fixed[i].y(); tgt[2] = fixed[i].z();
-        landmark->TransformPoint(in, outPt);
-        const double dx = outPt[0] - tgt[0];
-        const double dy = outPt[1] - tgt[1];
-        const double dz = outPt[2] - tgt[2];
-        const double e = std::sqrt(dx * dx + dy * dy + dz * dz);
-        sumSq += e * e;
-        maxErr = std::max(maxErr, e);
-    }
-    const double rms = std::sqrt(sumSq / static_cast<double>(pairCount));
     qInfo().noquote() << QString("Landmarks: pares=%1 RMS=%2 mm max=%3 mm")
-        .arg(pairCount)
-        .arg(rms, 0, 'f', 3)
-        .arg(maxErr, 0, 'f', 3);
+        .arg(fit.pairs)
+        .arg(fit.rmsMm, 0, 'f', 3)
+        .arg(fit.maxMm, 0, 'f', 3);
     qInfo().noquote() << "Matriz inicial landmarks:";
-    qInfo().noquote() << matrixToText(landmark->GetMatrix());
+    qInfo().noquote() << matrixToText(fit.matrix);
 
     if (outputMatrix)
-        outputMatrix->DeepCopy(landmark->GetMatrix());
+        outputMatrix->DeepCopy(fit.matrix);
     if (landmarkRms)
-        *landmarkRms = rms;
-
-    auto filter = vtkSmartPointer<vtkTransformPolyDataFilter>::New();
-    filter->SetInputData(mesh);
-    filter->SetTransform(landmark);
-    filter->Update();
-
-    auto out = vtkSmartPointer<vtkPolyData>::New();
-    out->DeepCopy(filter->GetOutput());
-    return out;
+        *landmarkRms = fit.rmsMm;
+    return RegistrationCore::Apply(mesh, fit.matrix);
 }
 
 void MainWindow::logRegistrationDiagnostics(const QString& name, vtkPolyData* bone, vtkPolyData* arch) const
@@ -9739,177 +9501,49 @@ vtkSmartPointer<vtkPolyData> MainWindow::refineArchWithIcp(
     QString* error,
     vtkMatrix4x4* outputMatrix) const
 {
-    if (outputMatrix) outputMatrix->Identity();
+    const auto result = RegistrationCore::RefineArch(arch, bone, upperArch);
+    if (outputMatrix)
+        outputMatrix->DeepCopy(result.matrix);
 
-    if (!arch || !bone || arch->GetNumberOfPoints() == 0 || bone->GetNumberOfPoints() == 0) {
+    switch (result.status) {
+    case RegistrationCore::IcpStatus::EmptyInput:
         if (error) *error = tr("No hay mallas validas para ICP.");
         return nullptr;
-    }
-
-    auto cleanTri = [](vtkPolyData* input) -> vtkSmartPointer<vtkPolyData> {
-        auto clean = vtkSmartPointer<vtkCleanPolyData>::New();
-        clean->SetInputData(input);
-        clean->Update();
-
-        auto tri = vtkSmartPointer<vtkTriangleFilter>::New();
-        tri->SetInputConnection(clean->GetOutputPort());
-        tri->Update();
-
-        auto out = vtkSmartPointer<vtkPolyData>::New();
-        out->DeepCopy(tri->GetOutput());
-        return out;
-    };
-
-    auto cropByBox = [](vtkPolyData* input, const double box[6]) -> vtkSmartPointer<vtkPolyData> {
-        if (!input || input->GetNumberOfCells() == 0) return nullptr;
-        auto polys = vtkSmartPointer<vtkCellArray>::New();
-        auto ids = vtkSmartPointer<vtkIdList>::New();
-        double p[3] = {};
-        double c[3] = {};
-
-        for (vtkIdType cellId = 0; cellId < input->GetNumberOfCells(); ++cellId) {
-            input->GetCellPoints(cellId, ids);
-            const vtkIdType n = ids->GetNumberOfIds();
-            if (n < 3) continue;
-            c[0] = c[1] = c[2] = 0.0;
-            for (vtkIdType i = 0; i < n; ++i) {
-                input->GetPoint(ids->GetId(i), p);
-                c[0] += p[0]; c[1] += p[1]; c[2] += p[2];
-            }
-            c[0] /= static_cast<double>(n);
-            c[1] /= static_cast<double>(n);
-            c[2] /= static_cast<double>(n);
-
-            const bool inside = c[0] >= box[0] && c[0] <= box[1] &&
-                                c[1] >= box[2] && c[1] <= box[3] &&
-                                c[2] >= box[4] && c[2] <= box[5];
-            if (inside) polys->InsertNextCell(ids);
-        }
-
-        auto out = vtkSmartPointer<vtkPolyData>::New();
-        out->SetPoints(input->GetPoints());
-        out->SetPolys(polys);
-        auto clean = vtkSmartPointer<vtkCleanPolyData>::New();
-        clean->SetInputData(out);
-        clean->Update();
-
-        auto result = vtkSmartPointer<vtkPolyData>::New();
-        result->DeepCopy(clean->GetOutput());
-        return result;
-    };
-
-    auto archTri = cleanTri(arch);
-    auto boneTri = cleanTri(bone);
-    if (!archTri || !boneTri) {
+    case RegistrationCore::IcpStatus::CleanFailed:
         if (error) *error = tr("No se pudieron limpiar las mallas para ICP.");
         return nullptr;
-    }
-
-    double archBounds[6] = {};
-    archTri->GetBounds(archBounds);
-    const double dx = std::max(1.0, archBounds[1] - archBounds[0]);
-    const double dy = std::max(1.0, archBounds[3] - archBounds[2]);
-    const double dz = std::max(1.0, archBounds[5] - archBounds[4]);
-    const double maxRange = std::max({dx, dy, dz});
-
-    const double xyPad = std::clamp(maxRange * 0.18, 12.0, 28.0);
-    const double zBelow = upperArch ? std::clamp(maxRange * 0.08, 5.0, 10.0)
-                                    : std::clamp(maxRange * 0.22, 14.0, 30.0);
-    const double zAbove = upperArch ? std::clamp(maxRange * 0.22, 14.0, 30.0)
-                                    : std::clamp(maxRange * 0.08, 5.0, 10.0);
-    double roi[6] = {
-        archBounds[0] - xyPad, archBounds[1] + xyPad,
-        archBounds[2] - xyPad, archBounds[3] + xyPad,
-        archBounds[4] - zBelow, archBounds[5] + zAbove
-    };
-
-    auto archRoi = cropByBox(archTri, roi);
-    auto boneRoi = cropByBox(boneTri, roi);
-    if (!archRoi || !boneRoi ||
-        archRoi->GetNumberOfPoints() < 50 || boneRoi->GetNumberOfPoints() < 50) {
+    case RegistrationCore::IcpStatus::RoiTooSmall:
         if (error) {
             *error = tr("ROI insuficiente para ICP. Revise puntos iniciales o STL importado.");
         }
-        return archTri;
+        return result.mesh;
+    case RegistrationCore::IcpStatus::Ok:
+        break;
     }
 
-    auto icp = vtkSmartPointer<vtkIterativeClosestPointTransform>::New();
-    icp->SetSource(archRoi);
-    icp->SetTarget(boneRoi);
-    icp->GetLandmarkTransform()->SetModeToRigidBody();
-    icp->StartByMatchingCentroidsOff();
-    icp->CheckMeanDistanceOn();
-    icp->SetMaximumNumberOfIterations(80);
-    icp->SetMaximumMeanDistance(0.0005);
-    icp->Update();
-    if (outputMatrix)
-        outputMatrix->DeepCopy(icp->GetMatrix());
-
-    auto fullFilter = vtkSmartPointer<vtkTransformPolyDataFilter>::New();
-    fullFilter->SetInputData(archTri);
-    fullFilter->SetTransform(icp);
-    fullFilter->Update();
-
-    auto roiFilter = vtkSmartPointer<vtkTransformPolyDataFilter>::New();
-    roiFilter->SetInputData(archRoi);
-    roiFilter->SetTransform(icp);
-    roiFilter->Update();
-
-    auto distance = vtkSmartPointer<vtkImplicitPolyDataDistance>::New();
-    distance->SetInput(boneRoi);
-
-    vtkPolyData* registeredRoi = roiFilter->GetOutput();
-    const vtkIdType total = registeredRoi ? registeredRoi->GetNumberOfPoints() : 0;
-    const vtkIdType step = std::max<vtkIdType>(1, total / 25000);
-    double p[3] = {};
-    double sum = 0.0;
-    double sumSq = 0.0;
-    double maxDist = 0.0;
-    vtkIdType count = 0;
-    vtkIdType within1 = 0;
-    vtkIdType within2 = 0;
-    for (vtkIdType i = 0; i < total; i += step) {
-        registeredRoi->GetPoint(i, p);
-        const double d = std::abs(distance->EvaluateFunction(p));
-        sum += d;
-        sumSq += d * d;
-        maxDist = std::max(maxDist, d);
-        if (d <= 1.0) ++within1;
-        if (d <= 2.0) ++within2;
-        ++count;
-    }
-
-    const double mean = count > 0 ? sum / static_cast<double>(count) : 0.0;
-    const double rmse = count > 0 ? std::sqrt(sumSq / static_cast<double>(count)) : 0.0;
-    const double pct1 = count > 0 ? 100.0 * static_cast<double>(within1) / static_cast<double>(count) : 0.0;
-    const double pct2 = count > 0 ? 100.0 * static_cast<double>(within2) / static_cast<double>(count) : 0.0;
-    const QString grade = rmse < 0.75 ? tr("excelente") : (rmse <= 1.5 ? tr("aceptable") : tr("revisar manualmente"));
-
+    const auto& fit = result.fit;
+    const QString grade = fit.rmseMm < 0.75 ? tr("excelente")
+                                            : (fit.rmseMm <= 1.5 ? tr("aceptable") : tr("revisar manualmente"));
     if (report) {
         *report = tr("ICP ROI: RMSE %1 mm | media %2 mm | max %3 mm | <=1mm %4% | <=2mm %5% | %6")
-            .arg(rmse, 0, 'f', 3)
-            .arg(mean, 0, 'f', 3)
-            .arg(maxDist, 0, 'f', 3)
-            .arg(pct1, 0, 'f', 1)
-            .arg(pct2, 0, 'f', 1)
+            .arg(fit.rmseMm, 0, 'f', 3)
+            .arg(fit.meanMm, 0, 'f', 3)
+            .arg(fit.maxMm, 0, 'f', 3)
+            .arg(fit.within1MmPercent, 0, 'f', 1)
+            .arg(fit.within2MmPercent, 0, 'f', 1)
             .arg(grade);
     }
 
     qInfo().noquote() << "ICP matriz:";
-    if (auto* m = icp->GetMatrix()) {
-        for (int r = 0; r < 4; ++r) {
-            qInfo().noquote() << QString("%1 %2 %3 %4")
-                .arg(m->GetElement(r, 0), 0, 'f', 6)
-                .arg(m->GetElement(r, 1), 0, 'f', 6)
-                .arg(m->GetElement(r, 2), 0, 'f', 6)
-                .arg(m->GetElement(r, 3), 0, 'f', 6);
-        }
+    for (int r = 0; r < 4; ++r) {
+        qInfo().noquote() << QString("%1 %2 %3 %4")
+            .arg(result.matrix->GetElement(r, 0), 0, 'f', 6)
+            .arg(result.matrix->GetElement(r, 1), 0, 'f', 6)
+            .arg(result.matrix->GetElement(r, 2), 0, 'f', 6)
+            .arg(result.matrix->GetElement(r, 3), 0, 'f', 6);
     }
     qInfo().noquote() << (report ? *report : QString());
-
-    auto out = vtkSmartPointer<vtkPolyData>::New();
-    out->DeepCopy(fullFilter->GetOutput());
-    return out;
+    return result.mesh;
 }
 
 vtkSmartPointer<vtkPolyData> MainWindow::appendMeshes(
@@ -10208,7 +9842,7 @@ vtkSmartPointer<vtkPolyData> MainWindow::meshForAnatomicLabel(int label) const
     QString error;
     const int smoothingIterations = m_maskSmoothingIterations.value(label, 20);
     auto generated = MeshGenerator::generateMesh(
-        m_segmentationLabelmap, label, true, smoothingIterations, &error, true, m_volume);
+        m_segmentationLabelmap, label, true, smoothingIterations, &error, closeCorticesFor(label), m_volume);
     return generated;
 }
 
@@ -14519,6 +14153,7 @@ void MainWindow::exportDentalRegistrationPackage()
     if (report.open(QIODevice::WriteOnly | QIODevice::Text)) {
         QTextStream out(&report);
         out << "MODELO COMPUESTO TAC + STL\n";
+        out << QString::fromUtf8(ClinicalNotice::kReport) << "\n";
         out << "Fecha: " << QDateTime::currentDateTime().toString(Qt::ISODate) << "\n\n";
         out << "Spacing DICOM (mm): "
             << m_volumeMeta.spacing[0] << " x "
@@ -14721,6 +14356,9 @@ void MainWindow::onBoneSplitFinished(const QString& outputPath)
     // Save an undo snapshot before replacing the labelmap
     pushLabelmapUndo();
     m_segmentationLabelmap = newLabelmap;
+    // Maxilla and mandible split from a thresholded "Hueso": nobody filled their marrow yet.
+    m_solidBoneLabels.erase(5);
+    m_solidBoneLabels.erase(6);
 
     // ── 2. Remove "Hueso" (label 1) from the mask table and 3D view ──────
     if (m_maskTable) {
@@ -14744,7 +14382,8 @@ void MainWindow::onBoneSplitFinished(const QString& outputPath)
         const int smoothingIterations = smoothingIterationsForPreset(MeshSmoothingPreset::Optimal);
         m_maskSmoothingIterations[label] = smoothingIterations;
         auto mesh = MeshGenerator::generateMesh(
-            m_segmentationLabelmap, label, true, smoothingIterations, &meshError, true, m_volume);
+            m_segmentationLabelmap, label, true, smoothingIterations, &meshError, closeCorticesFor(label),
+            m_volume);
         if (mesh) {
             publishSegmentationMesh(label, mesh);
         } else if (!meshError.isEmpty()) {

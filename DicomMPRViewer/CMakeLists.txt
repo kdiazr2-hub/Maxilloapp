@@ -104,6 +104,7 @@ set(SOURCES
     src/ProjectSerializer.cpp
     src/TransformCore.cpp
     src/OrientationCore.cpp
+    src/RegistrationCore.cpp
     src/GeometryValidation.cpp
     src/GeometryValidationCore.cpp
     src/CompositeModelCore.cpp
@@ -213,6 +214,8 @@ set(HEADERS
     src/LoggerCore.h
     src/RegistrationResult.h
     src/LandmarkCore.h
+    src/RegistrationCore.h
+    src/ClinicalNotice.h
 )
 
 set(RESOURCES
@@ -356,6 +359,7 @@ add_core_test(LeFortHoleTests tests/LeFortHoleTests.cpp src/LeFortHoleCore.cpp s
     src/PlateCore.cpp src/GuideDesignCore.cpp src/GuideBaseCore.cpp src/CutSlotCore.cpp src/WrapCore.cpp
     src/OsteotomyCore.cpp src/ImplicitCore.cpp src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)
 add_core_test(OrientationCoreTests tests/OrientationCoreTests.cpp src/OrientationCore.cpp)
+add_core_test(RegistrationCoreTests tests/RegistrationCoreTests.cpp src/RegistrationCore.cpp)
 target_link_libraries(ProjectSerializerTests PRIVATE Qt6::Gui)
 
 # Splint generator timing with real or synthetic STL (not a CTest by default).

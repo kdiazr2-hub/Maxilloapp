@@ -200,6 +200,13 @@ bool ProjectSerializer::save(const QString& projectFilePath,
     for (int lbl : state.hiddenMaskLabels) hiddenArr.append(lbl);
     root[QStringLiteral("hiddenMaskLabels")] = hiddenArr;
 
+    // Bone labels already solid (optional key)
+    if (!state.solidBoneLabels.isEmpty()) {
+        QJsonArray solidArr;
+        for (int lbl : state.solidBoneLabels) solidArr.append(lbl);
+        root[QStringLiteral("solidBoneLabels")] = solidArr;
+    }
+
     // Dental points
     QJsonObject ptsObj;
     ptsObj[QStringLiteral("maxillaBone")]  = vec3ToJson(state.maxillaBonePoints);
@@ -398,6 +405,9 @@ bool ProjectSerializer::load(const QString& projectFilePath,
     state.hiddenMaskLabels.clear();
     for (const auto& v : root[QStringLiteral("hiddenMaskLabels")].toArray())
         state.hiddenMaskLabels.append(v.toInt());
+    state.solidBoneLabels.clear();
+    for (const auto& v : root[QStringLiteral("solidBoneLabels")].toArray())
+        state.solidBoneLabels.append(v.toInt());
 
     // Dental points
     const QJsonObject ptsObj = root[QStringLiteral("dentalPoints")].toObject();

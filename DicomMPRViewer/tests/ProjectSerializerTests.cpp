@@ -196,6 +196,23 @@ void testLegacyProjectWithoutDesigns()
     const QByteArray resavedText = check.readAll();
     require(!resavedText.contains("splintDesigns"), "empty designs were written");
     require(!resavedText.contains("guidesPlan"), "an empty guides plan was written");
+    require(loaded.solidBoneLabels.isEmpty(), "a legacy project came back with solid bone labels");
+    require(!resavedText.contains("solidBoneLabels"), "empty solid bone labels were written");
+}
+
+void testSolidBoneLabelsRoundTrip()
+{
+    QTemporaryDir dir;
+    require(dir.isValid(), "no temporary directory");
+    const QString path = dir.filePath(QStringLiteral("solido.maxilloproject"));
+    ProjectState state;
+    state.dicomFolder = QStringLiteral("C:/dicom/solido");
+    state.solidBoneLabels = {5, 6};
+    QString error;
+    require(ProjectSerializer::save(path, state, &error), "save failed: " + error.toStdString());
+    ProjectState loaded;
+    require(ProjectSerializer::load(path, loaded, &error), "load failed: " + error.toStdString());
+    require(loaded.solidBoneLabels == QVector<int>({5, 6}), "solid bone labels did not survive the round trip");
 }
 } // namespace
 
@@ -206,6 +223,7 @@ int main()
         {"composite parts and blocks round trip", testCompositePartsAndBlocksRoundTrip},
         {"guides plan round trip", testGuidesPlanRoundTrip},
         {"legacy project without designs", testLegacyProjectWithoutDesigns},
+        {"solid bone labels round trip", testSolidBoneLabelsRoundTrip},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {

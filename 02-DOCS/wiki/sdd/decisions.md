@@ -174,3 +174,23 @@ El usuario pidió evolucionar el producto a ortognática, oncología maxilofacia
 
 Abiertas, no preguntadas en esa respuesta: cuándo cumplir el modo claro de la constitución §16 (recomendación: fase 3, sin rediseñar el ribbon) y si el proyecto guardará historial de ediciones (recomendación: no).
 
+## 2026-10-19 — Evaluación del repositorio: CI, reglas de commit y rama, CLAUDE.md
+
+Tras una evaluación del repositorio el usuario eligió cuatro arreglos.
+
+- **Compilación reproducible.** Opciones: CI en GitHub Actions / script de instalación para el PC sin toolchain /
+  ambos. **Elegido:** CI (`.github/workflows/windows-ci.yml`, Windows, VS 2022, Qt 6.11.0, GDCM de vcpkg, VTK 9.5.2
+  compilado y cacheado). Por qué: el proyecto solo compilaba en un PC; el CI además verifica cambios hechos en una
+  máquina sin toolchain. Los workspace tests (GPU) quedan fuera del CI.
+- **Reglas 10 y 11.** Opciones: mantener PR y quitar gitmoji / hacer cumplir ambas / relajar ambas.
+  **Elegido:** rama + PR se mantiene (ahora con CI en cada PR); los commits pasan a frase descriptiva en inglés sin
+  emoji (constitución v1.1.0). Pendiente: desactivar `gitmoji-guard` en la configuración de rsc (`.rsc.json`,
+  `gitmojiGuard`) con la propia herramienta rsc, no a mano, porque el archivo lleva hashes de integridad.
+- **CLAUDE.md.** Pesaba 53 KB y tenía datos desfasados. El detalle de arquitectura se movió tal cual a
+  `plataforma/arquitectura.md`; `CLAUDE.md` queda con build, tests, resumen y las reglas fáciles de romper.
+- **Registro e ICP.** Primera extracción pendiente del inventario de `MainWindow`: `RegistrationCore` (ajuste por
+  puntos, ROI de arcada y de mordida, ICP, métricas) con `RegistrationCoreTests`. `MainWindow` conserva sus tres
+  métodos como envoltorios que traducen estados a mensajes, así que los llamadores no cambian.
+- **Aviso clínico y privacidad.** `ClinicalNotice.h` pone «Uso en investigación · no validado para uso clínico» en
+  el splash, la barra de estado y los informes exportados; `.gitignore` excluye DICOM, proyectos, mallas y
+  segmentaciones (principio 14).

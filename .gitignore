@@ -65,3 +65,22 @@ workspace-test-artifacts/
 .worktrees/
 .claude/skills/connect-tool
 .claude/agents/finding-verifier.md
+
+# Patient data never enters git (constitution, principle 14): DICOM, projects, meshes and
+# segmentations of real cases. Tests use synthetic geometry (tests/SplintTestGeometry.h).
+*.dcm
+*.DCM
+DICOMDIR
+*.maxilloproject
+*_assets/
+*.stl
+*.STL
+*.vtp
+*.ply
+*.obj
+*.nrrd
+*.nii
+*.nii.gz
+*.mha
+*.mhd
+AISegmentation/

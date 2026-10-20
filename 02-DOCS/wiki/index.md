@@ -43,6 +43,7 @@ tags: [index]
 | What | Where |
 |------|-------|
 | Auditoría 2026-10-18 (ortognática real; otras especialidades ausentes) | `plataforma/auditoria.md` |
+| Arquitectura detallada (registro de diseño por módulo, antes en `CLAUDE.md`) | `plataforma/arquitectura.md` |
 | Geometría que todavía calcula MainWindow | `plataforma/inventario-mainwindow.md` |
 | Orientación: plano de los cuatro puntos (disponible) | `plataforma/orientacion-frankfurt.md` |
 | Flujo del riel, Atrás, y cuándo cerrar el escaneo | `plataforma/flujo-ortognatica.md` |

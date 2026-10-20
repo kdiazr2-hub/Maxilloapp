@@ -845,6 +845,11 @@ private:
     QString                           m_segmentationOutputDir;
     int                               m_pendingAutoMeshLabel = -1;  // -1 = none
     std::set<int>                     m_hiddenMaskLabels;
+    // Bone labels the segmentation script delivered solid (its solid_bone_mask filled the marrow). Their
+    // meshes skip fillBetweenCortices: its axis chords up to 20 mm only added rectangular slabs to them, in
+    // the nose and the palate (user's report, 2026-10-19). Saved as the optional "solidBoneLabels" key.
+    std::set<int>                     m_solidBoneLabels;
+    bool closeCorticesFor(int label) const { return m_solidBoneLabels.count(label) == 0; }
     QMap<int, int>                    m_maskSmoothingIterations;
 
     // ── Labelmap undo stack (2-D lasso edits) ─────────────────────────────

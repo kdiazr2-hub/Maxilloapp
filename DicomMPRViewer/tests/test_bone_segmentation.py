@@ -342,6 +342,138 @@ def coarse_sphere(block_mm=1.5, spacing=(0.4, 0.4, 0.4), shape=(60, 60, 60), rad
     return true, coarse, hu, spacing
 
 
+def cortical_box(source_label=2, interior_hu=300.0, foramina=True, shape=(28, 28, 40)):
+    """A cortical box 2 voxels thick at 0.5 mm, marrow inside; optionally an 8-voxel (4 mm) foramen in two
+    opposite faces, wider than the 1.5 mm closing seals, so the marrow reaches the outside in 3D."""
+    labels = np.zeros(shape, dtype=np.uint8)
+    labels[4:-4, 4:-4, 4:-4] = source_label
+    labels[6:-6, 6:-6, 6:-6] = 0
+    intensities = np.full(shape, -50.0, dtype=np.float32)
+    intensities[4:-4, 4:-4, 4:-4] = 1200.0
+    intensities[6:-6, 6:-6, 6:-6] = interior_hu
+    if foramina:
+        mid = shape[0] // 2
+        labels[mid - 4:mid + 4, mid - 4:mid + 4, 4:6] = 0
+        labels[mid - 4:mid + 4, mid - 4:mid + 4, -6:-4] = 0
+        intensities[mid - 4:mid + 4, mid - 4:mid + 4, 4:6] = -50.0
+        intensities[mid - 4:mid + 4, mid - 4:mid + 4, -6:-4] = -50.0
+    return labels, intensities
+
+
+class SolidBoneTests(unittest.TestCase):
+    """User's request, 2026-10-19: the jaws came out hollow on osteotomy. The bone is the network's mask closed,
+    filled in 3D and in 2 of 3 slice planes, with no lower HU limit but air."""
+
+    spacing = (0.5, 0.5, 0.5)
+
+    def solid(self, labels, intensities, source_label=2, spacing=None, **kwargs):
+        before = labels.copy()
+        result = segmentator.solid_bone_mask(labels == source_label, labels, intensities, spacing or self.spacing,
+                                             source_label, **kwargs)
+        np.testing.assert_array_equal(labels, before)
+        return result
+
+    def test_marrow_open_through_foramina_is_filled(self):
+        labels, intensities = cortical_box()
+        result = self.solid(labels, intensities)
+        marrow = np.zeros(labels.shape, dtype=bool)
+        marrow[6:-6, 6:-6, 6:-6] = True
+        marrow[10:18, 10:18, :] = False  # in line with both foramina: a canal, open in two of the three planes
+        self.assertTrue(np.all(result[marrow]), "the marrow was left hollow")
+        self.assertFalse(result[1, 1, 20], "the bone grew outside the cortex")
+
+    def test_fatty_marrow_below_zero_hu_is_bone(self):
+        for source_label in (1, 2):
+            with self.subTest(source_label=source_label):
+                labels, intensities = cortical_box(source_label, interior_hu=-150.0)
+                result = self.solid(labels, intensities, source_label)
+                self.assertTrue(result[8, 8, 20], "fatty marrow under 0 HU was left out")
+
+    def test_air_stays_air(self):
+        labels, intensities = cortical_box(1, interior_hu=-900.0)
+        self.assertFalse(np.any(self.solid(labels, intensities, 1)[7:-7, 7:-7, 8:-8]))
+
+    def test_a_cavity_wider_than_marrow_stays_open(self):
+        # The cranial cavity: brain at 30 HU closed in by the skull, 20 mm from its centre to the wall at 1 mm
+        # voxels (a real one is about 60 mm): wider than marrow, and most directions travel further than 15 mm.
+        labels, intensities = cortical_box(1, interior_hu=30.0, foramina=False, shape=(52, 52, 52))
+        result = self.solid(labels, intensities, 1, spacing=(1.0, 1.0, 1.0))
+        self.assertFalse(np.any(result[12:-12, 12:-12, 12:-12]), "the cranial cavity became bone")
+
+    def test_the_nose_is_not_filled(self):
+        # A nasal meatus: an air tube along y between bony walls, lined by 1 mm of mucosa at 40 HU. The meatus is
+        # closed in on most sides, but its mucosa lines air and the air is never bone.
+        labels = np.zeros((30, 40, 30), dtype=np.uint8)
+        labels[4:26, :, 4:26] = 1
+        labels[8:22, :, 8:22] = 0
+        intensities = np.full(labels.shape, 1200.0, dtype=np.float32)
+        intensities[8:22, :, 8:22] = 40.0         # mucosa
+        intensities[10:20, :, 10:20] = -1000.0    # air
+        result = self.solid(labels, intensities, 1)
+        self.assertFalse(np.any(result[8:22, 5:35, 8:22]), "the nasal cavity or its mucosa became bone")
+
+    def test_an_outer_groove_stays_open(self):
+        labels = np.zeros((30, 30, 30), dtype=np.uint8)
+        labels[4:26, 4:26, 4:26] = 2
+        labels[10:20, 10:20, 18:26] = 0  # a 5 mm notch cut in from one face
+        intensities = np.full(labels.shape, 300.0, dtype=np.float32)
+        result = self.solid(labels, intensities)
+        self.assertFalse(np.any(result[12:18, 12:18, 20:26]))
+
+    def test_other_labels_keep_their_voxels(self):
+        labels, intensities = cortical_box()
+        labels[12:16, 12:16, 6:-6] = 5   # the canal
+        labels[8, 8, 10] = 4             # a tooth
+        result = self.solid(labels, intensities)
+        self.assertFalse(np.any(result[labels == 5]))
+        self.assertFalse(result[8, 8, 10])
+        self.assertTrue(result[20, 20, 20])
+
+
+class BoneDiagnosticsTests(unittest.TestCase):
+    def test_the_marrow_is_counted_and_the_parts_add_up(self):
+        labels, intensities = cortical_box()
+        solid = segmentator.solid_bone_mask(labels == 2, labels, intensities, (0.5, 0.5, 0.5), 2)
+        cortical, medullary, air = segmentator.split_cortical_medullary(solid, intensities)
+        self.assertGreater(int(medullary.sum()), 0, "no marrow in the bone")
+        self.assertFalse(np.any(cortical & medullary))
+        np.testing.assert_array_equal(cortical | medullary | air, solid)
+
+    def test_a_hollow_shell_reports_almost_no_marrow(self):
+        labels, intensities = cortical_box(interior_hu=-900.0, foramina=False)
+        _, medullary, _ = segmentator.split_cortical_medullary(labels == 2, intensities)
+        self.assertEqual(int(medullary.sum()), 0)
+
+    def test_the_bone_mesh_is_watertight_and_a_plane_cut_is_capped(self):
+        import trimesh
+        labels, intensities = cortical_box()
+        solid = segmentator.solid_bone_mask(labels == 2, labels, intensities, (0.5, 0.5, 0.5), 2)
+        mesh = segmentator.bone_surface_mesh(solid, (0.5, 0.5, 0.5))
+        self.assertTrue(mesh.is_watertight, "the bone surface is open")
+        self.assertEqual(len(trimesh.graph.connected_components(mesh.face_adjacency,
+                                                                nodes=np.arange(len(mesh.faces)))), 1)
+        centre = mesh.bounds.mean(axis=0)
+        half = mesh.slice_plane(centre, [1.0, 0.0, 0.0], cap=True)
+        self.assertTrue(half.is_watertight, "the cut left the section open")
+        self.assertGreater(abs(half.volume), 0.3 * abs(mesh.volume), "the cut half is hollow")
+
+    def test_loose_fragments_are_dropped_and_the_bone_kept(self):
+        mask = np.zeros((40, 40, 40), dtype=bool)
+        mask[5:35, 5:35, 5:20] = True     # the bone, 3375 mm3 at 0.5 mm
+        mask[30:33, 30:33, 30:33] = True  # a speck of 3.4 mm3
+        mask[2:12, 25:38, 28:38] = True   # a real separate piece of 162 mm3
+        result = segmentator.drop_bone_islands(mask, (0.5, 0.5, 0.5), 2)
+        self.assertFalse(np.any(result[30:33, 30:33, 30:33]))
+        self.assertTrue(np.all(result[5:35, 5:35, 5:20]))
+        self.assertTrue(np.all(result[2:12, 25:38, 28:38]))
+
+    def test_anisotropic_spacing_is_flagged(self):
+        with patch.object(segmentator, "log") as log:
+            ratio = segmentator.log_volume_spacing((0.377, 0.377, 0.7))
+        self.assertGreater(ratio, 1.5)
+        self.assertTrue(any("AVISO" in str(call) for call in log.call_args_list))
+
+
 class CoarseMaskRefinementTests(unittest.TestCase):
     """A bone mask predicted on a 1.5 mm grid (TotalSegmentator) and brought back on the CT's grid is made of
     blocks, and the mesh shows them as terraces (user's report, 2026-10-19: "sale muy rugosa"). Near its
@@ -394,8 +526,10 @@ class BoneRemapTests(unittest.TestCase):
         self.env.start()
         self.addCleanup(self.env.stop)
 
-    def remap(self, labels, target, shifted_prediction=False, bone_from_totalsegmentator=False):
-        image = sitk.GetImageFromArray(np.full(labels.shape, 50, dtype=np.int16))
+    def remap(self, labels, target, shifted_prediction=False, bone_from_totalsegmentator=False, intensities=None):
+        if intensities is None:
+            intensities = np.full(labels.shape, 50, dtype=np.int16)
+        image = sitk.GetImageFromArray(intensities.astype(np.int16))
         image.SetSpacing((0.4, 0.7, 1.1))
         image.SetOrigin((12.5, -37, 80))
         image.SetDirection((0, -1, 0, 1, 0, 0, 0, 0, 1))
@@ -477,12 +611,30 @@ class BoneRemapTests(unittest.TestCase):
         self.assertTrue(np.all(result[16, 16, 10:20] == 6), "the canal was left as its own structure")
         self.assertEqual(np.count_nonzero(result == 7), 0)
 
-    def test_totalsegmentator_bone_keeps_its_interior(self):
-        # A hollow DentalSegmentator shell is no longer filled once the bone came from TotalSegmentator.
-        result = self.remap(shell(source_label=1), "hueso", bone_from_totalsegmentator=True)
+    def totalsegmentator_shell(self, source_label, interior_hu):
+        labels = shell(source_label=source_label)
+        intensities = np.full(labels.shape, -50, dtype=np.int16)
+        intensities[3:-3, 3:-3, 3:-3] = 1200        # cortex
+        intensities[5:-5, 5:-5, 5:-5] = interior_hu  # what the cortex encloses
+        return labels, intensities
+
+    def test_totalsegmentator_medulla_is_filled(self):
+        # User's report, 2026-10-19: once TotalSegmentator gave the bone, every bone step was skipped and the
+        # medulla came out hollow, so an osteotomy showed an empty shell. Cancellous bone inside the cortex is bone.
+        for source, app_label in ((1, 5), (2, 6)):
+            with self.subTest(source=source):
+                labels, intensities = self.totalsegmentator_shell(source, 300)
+                result = self.remap(labels, "hueso", bone_from_totalsegmentator=True, intensities=intensities)
+                self.assertTrue(np.all(result[5:-5, 5:-5, 5:-5] == app_label), "the medulla was left hollow")
+                self.assertEqual(result[3, 10, 10], app_label)
+                self.assertEqual(result[0, 0, 0], 0)
+
+    def test_totalsegmentator_air_inside_the_bone_stays_open(self):
+        # A sinus is air the bone encloses: filling it would turn the maxilla into a solid block.
+        labels, intensities = self.totalsegmentator_shell(1, -900)
+        result = self.remap(labels, "hueso", bone_from_totalsegmentator=True, intensities=intensities)
         self.assertEqual(result[10, 10, 10], 0)
         self.assertEqual(result[3, 10, 10], 5)
-        self.assertEqual(result[0, 0, 0], 0)
 
     def test_mismatched_physical_grids_fail_without_writing_output(self):
         with self.assertRaisesRegex(ValueError, "cuadricula fisica"):

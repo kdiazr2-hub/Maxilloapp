@@ -44,9 +44,10 @@ bool labelExtent(vtkImageData* mask, int label, int result[6])
     return result[0] <= result[1];
 }
 
-vtkSmartPointer<vtkPolyData> smoothSurface(vtkImageData* mask, int label, QString* error, vtkImageData* hounsfield)
+vtkSmartPointer<vtkPolyData> smoothSurface(vtkImageData* mask, int label, QString* error, vtkImageData* hounsfield,
+                                          bool closeCortices)
 {
-    const auto cortical = fillBetweenCortices(mask, label, 20.0, hounsfield);
+    const auto cortical = closeCortices ? fillBetweenCortices(mask, label, 20.0, hounsfield) : nullptr;
     if (cortical)
         mask = cortical;
     // Anti-aliased surface: blur the binary label slightly and contour it halfway, so the surface
@@ -122,7 +123,8 @@ vtkSmartPointer<vtkPolyData> smoothSurface(vtkImageData* mask, int label, QStrin
 } // namespace
 
 vtkSmartPointer<vtkPolyData> MaskToObjectCore::Convert(vtkImageData* mask, int label, QString* error,
-                                                               Surface surface, vtkImageData* hounsfield)
+                                                               Surface surface, vtkImageData* hounsfield,
+                                                               bool closeCortices)
 {
     if (error) error->clear();
     if (!mask || !mask->GetPointData()->GetScalars() || mask->GetNumberOfScalarComponents() != 1) {
@@ -134,6 +136,6 @@ vtkSmartPointer<vtkPolyData> MaskToObjectCore::Convert(vtkImageData* mask, int l
         return nullptr;
     }
     if (surface == Surface::Exact)
-        return MeshGenerator::generateMesh(mask, label, false, 0, error, true, hounsfield);
-    return smoothSurface(mask, label, error, hounsfield);
+        return MeshGenerator::generateMesh(mask, label, false, 0, error, closeCortices, hounsfield);
+    return smoothSurface(mask, label, error, hounsfield, closeCortices);
 }

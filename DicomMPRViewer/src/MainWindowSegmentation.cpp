@@ -19,7 +19,7 @@ void MainWindow::calculateObjectFromMask(int label, bool smooth)
     QString error;
     auto mesh = MaskToObjectCore::Convert(m_segmentationLabelmap, label, &error,
                                           smooth ? MaskToObjectCore::Surface::Smooth : MaskToObjectCore::Surface::Exact,
-                                          m_volume);
+                                          m_volume, closeCorticesFor(label));
     if (!mesh) {
         QMessageBox::warning(this, tr("Convertir máscara a objeto"), error);
         return;

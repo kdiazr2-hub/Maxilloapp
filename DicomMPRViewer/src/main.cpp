@@ -18,6 +18,8 @@
 #include <vtkSmartPointer.h>
 
 #include "AsyncDicomLoader.h"    // Q_DECLARE_METATYPE guards
+#include "ClinicalNotice.h"
+#include "CranioPalette.h"
 #include "DicomSeriesIndexer.h"
 #include "DicomVolumeLoader.h"
 #include "MainWindow.h"
@@ -36,6 +38,12 @@ static QPixmap buildSplashPixmap()
     painter.drawText(QRect(40, 130, splash.width() - 80, 50),
                      Qt::AlignCenter,
                      QString::fromUtf8("Planificación Maxilofacial"));
+
+    painter.setPen(QColor(CranioPalette::MutedText));
+    painter.setFont(QFont(QStringLiteral("Segoe UI"), 10));
+    painter.drawText(QRect(40, 180, splash.width() - 80, 28),
+                     Qt::AlignCenter,
+                     QString::fromUtf8(ClinicalNotice::kShort));
 
     painter.setPen(QColor(142, 142, 147)); // Apple muted gray
     painter.setFont(QFont(QStringLiteral("Segoe UI"), 11, QFont::Medium));

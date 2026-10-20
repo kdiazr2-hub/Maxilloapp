@@ -10,6 +10,7 @@
 #include <vtkNrrdReader.h>
 #include <vtkPNGWriter.h>
 #include <vtkPolyData.h>
+#include <vtkPolyDataConnectivityFilter.h>
 #include <vtkPolyDataMapper.h>
 #include <vtkProperty.h>
 #include <vtkRenderWindow.h>
@@ -104,6 +105,37 @@ static void testSmoothRemovesSliceTerraces()
               << exactSharp << " vs " << smoothSharp << '\n';
     require(smoothResidual < 0.6 * exactResidual, "Smooth surface kept the slice terraces");
     require(smoothSharp * 10 < exactSharp, "Smooth surface still folds at the slice terraces");
+}
+
+// A hollow cortical box: the chord fill closes its marrow (one surface); a label the segmentation script
+// already delivered solid skips it, and a hollow one then keeps its inner surface (two).
+static void testSolidBoneSkipsTheCorticalFill()
+{
+    auto mask = vtkSmartPointer<vtkImageData>::New();
+    mask->SetDimensions(30, 30, 30);
+    mask->SetSpacing(0.5, 0.5, 0.5);
+    mask->AllocateScalars(VTK_UNSIGNED_CHAR, 1);
+    for (int z = 0; z < 30; ++z)
+        for (int y = 0; y < 30; ++y)
+            for (int x = 0; x < 30; ++x) {
+                const bool box = x >= 4 && x <= 25 && y >= 4 && y <= 25 && z >= 4 && z <= 25;
+                const bool marrow = x >= 7 && x <= 22 && y >= 7 && y <= 22 && z >= 7 && z <= 22;
+                mask->SetScalarComponentFromDouble(x, y, z, 0, box && !marrow ? 5 : 0);
+            }
+    const auto surfaces = [](vtkPolyData* mesh) {
+        auto connectivity = vtkSmartPointer<vtkPolyDataConnectivityFilter>::New();
+        connectivity->SetInputData(mesh);
+        connectivity->SetExtractionModeToAllRegions();
+        connectivity->Update();
+        return connectivity->GetNumberOfExtractedRegions();
+    };
+    const auto filled = MaskToObjectCore::Convert(mask, 5, nullptr, Surface::Exact, nullptr, true);
+    const auto solid = MaskToObjectCore::Convert(mask, 5, nullptr, Surface::Exact, nullptr, false);
+    const auto smoothSolid = MaskToObjectCore::Convert(mask, 5, nullptr, Surface::Smooth, nullptr, false);
+    require(filled && solid && smoothSolid, "Hollow box conversion failed");
+    require(surfaces(filled) == 1, "The cortical fill no longer closes the marrow");
+    require(surfaces(solid) == 2, "closeCortices = false still filled the marrow");
+    require(surfaces(smoothSolid) == 2, "closeCortices = false still filled the marrow (smooth)");
 }
 
 static void renderPng(vtkPolyData* mesh, const std::string& path, double zoom, double focusHeight)
@@ -258,6 +290,7 @@ int main()
             require(distance->EvaluateFunction(tip) < 0, "Conversion smoothed away a voxel feature");
         }
         testSmoothRemovesSliceTerraces();
+        testSolidBoneSkipsTheCorticalFill();
         require(!MaskToObjectCore::Convert(nullptr, 5), "Invalid mask accepted");
         require(!MaskToObjectCore::Convert(nullptr, 5, nullptr, Surface::Smooth), "Invalid mask accepted (smooth)");
         realDataReport();

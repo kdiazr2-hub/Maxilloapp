@@ -5,12 +5,12 @@ description: Los principios no negociables que obedece cada fase rsc-sdd.
 tags: [sdd, constitution]
 timestamp: 2026-10-04T00:00:00Z
 topic: sdd
-version: v1.0.0
+version: v1.1.0
 ---
 
 # MaxilloApp — Constitución
 
-> Versión: v1.0.0 · Ratificada: 2026-10-04 · Última enmienda: 2026-10-04
+> Versión: v1.1.0 · Ratificada: 2026-10-04 · Última enmienda: 2026-10-19
 > Principios no negociables que obedece cada fase rsc-sdd. La mecánica concreta
 > (build, tests, arquitectura, geometría) vive en el `CLAUDE.md` de la raíz; este archivo
 > ratifica el principio y apunta al detalle.
@@ -26,7 +26,9 @@ version: v1.0.0
 
 ## 2. Barra de calidad
 
-4. El build Release compila sin errores y `ctest -C Release` pasa completo antes de integrar.
+4. El build Release compila sin errores y `ctest -C Release` pasa completo antes de integrar. El CI
+   (`.github/workflows/windows-ci.yml`) lo comprueba en cada PR; los workspace tests, que necesitan GPU, se
+   corren a mano en un PC con GPU dedicada antes de integrar un cambio que toque la interfaz.
 5. La lógica nueva va en clases core sin widgets de Qt (patrón `TransformCore`,
    `SplintGenerator`) y entra con al menos un test registrado con `add_core_test()`.
    `MainWindow*.cpp` solo orquesta la UI.
@@ -39,8 +41,8 @@ version: v1.0.0
    un wrap. Detalle: `CLAUDE.md` § Architecture (HOW TO MEASURE).
 9. Los `.maxilloproject` antiguos siguen abriendo: toda clave nueva de `ProjectSerializer` es
    opcional y tiene valor por defecto.
-10. Mensajes de commit: gitmoji + una frase descriptiva en inglés que diga qué cambia
-    (`🐛 No screw on a bony margin`). Enforced by `gitmoji-guard`.
+10. Mensajes de commit: una frase descriptiva en inglés que diga qué cambia, sin emoji
+    (`No screw on a bony margin`). (Enmienda v1.1.0: se retira el gitmoji; `gitmoji-guard` se desactiva.)
 
 ## 4. Ramas y entrega
 
@@ -68,8 +70,8 @@ version: v1.0.0
 
 17. Toda decisión significativa se anota en `02-DOCS/wiki/sdd/decisions.md` (fecha, opciones,
     porqué). La constitución es el registro de decisiones de mayor rango.
-18. Al añadir una clase core o cambiar un flujo, se actualiza `CLAUDE.md` § Architecture en el
-    mismo cambio.
+18. Al añadir una clase core o cambiar un flujo, se actualiza en el mismo cambio su sección de
+    `02-DOCS/wiki/plataforma/arquitectura.md` y, si cambia el resumen, `CLAUDE.md` § Architecture.
 
 ## Definition of Done (la barra que corre `verify`)
 
@@ -78,7 +80,7 @@ Un cambio se integra solo si se cumple TODO:
 - [ ] Build Release limpio y `ctest` completo en verde (principio 4).
 - [ ] Lógica nueva en core con test; bug con test de regresión (principios 5-6).
 - [ ] UI en español, medidas en mm contra hueso, proyectos antiguos abren (principios 7-9).
-- [ ] Commit gitmoji, en rama con PR, autor humano (principios 10-12).
+- [ ] Commit con frase descriptiva, en rama con PR y CI en verde, autor humano (principios 4, 10-12).
 - [ ] Sin secretos ni datos de pacientes (principios 13-14).
 - [ ] Paso de revisión antes de exportar; claro/oscuro correctos (principios 15-16).
 - [ ] Decisiones anotadas y `CLAUDE.md` al día (principios 17-18).
@@ -88,3 +90,4 @@ Un cambio se integra solo si se cumple TODO:
 | Fecha | Versión | Cambio | Porqué |
 |-------|---------|--------|--------|
 | 2026-10-04 | v1.0.0 | Constitución inicial ratificada. | Instalación del harness rsc. |
+| 2026-10-19 | v1.1.0 | Principio 10 sin gitmoji; principio 4 con CI; principio 18 apunta al registro de arquitectura del wiki. | Decisión del usuario: el historial no usaba gitmoji; rama + PR se mantiene y el CI la vuelve útil; `CLAUDE.md` se recortó. |

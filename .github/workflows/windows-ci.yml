@@ -1,0 +1,139 @@
+# Windows build and tests on every pull request to main (constitution, principle 4: the merge bar).
+#
+# Same toolchain as the laptop: Visual Studio 2022 (MSVC), Qt 6.11.0 msvc2022_64, GDCM from vcpkg and VTK 9.5.2
+# built from source. VTK is built once (about an hour) and cached under C:/vtk-install; bump VTK_CACHE_KEY when the
+# VTK version or its module list below changes.
+#
+# Not covered here: the workspace tests (RepositionWorkspaceTests, SplintWorkspaceTests, Mesh3DViewInteractionTests)
+# render with OpenGL and need a GPU, so they stay on the surgeon's PC. The segmentation Python tests run in their own
+# job on CPU without torch or the model weights.
+name: windows-ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: windows-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  QT_VERSION: 6.11.0
+  VTK_VERSION: 9.5.2
+  VTK_CACHE_KEY: vtk-9.5.2-qt6.11.0-msvc2022-v1
+  VTK_INSTALL: C:/vtk-install
+  VCPKG_BINARY_SOURCES: clear;files,C:/vcpkg-cache,readwrite
+
+jobs:
+  build-and-test:
+    runs-on: windows-2022
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          cache: true
+
+      - name: Restore GDCM (vcpkg binary cache)
+        uses: actions/cache@v4
+        with:
+          path: C:/vcpkg-cache
+          key: vcpkg-gdcm-x64-windows-v1
+
+      - name: Install GDCM
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force C:/vcpkg-cache | Out-Null
+          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install gdcm:x64-windows
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Restore VTK
+        id: vtk-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.VTK_INSTALL }}
+          key: ${{ env.VTK_CACHE_KEY }}
+
+      - name: Build VTK
+        if: steps.vtk-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          git clone --depth 1 --branch "v$env:VTK_VERSION" https://gitlab.kitware.com/vtk/vtk.git C:/vtk-src
+          # Only the modules the app and the core tests ask for; VTK pulls in their dependencies.
+          $modules = @(
+            'CommonCore', 'CommonDataModel', 'CommonMath', 'CommonTransforms',
+            'FiltersCore', 'FiltersGeneral', 'FiltersSources', 'FiltersModeling', 'FiltersGeometry',
+            'GUISupportQt', 'IOImage', 'IOGeometry', 'IOXML',
+            'ImagingColor', 'ImagingCore', 'ImagingGeneral', 'ImagingHybrid', 'ImagingMath',
+            'ImagingMorphological', 'ImagingStencil',
+            'InteractionImage', 'InteractionStyle', 'InteractionWidgets',
+            'RenderingAnnotation', 'RenderingCore', 'RenderingFreeType', 'RenderingOpenGL2')
+          $enable = $modules | ForEach-Object { "-DVTK_MODULE_ENABLE_VTK_$_=YES" }
+          $groups = 'Imaging', 'MPI', 'Qt', 'Rendering', 'StandAlone', 'Views', 'Web' |
+            ForEach-Object { "-DVTK_GROUP_ENABLE_$_=DONT_WANT" }
+          cmake -S C:/vtk-src -B C:/vtk-build -G "Visual Studio 17 2022" -A x64 `
+            -DBUILD_SHARED_LIBS=ON -DVTK_BUILD_TESTING=OFF -DVTK_BUILD_EXAMPLES=OFF `
+            -DVTK_BUILD_ALL_MODULES=OFF -DVTK_SMP_IMPLEMENTATION_TYPE=STDThread `
+            -DVTK_QT_VERSION=6 -DQt6_DIR="$env:QT_ROOT_DIR/lib/cmake/Qt6" `
+            -DCMAKE_INSTALL_PREFIX="$env:VTK_INSTALL" @groups @enable
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build C:/vtk-build --config Release --parallel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --install C:/vtk-build --config Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # Saved right away, so a failing test later in the job does not throw away an hour of VTK.
+      - name: Save VTK
+        if: steps.vtk-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.VTK_INSTALL }}
+          key: ${{ env.VTK_CACHE_KEY }}
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          $vcpkg = $env:VCPKG_INSTALLATION_ROOT -replace '\\', '/'
+          cmake -S DicomMPRViewer -B build -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR;$vcpkg/installed/x64-windows" `
+            -DVTK_DIR="$env:VTK_INSTALL/lib/cmake/vtk-$($env:VTK_VERSION.Substring(0, 3))" `
+            -DUSE_GDCM=ON -DGDCM_DIR="$vcpkg/installed/x64-windows/share/gdcm" `
+            -DCMAKE_TOOLCHAIN_FILE="$vcpkg/scripts/buildsystems/vcpkg.cmake" `
+            -DBUILD_WORKSPACE_TESTS=OFF
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --parallel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Core tests
+        shell: pwsh
+        run: |
+          $vcpkg = $env:VCPKG_INSTALLATION_ROOT
+          $env:PATH = "$env:VTK_INSTALL/bin;$env:QT_ROOT_DIR/bin;$vcpkg/installed/x64-windows/bin;$env:PATH"
+          ctest --test-dir build -C Release --output-on-failure --timeout 1200
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  segmentation-python:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: python -m pip install numpy scipy SimpleITK
+      - name: Bone segmentation tests
+        run: python -m unittest discover -s DicomMPRViewer/tests -p test_bone_segmentation.py -v

@@ -72,6 +72,9 @@ struct ProjectState
     QVector<ProjMaskEntry>   masks;
     QVector<ProjObjectEntry> objects;
     QVector<int>             hiddenMaskLabels;
+    // Bone labels the segmentation script delivered solid (marrow filled by solid_bone_mask): meshing skips
+    // fillBetweenCortices for them. Optional key, written only when not empty; older projects have none.
+    QVector<int>             solidBoneLabels;
 
     // ── Registration points ───────────────────────────────────────────────────
     QVector<QVector3D> maxillaBonePoints;
