@@ -57,11 +57,43 @@ void MainWindow::calculateObjectFromMask(int label, bool smooth)
         : tr("Objeto exacto (vóxeles) creado desde la máscara: %1. Relleno conservado; la máscara no cambia.").arg(name));
 }
 
+void MainWindow::importWorkMaxillaSidecar(const QString& outputSegmentationPath)
+{
+    // The anatomical maxilla stays label 5. This copy is thickened only into air.
+    const QFileInfo info(outputSegmentationPath);
+    QString name = info.fileName();
+    const QString suffix = QStringLiteral("_maxilar_trabajo");
+    for (const QString& ext : {QStringLiteral(".nrrd"), QStringLiteral(".nii.gz"), QStringLiteral(".mha")})
+        if (name.endsWith(ext)) {
+            name = name.left(name.size() - ext.size()) + suffix + ext;
+            break;
+        }
+    const QString path = info.dir().filePath(name);
+    if (!QFileInfo::exists(path))
+        return;
+    QString error;
+    const auto maskImage = SegmentationImporter::importLabelmap(path, &error);
+    if (!maskImage)
+        return;
+    const auto mesh = MeshGenerator::generateMesh(maskImage, 1, true, 20, &error, false);
+    if (!mesh || mesh->GetNumberOfPolys() == 0)
+        return;
+    const QString objectName = meshLabelName(kWorkMaxillaLabel);
+    addObjectEntry(objectName, meshLabelColor(kWorkMaxillaLabel), kWorkMaxillaLabel);
+    if (m_mesh3DView) {
+        const int key = objectActorKey(kWorkMaxillaLabel);
+        m_mesh3DView->addMesh(key, mesh, objectName);
+        m_mesh3DView->setMeshColor(key, objectColorForLabel(kWorkMaxillaLabel));
+    }
+    m_appState.setProjectDirty(true);
+}
+
 void MainWindow::importUpperTeethSidecar(const QString& outputSegmentationPath)
 {
     // Both arches are already labels 3 and 8. The sidecar is the copy root analysis reads.
     importToothSidecar(outputSegmentationPath, QStringLiteral("_dientes_superiores"), kUpperTeethLabel);
     importToothSidecar(outputSegmentationPath, QStringLiteral("_dientes_inferiores"), kLowerTeethLabel);
+    importWorkMaxillaSidecar(outputSegmentationPath);
 }
 
 void MainWindow::importToothSidecar(const QString& outputSegmentationPath, const QString& suffix, int label)

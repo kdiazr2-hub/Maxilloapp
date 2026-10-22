@@ -285,8 +285,9 @@ private:
     void removeGuidePlate();
     void refreshGuidePlates();
     void exportGuidePlates();
-    void importUpperTeethSidecar(const QString& outputSegmentationPath); // hidden upper and lower teeth
+    void importUpperTeethSidecar(const QString& outputSegmentationPath); // teeth and the work maxilla
     void importToothSidecar(const QString& outputSegmentationPath, const QString& suffix, int label);
+    void importWorkMaxillaSidecar(const QString& outputSegmentationPath);
     void generateLeFortGuide(); // the band and the proposed drill sites, from the Le Fort's movement
     void acceptLeFortHoles();   // puts the sites in the guide and builds it
     // The Le Fort guide assistant's other steps (spec asistente-guia-lefort): roots, editable band.
@@ -858,7 +859,8 @@ private:
     std::set<int>                     m_solidBoneLabels;
     bool closeCorticesFor(int label) const {
         // Teeth are their own objects. The chord fill is for hollow cortical bone.
-        if (label == kUpperTeethLabel || label == kLowerTeethLabel) return false;
+        if (label == kUpperTeethLabel || label == kLowerTeethLabel || label == kWorkMaxillaLabel)
+            return false;
         return m_solidBoneLabels.count(label) == 0;
     }
     QMap<int, int>                    m_maskSmoothingIterations;

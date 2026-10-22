@@ -1311,6 +1311,61 @@ def recover_thin_walls(mask, prediction, intensities, spacing_zyx, source_label,
     return result
 
 
+def work_maxilla_mask(mask, intensities, spacing_zyx, target_mm=1.0, air_hu=-300.0):
+    """Thicken a maxillary wall that is thinner than `target_mm`, and only into air.
+
+    Thickness is twice the distance to the surface at the medial axis. The added voxels are air
+    (below `air_hu`) within the missing millimetres of that wall. Soft tissue and the outside of
+    a thick wall stay where they are. A wide air space keeps its centre: the growth is the deficit
+    of the wall, not a fill. The input mask is not modified.
+    """
+    import scipy.ndimage as ndi
+
+    bone = np.asarray(mask, dtype=bool)
+    if not np.any(bone):
+        return bone.copy()
+    if bone.shape != intensities.shape:
+        raise ValueError("El hueso y la imagen deben compartir la misma cuadricula.")
+    inside = ndi.distance_transform_edt(bone, sampling=spacing_zyx)
+    # A medial voxel is at least as far from the surface as its neighbours.
+    peak = ndi.maximum_filter(inside, size=3, mode="constant")
+    medial = bone & (inside > 0) & (inside + 1e-6 >= peak)
+    thin = medial & ((2.0 * inside) < target_mm)
+    if not np.any(thin):
+        return bone.copy()
+    # How far this wall still has to grow on its air side.
+    deficit = np.zeros(bone.shape, dtype=np.float32)
+    deficit[thin] = np.float32(target_mm) - np.float32(2.0) * inside[thin].astype(np.float32)
+    reach = float(deficit.max())
+    if reach <= 0:
+        return bone.copy()
+    # The thin wall, not the surface of a thick bone: cover each thin medial voxel out to its radius.
+    radius_mm = float(np.max(inside[thin])) if np.any(thin) else 0.0
+    thin_wall = ndi.distance_transform_edt(~thin, sampling=spacing_zyx) <= max(radius_mm, min(spacing_zyx))
+    thin_wall &= bone
+    air = np.isfinite(intensities) & (intensities < air_hu) & ~bone
+    # Only the air face of the thin wall. Soft tissue on the other face is not air, so it does not move.
+    struct = np.ones((3, 3, 3), dtype=bool)
+    air_face = thin_wall & ndi.binary_dilation(air, structure=struct)
+    if not np.any(air_face):
+        return bone.copy()
+    dist_to_face = ndi.distance_transform_edt(~air_face, sampling=spacing_zyx)
+    # The deficit is one value per medial voxel. Voxels in range of a thin face may grow by the
+    # largest deficit of the wall they touch; a 0.5 mm wall grows by 0.5 mm, and no further.
+    allowed = air & (dist_to_face <= reach + 1e-3) & (dist_to_face > 0)
+    if not np.any(allowed):
+        return bone.copy()
+    components, count = ndi.label(allowed | air_face, structure=struct)
+    if count == 0:
+        return bone.copy()
+    face_ids = np.unique(components[air_face])
+    face_ids = face_ids[face_ids != 0]
+    added = allowed & np.isin(components, face_ids)
+    result = bone.copy()
+    result |= added
+    return result
+
+
 def medulla_fill_params(source_label):
     """`fill_medullary_bone` settings per bone, each overridable by environment variable.
 
@@ -2223,6 +2278,12 @@ def remap_prediction(input_path, prediction_path, output_path, target, seed=None
         lower = write_lower_teeth_sidecar(conservative_mask(4), seg, output_path)
         if lower:
             log(f"Dientes inferiores aparte: {lower}")
+    if arr is not None and np.any(out == 5):
+        image, intensities = source_image()
+        work = work_maxilla_mask(out == 5, intensities, image.GetSpacing()[::-1])
+        work_path = write_teeth_sidecar(work, seg, output_path, "maxilar_trabajo")
+        if work_path:
+            log(f"Maxilar de trabajo aparte: {work_path}")
 
 
 def same_physical_grid(image, reference):

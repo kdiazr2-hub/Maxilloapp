@@ -1392,3 +1392,31 @@ class ThinWallRecoveryTests(unittest.TestCase):
         as_cbct = self.recover(labels == 1, labels, intensities, spacing, probability, calibrated=False)
         self.assertFalse(as_ct[5, 5, 7])
         self.assertTrue(as_cbct[5, 5, 7])
+
+
+class WorkMaxillaTests(unittest.TestCase):
+    """A thin wall grows only into the air until it is 1 mm. The soft-tissue side stays."""
+
+    def test_a_half_millimetre_wall_reaches_one_millimetre(self):
+        # Two voxels at 0.25 mm are a 0.5 mm wall. 2×EDT on its axis is that thickness.
+        spacing = (0.25, 0.25, 0.25)  # z, y, x
+        shape = (8, 24, 8)
+        bone = np.zeros(shape, dtype=bool)
+        bone[:, 10:12, :] = True
+        intensities = np.full(shape, 40.0, dtype=np.float32)  # soft tissue
+        intensities[:, :10, :] = -1000.0  # air on one side
+        intensities[bone] = 800.0
+        before = bone.copy()
+        result = segmentator.work_maxilla_mask(bone, intensities, spacing)
+        np.testing.assert_array_equal(bone, before)
+        # The missing 0.5 mm is taken from the air. The soft-tissue side does not move.
+        self.assertTrue(np.all(result[:, 8:10, :]))
+        self.assertFalse(np.any(result[:, 12, :]))
+        self.assertTrue(np.all(result[:, 10:12, :]))
+        import scipy.ndimage as ndi
+        inside = ndi.distance_transform_edt(result, sampling=spacing)
+        peak = ndi.maximum_filter(inside, size=3, mode="constant")
+        medial = result & (inside > 0) & (inside + 1e-6 >= peak)
+        self.assertGreaterEqual(float(np.max(2.0 * inside[medial])), 1.0 - 1e-3)
+        # Air farther than the deficit stays empty.
+        self.assertFalse(np.any(result[:, :6, :]))

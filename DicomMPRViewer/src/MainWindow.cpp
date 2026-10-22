@@ -396,6 +396,7 @@ QString meshLabelName(int label)
         case 6: return "Mandíbula";
         case 7: return "Canal mandibular";
         case 8: return "Dientes inferiores";
+        case kWorkMaxillaLabel: return "Maxilar (trabajo)";
         case kUpperArchLabel: return "Arco superior STL";
         case kLowerArchLabel: return "Arco inferior STL";
         case kUpperCompositeLabel: return "Compuesto maxilar";
@@ -436,6 +437,7 @@ QColor meshLabelColor(int label)
         case 6: return CranioPalette::mandible();
         case 7: return CranioPalette::canal();
         case 8: return CranioPalette::dental();
+        case kWorkMaxillaLabel: return CranioPalette::boneDark();
         case kUpperArchLabel: return CranioPalette::dental();
         case kLowerArchLabel: return CranioPalette::dental();
         case kUpperCompositeLabel: return CranioPalette::maxilla();

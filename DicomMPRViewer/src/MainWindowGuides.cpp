@@ -1156,6 +1156,12 @@ void MainWindow::setGuideType(GuideType type)
 
 vtkSmartPointer<vtkPolyData> MainWindow::guideSourceMeshForLabel(int label) const
 {
+    // The intact maxilla used by a guide is the thickened copy. Measurement stays on label 5.
+    if (label == 5) {
+        const auto work = repositionMeshForLabel(kWorkMaxillaLabel);
+        if (work && work->GetNumberOfPolys() > 0)
+            return work;
+    }
     // The Le Fort cutting path is defined at osteotomy time. Its guide must be
     // designed in that same pre-reposition frame, even after the segment moves.
     if (m_guidePlan.type == GuideType::LeFort) {
