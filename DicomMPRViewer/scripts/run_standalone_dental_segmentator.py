@@ -1111,6 +1111,206 @@ def seal_wall_perforations(mask, prediction, intensities, spacing_zyx, source_la
     return out
 
 
+def load_label_probability(prediction_or_npz, source_label, spatial_shape):
+    """One nnU-Net class from `<case>.npz`, aligned with the segmentation array (z, y, x).
+
+    The file is what `--save_probabilities` writes. A missing or mismatched map leaves the probability
+    branch off; the Hounsfield branch still runs. The compressed array is not kept."""
+    path = Path(prediction_or_npz)
+    name = path.name
+    if name.endswith(".nii.gz"):
+        path = path.with_name(name[:-7] + ".npz")
+    elif path.suffix != ".npz":
+        path = path.with_suffix(".npz")
+    if not path.exists():
+        log("    [Hueso - Maxilar] Sin mapa de probabilidades; la pared fina usa solo unidades Hounsfield.")
+        return None
+    with np.load(path) as data:
+        if "probabilities" not in data.files:
+            log("    [Hueso - Maxilar] El npz no trae 'probabilities'; la pared fina usa solo unidades Hounsfield.")
+            return None
+        probs = data["probabilities"]
+        if probs.ndim != 4 or not (0 <= int(source_label) < probs.shape[0]):
+            log("    [Hueso - Maxilar] Probabilidades con forma inesperada; se ignoran.")
+            return None
+        channel = probs[int(source_label)]
+        if channel.shape != tuple(spatial_shape):
+            if channel.shape == tuple(reversed(spatial_shape)):
+                channel = np.transpose(channel, (2, 1, 0))
+            else:
+                log(f"    [Hueso - Maxilar] Probabilidades {channel.shape} no coinciden con {tuple(spatial_shape)}; "
+                    "se ignoran.")
+                return None
+        loaded = np.ascontiguousarray(channel, dtype=np.float32)
+    log("    [Hueso - Maxilar] Probabilidad del maxilar cargada.")
+    return loaded
+
+
+def _study_is_calibrated_hounsfield(intensities):
+    """CT numbers, unless the study is marked cone-beam or its range cannot be Hounsfield.
+
+    A flat phantom (the tests, a soft-tissue crop) keeps the 150 HU floor. Cone-beam is
+    `DENTALSEGMENTATOR_MODALITY=cbct`, or a study with no air and a real density range.
+    """
+    mode = os.environ.get("DENTALSEGMENTATOR_MODALITY", "").strip().lower()
+    if mode in ("cbct", "cone", "cone-beam", "cr"):
+        return False
+    if mode in ("ct", "hounsfield"):
+        return True
+    finite = intensities[np.isfinite(intensities)]
+    if finite.size == 0:
+        return True
+    p1 = float(np.percentile(finite, 1))
+    p50 = float(np.percentile(finite, 50))
+    p95 = float(np.percentile(finite, 95))
+    p99 = float(np.percentile(finite, 99))
+    return not (p1 > -200.0 and (p95 - p50) > 80.0 and p99 < 2500.0)
+
+
+def _local_wall_threshold(bone, intensities, spacing_zyx, calibrated):
+    """Midpoint of the bone's 95th percentile and the soft tissue's median, inside 5 mm.
+
+    On a CT the midpoint cannot fall under 150 HU. On a cone-beam study the numbers are percentiles of
+    that study, with no Hounsfield floor."""
+    import scipy.ndimage as ndi
+
+    finite = np.isfinite(intensities)
+    bone_values = intensities[bone & finite]
+    if bone_values.size == 0:
+        return 150.0 if calibrated else 0.0
+    bone_p95 = float(np.percentile(bone_values, 95))
+    near = ndi.distance_transform_edt(~bone, sampling=spacing_zyx) <= 5.0
+    soft = near & ~bone & finite & (intensities > -300.0)
+    soft_values = intensities[soft]
+    soft_median = float(np.median(soft_values)) if soft_values.size else bone_p95
+    midpoint = 0.5 * (bone_p95 + soft_median)
+    if calibrated:
+        return max(150.0, midpoint)
+    return midpoint
+
+
+def wrap_vertex_outside_fraction(mask, spacing_zyx, gap_mm=0.5, far_mm=1.0):
+    """Share of mesh vertices more than `far_mm` outside a `gap_mm` wrap of the mask.
+
+    The wrap is the surface dilated by `gap_mm` and closed from the outside of the crop. It is the
+    diagnostic for a perforated wall. It does not say whether a point is inside bone."""
+    import scipy.ndimage as ndi
+
+    if not np.any(mask):
+        return 0.0
+    try:
+        mesh = bone_surface_mesh(mask, spacing_zyx)
+    except Exception as exc:
+        log(f"    [Hueso - Maxilar] Envolvente no calculada ({exc}).")
+        return None
+    if mesh is None or len(mesh.vertices) == 0:
+        return None
+    sigma_voxels = 0.75
+    pad = int(np.ceil(3 * sigma_voxels)) + 2
+    occupied = np.argwhere(mask)
+    lo = np.maximum(occupied.min(axis=0) - pad, 0)
+    hi = occupied.max(axis=0) + pad + 1
+    sub = np.pad(mask[lo[0]:hi[0], lo[1]:hi[1], lo[2]:hi[2]].astype(bool), pad)
+    shell = sub & ~ndi.binary_erosion(sub, structure=np.ones((3, 3, 3), dtype=bool), border_value=0)
+    if not np.any(shell):
+        shell = sub
+    dilated = ndi.distance_transform_edt(~shell, sampling=spacing_zyx) <= gap_mm
+    free = ~dilated
+    components, count = ndi.label(free, structure=np.ones((3, 3, 3), dtype=bool))
+    if count == 0:
+        outside = np.zeros(sub.shape, dtype=bool)
+    else:
+        border = np.unique(np.concatenate([
+            components[0].ravel(), components[-1].ravel(),
+            components[:, 0].ravel(), components[:, -1].ravel(),
+            components[:, :, 0].ravel(), components[:, :, -1].ravel(),
+        ]))
+        border = border[border != 0]
+        outside = np.isin(components, border)
+    wrap = ~outside
+    dist_out = ndi.distance_transform_edt(~wrap, sampling=spacing_zyx)
+    index = mesh.vertices / np.asarray(spacing_zyx, dtype=np.float64)
+    inside = ndi.map_coordinates(wrap.astype(np.float32), index.T, order=0, mode="nearest") > 0.5
+    distance = ndi.map_coordinates(dist_out.astype(np.float32), index.T, order=1, mode="nearest")
+    distance = np.where(inside, 0.0, distance)
+    return float(np.mean(distance > far_mm))
+
+
+def recover_thin_walls(mask, prediction, intensities, spacing_zyx, source_label, probability=None,
+                       band_mm=2.0, iterations=3, calibrated=None):
+    """Add a missing maxillary wall that is still next to bone the network did mark.
+
+    A voxel in the `band_mm` band is added when it is 26-connected to the bone, it is not another label,
+    it is denser than air (-300 HU on a CT; a study percentile on cone-beam) and either its maxilla
+    probability is at least 0.25 or it reaches the local threshold. The threshold is the midpoint of the
+    bone's 95th percentile and the soft-tissue median inside 5 mm, and at least 150 HU on a CT. Each of
+    the `iterations` passes advances the band by `band_mm`. The input mask is not modified.
+
+    The log includes how many vertices sit more than 1 mm outside a 0.5 mm wrap, before and after.
+    """
+    import scipy.ndimage as ndi
+
+    mask = np.asarray(mask, dtype=bool)
+    if source_label != 1 or not np.any(mask):
+        return mask.copy()
+    if mask.shape != prediction.shape or mask.shape != intensities.shape:
+        raise ValueError("El hueso y la imagen deben compartir la misma cuadricula.")
+    if probability is not None and np.shape(probability) != mask.shape:
+        raise ValueError("La probabilidad y el hueso deben compartir la misma cuadricula.")
+    if calibrated is None:
+        calibrated = _study_is_calibrated_hounsfield(intensities)
+    check_wrap = os.environ.get("DENTALSEGMENTATOR_MESH_CHECK", "1").strip() != "0"
+    before_wrap = wrap_vertex_outside_fraction(mask, spacing_zyx) if check_wrap else None
+
+    result = mask.copy()
+    struct = np.ones((3, 3, 3), dtype=bool)
+    threshold = None
+    passes = 0
+    for _ in range(max(0, int(iterations))):
+        occupied = np.argwhere(result)
+        pad = [int(np.ceil((band_mm + 5.0) / max(1e-6, float(sp)))) + 2 for sp in spacing_zyx]
+        lo = [max(0, int(occupied[:, a].min()) - pad[a]) for a in range(3)]
+        hi = [min(result.shape[a], int(occupied[:, a].max()) + pad[a] + 1) for a in range(3)]
+        roi = tuple(slice(lo[a], hi[a]) for a in range(3))
+        bone = result[roi]
+        values = intensities[roi]
+        labels = prediction[roi]
+        finite = np.isfinite(values)
+        threshold = _local_wall_threshold(bone, values, spacing_zyx, calibrated)
+        dist = ndi.distance_transform_edt(~bone, sampling=spacing_zyx)
+        band = (dist > 0) & (dist <= band_mm)
+        not_air = finite & (values > -300.0)
+        free = (labels == 0) | (labels == source_label)
+        likely = np.zeros(bone.shape, dtype=bool) if probability is None else probability[roi] >= 0.25
+        candidates = band & not_air & free & (likely | (finite & (values >= threshold)))
+        if not np.any(candidates):
+            break
+        components, count = ndi.label(candidates | bone, structure=struct)
+        if count == 0:
+            break
+        bone_ids = np.unique(components[bone])
+        bone_ids = bone_ids[bone_ids != 0]
+        added = candidates & np.isin(components, bone_ids)
+        if not np.any(added):
+            break
+        result[roi] |= added
+        passes += 1
+
+    added_count = int(np.count_nonzero(result & ~mask))
+    added_mm3 = added_count * float(np.prod(spacing_zyx))
+    after_wrap = wrap_vertex_outside_fraction(result, spacing_zyx) if check_wrap and added_count else before_wrap
+
+    def pct(value):
+        return "no calculada" if value is None else f"{100.0 * value:.1f}%"
+
+    shown = 150.0 if threshold is None else threshold
+    scale = "TC" if calibrated else "CBCT"
+    log(f"    [Hueso - Maxilar] Pared fina recuperada: {added_count} voxeles ({added_mm3:.1f} mm3), "
+        f"umbral local {shown:.0f} ({scale}), banda {band_mm:.1f} mm, {passes} pasada(s). "
+        f"Envolvente 0,5 mm, vertices a > 1 mm: {pct(before_wrap)} antes, {pct(after_wrap)} despues.")
+    return result
+
+
 def medulla_fill_params(source_label):
     """`fill_medullary_bone` settings per bone, each overridable by environment variable.
 
@@ -1600,7 +1800,7 @@ def write_lower_teeth_sidecar(teeth_mask, reference, output_path):
 
 
 def remap_prediction(input_path, prediction_path, output_path, target, seed=None, seed2=None,
-                     bone_from_totalsegmentator=False):
+                     bone_from_totalsegmentator=False, probability_path=None):
     import numpy as np
     import SimpleITK as sitk
 
@@ -1612,6 +1812,11 @@ def remap_prediction(input_path, prediction_path, output_path, target, seed=None
         seg = sitk.ReadImage(str(input_path))
         arr = None
         out = np.zeros(sitk.GetArrayFromImage(seg).shape, dtype=np.uint8)
+
+    maxilla_probability = None
+    if arr is not None and (probability_path or prediction_path):
+        maxilla_probability = load_label_probability(
+            probability_path or prediction_path, 1, arr.shape)
 
     input_image = None
     input_array = None
@@ -1668,6 +1873,9 @@ def remap_prediction(input_path, prediction_path, output_path, target, seed=None
             spacing_zyx = image.GetSpacing()[::-1]
             if label_value in (1, 2):
                 mask = close_mm(mask, BONE_CLOSE_MM, spacing_zyx)
+                if label_value == 1:
+                    mask = recover_thin_walls(
+                        mask, arr, intensities, spacing_zyx, label_value, maxilla_probability)
             else:
                 mask = open_near_metal(mask, intensities, spacing_zyx)
 
@@ -2184,7 +2392,8 @@ def run_dentalsegmentator_nnunet(input_path, output_path, target, seed=None, see
 
     log("93% Remapeando etiquetas a la app...")
     remap_prediction(input_path, prediction_path, output_path, target, seed, seed2,
-                     bone_from_totalsegmentator=bone_from_totalsegmentator)
+                     bone_from_totalsegmentator=bone_from_totalsegmentator,
+                     probability_path=pred_dir / "case.npz")
     if not Path(output_path).exists():
         raise RuntimeError("No se genero labelmap NRRD de salida.")
     log(f"100% Labelmap guardado: {output_path}")
@@ -2221,7 +2430,10 @@ def main():
     parser.add_argument("--target", default="hueso")
     parser.add_argument("--seed", default=None)
     parser.add_argument("--seed2", default=None)
+    parser.add_argument("--modality", default="")
     args = parser.parse_args()
+    if args.modality.strip():
+        os.environ["DENTALSEGMENTATOR_MODALITY"] = args.modality.strip()
 
     input_path = os.path.abspath(args.input)
     output_path = os.path.abspath(args.output)

@@ -581,6 +581,8 @@ StandaloneDentalSegmentatorService::resolveExternalCommand(
                 command.args << inputPath << outputPath;
             }
             command.args << "--target" << targetName(target);
+            if (!m_studyModality.isEmpty())
+                command.args << "--modality" << m_studyModality;
             return command;
         }
     }
@@ -593,6 +595,8 @@ StandaloneDentalSegmentatorService::resolveExternalCommand(
             command.program = python;
             command.args << scriptPath << inputPath << outputPath
                          << "--target" << targetName(target);
+            if (!m_studyModality.isEmpty())
+                command.args << "--modality" << m_studyModality;
             if (target == SegmentationTarget::Airway) {
                 if (hasAirwaySeeds()) {
                     const auto s1 = airwaySeed1();

@@ -1303,3 +1303,92 @@ class DentalObjectTests(unittest.TestCase):
         thick = np.ones((5, 5, 5), dtype=bool)
         thick[:, 2, :] = False
         self.assertFalse(np.any(segmentator.close_mm(thick, 0.5, (1.0, 1.0, 1.0))[:, 2, :]))
+
+
+class ThinWallRecoveryTests(unittest.TestCase):
+    """A missing wall next to labelled bone comes back. A separate air space does not."""
+
+    def recover(self, mask, labels, intensities, spacing, probability, calibrated=None):
+        before = mask.copy()
+        result = segmentator.recover_thin_walls(
+            mask, labels, intensities, spacing, 1, probability, calibrated=calibrated)
+        np.testing.assert_array_equal(mask, before)
+        return result
+
+    def test_a_point_six_millimetre_wall_comes_back(self):
+        # One voxel along x at 0.6 mm. Bone is dense, so 250 HU fails the local threshold and
+        # only the 0.3 probability brings the wall back. A dimmer neighbour stays out.
+        shape = (20, 20, 20)
+        spacing = (0.4, 0.4, 0.6)
+        labels = np.zeros(shape, dtype=np.uint8)
+        labels[6:14, 6:14, 6:12] = 1
+        wall = (8, 8, 12)
+        faint = (8, 9, 12)
+        labels[wall] = 0
+        intensities = np.full(shape, -1000.0, dtype=np.float32)
+        intensities[labels == 1] = 2000.0
+        intensities[wall] = 250.0
+        intensities[faint] = 250.0
+        probability = np.zeros(shape, dtype=np.float32)
+        probability[wall] = 0.3
+        probability[faint] = 0.1
+        result = self.recover(labels == 1, labels, intensities, spacing, probability)
+        self.assertTrue(result[wall])
+        self.assertFalse(result[faint])
+        self.assertTrue(np.all(result[labels == 1]))
+
+    def test_the_same_wall_on_both_grids(self):
+        def added(spacing):
+            shape = (16, 16, 16)
+            labels = np.zeros(shape, dtype=np.uint8)
+            labels[4:12, 4:12, 4:8] = 1
+            labels[6:10, 6:10, 8] = 0
+            intensities = np.full(shape, -1000.0, dtype=np.float32)
+            intensities[labels == 1] = 2000.0
+            intensities[:, :, 8] = 250.0
+            probability = np.zeros(shape, dtype=np.float32)
+            probability[6:10, 6:10, 8] = 0.3
+            return self.recover(labels == 1, labels, intensities, spacing, probability)
+
+        isotropic = added((0.4, 0.4, 0.4))
+        anisotropic = added((1.0, 0.4, 0.4))
+        self.assertLessEqual(int(np.count_nonzero(isotropic != anisotropic)), 1)
+        self.assertTrue(np.all(isotropic[6:10, 6:10, 8]))
+        self.assertTrue(np.all(anisotropic[6:10, 6:10, 8]))
+
+    def test_an_isolated_air_space_stays_empty(self):
+        shape = (40, 40, 40)
+        spacing = (1.0, 1.0, 1.0)
+        labels = np.zeros(shape, dtype=np.uint8)
+        labels[4:10, 16:24, 16:24] = 1
+        intensities = np.full(shape, -1000.0, dtype=np.float32)
+        intensities[labels == 1] = 1500.0
+        probability = np.zeros(shape, dtype=np.float32)
+        zz, yy, xx = np.ogrid[:40, :40, :40]
+        air = (zz - 28) ** 2 + (yy - 20) ** 2 + (xx - 20) ** 2 <= 10 ** 2
+        probability[air] = 0.95
+        # Air touching the bone is still air.
+        intensities[10, 18, 18] = -1000.0
+        probability[10, 18, 18] = 0.95
+        # A tooth in the band is another label.
+        labels[10, 20, 20] = 3
+        intensities[10, 20, 20] = 250.0
+        probability[10, 20, 20] = 0.95
+        result = self.recover(labels == 1, labels, intensities, spacing, probability)
+        self.assertFalse(np.any(result[air]))
+        self.assertFalse(result[10, 18, 18])
+        self.assertFalse(result[10, 20, 20])
+
+    def test_cone_beam_uses_the_study_percentiles(self):
+        shape = (12, 12, 12)
+        labels = np.zeros(shape, dtype=np.uint8)
+        labels[3:8, 3:8, 3:7] = 1
+        intensities = np.full(shape, 20.0, dtype=np.float32)
+        intensities[labels == 1] = 100.0
+        intensities[5, 5, 7] = 80.0
+        probability = np.zeros(shape, dtype=np.float32)
+        spacing = (0.5, 0.5, 0.5)
+        as_ct = self.recover(labels == 1, labels, intensities, spacing, probability, calibrated=True)
+        as_cbct = self.recover(labels == 1, labels, intensities, spacing, probability, calibrated=False)
+        self.assertFalse(as_ct[5, 5, 7])
+        self.assertTrue(as_cbct[5, 5, 7])

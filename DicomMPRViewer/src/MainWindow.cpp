@@ -8187,6 +8187,15 @@ void MainWindow::startAISegmentation(SegmentationTarget target)
         m_progressBar->setFormat(tr("Segmentacion IA  %p%"));
     }
 
+    if (m_aiSegmentationService) {
+        QString mode = QString::fromStdString(m_volumeMeta.modality);
+        const QString model = QString::fromStdString(m_volumeMeta.manufacturerModel);
+        if (model.contains(QStringLiteral("CBCT"), Qt::CaseInsensitive)
+            || model.contains(QStringLiteral("cone"), Qt::CaseInsensitive)
+            || model.contains(QStringLiteral("9600"), Qt::CaseInsensitive))
+            mode = QStringLiteral("cbct");
+        m_aiSegmentationService->setStudyModality(mode);
+    }
     if (target == SegmentationTarget::Airway)
         m_pendingAutoMeshLabel = 4;
     else if (target == SegmentationTarget::SoftTissue)

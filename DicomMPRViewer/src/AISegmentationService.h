@@ -43,6 +43,8 @@ public:
         m_airwaySeed2 = p2;
         m_hasAirwaySeeds = true;
     }
+    void setStudyModality(const QString& modality) { m_studyModality = modality; }
+    QString studyModality() const { return m_studyModality; }
     void clearAirwaySeed() {
         m_hasAirwaySeed = false;
         m_hasAirwaySeeds = false;
@@ -85,4 +87,5 @@ protected:
     std::array<double, 3> m_airwaySeed1 = {0.0, 0.0, 0.0};
     std::array<double, 3> m_airwaySeed2 = {0.0, 0.0, 0.0};
     bool m_hasAirwaySeeds = false;
+    QString m_studyModality;
 };
