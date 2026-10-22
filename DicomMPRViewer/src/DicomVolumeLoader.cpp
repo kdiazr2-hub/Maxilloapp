@@ -1,4 +1,5 @@
 #include "DicomVolumeLoader.h"
+#include "DicomGeometryCore.h"
 
 #include <algorithm>
 #include <array>
@@ -116,21 +117,46 @@ static bool projectedSlicePosition(const char* ipp,
     return true;
 }
 
-static double medianSpacing(std::vector<double> deltas)
+static void noteSpacingDecision(DicomVolumeLoader::VolumeMetadata& meta,
+                                const DicomSpacingDecision& decision,
+                                int columns, int rows, int slices)
 {
-    deltas.erase(
-        std::remove_if(deltas.begin(), deltas.end(),
-                       [](double d) { return d <= 1e-6 || !std::isfinite(d); }),
-        deltas.end());
-    if (deltas.empty()) return 0.0;
-
-    std::sort(deltas.begin(), deltas.end());
-    return deltas[deltas.size() / 2];
+    meta.autoSegmentationBlocked = decision.status == DicomSpacingStatus::Blocked;
+    meta.offerResample = decision.status == DicomSpacingStatus::OfferResample;
+    meta.gantryTilt = decision.gantryTilt;
+    meta.sliceSpacingVariation = decision.sliceVariation;
+    meta.spacingMessage = decision.message;
+    if (decision.status == DicomSpacingStatus::Blocked)
+        return;
+    meta.spacing = decision.spacingMm;
+    meta.fovMm = {columns * decision.spacingMm[0], rows * decision.spacingMm[1],
+                  slices * decision.spacingMm[2]};
 }
 
-static bool plausibleCtSpacing(double spacing)
+static DicomSpacingDecision resolveSpacing(const std::vector<double>& deltas,
+                                           double pixelX, double pixelY,
+                                           double betweenSlices, double sliceThickness,
+                                           double gantryTiltDegrees,
+                                           const char* imageOrientation,
+                                           const double* imageSpacing)
 {
-    return spacing > 0.0 && spacing < 20.0;
+    DicomSpacingInput input;
+    input.sliceDeltasMm = deltas;
+    input.pixelSpacingX = pixelX;
+    input.pixelSpacingY = pixelY;
+    input.spacingBetweenSlices = betweenSlices;
+    input.sliceThickness = sliceThickness;
+    input.gantryTiltDegrees = gantryTiltDegrees;
+    double orientation[6] = {};
+    input.hasImageOrientation = imageOrientation && parseDSVector(imageOrientation, orientation, 6);
+    if (input.hasImageOrientation)
+        for (int i = 0; i < 6; ++i) input.imageOrientation[static_cast<size_t>(i)] = orientation[i];
+    if (imageSpacing) {
+        input.imageSpacingX = imageSpacing[0];
+        input.imageSpacingY = imageSpacing[1];
+        input.imageSpacingZ = imageSpacing[2];
+    }
+    return decideDicomSpacing(input);
 }
 
 vtkSmartPointer<vtkImageData>
@@ -165,6 +191,10 @@ DicomVolumeLoader::loadWithGDCM(const std::string& folderPath)
     sc.AddTag(gdcm::Tag(0x0010, 0x0010)); // Patient Name
     sc.AddTag(gdcm::Tag(0x0010, 0x0020)); // Patient ID
     sc.AddTag(gdcm::Tag(0x0008, 0x0020)); // Study Date
+    sc.AddTag(gdcm::Tag(0x0008, 0x0060)); // Modality
+    sc.AddTag(gdcm::Tag(0x0008, 0x0070)); // Manufacturer
+    sc.AddTag(gdcm::Tag(0x0008, 0x1090)); // Manufacturer's Model Name
+    sc.AddTag(gdcm::Tag(0x0018, 0x1120)); // Gantry/Detector Tilt
     sc.Scan(allFiles);
 
     auto tagVal = [&](const std::string& f, gdcm::Tag t) -> const char* {
@@ -227,18 +257,15 @@ DicomVolumeLoader::loadWithGDCM(const std::string& folderPath)
     }
 
     gdcm::Directory::FilenamesType sortedFiles;
-    double zSp = 0.0;
+    std::vector<double> sliceDeltas;
 
     if (allHaveIPP && byPosition.size() == allFiles.size()) {
         std::sort(byPosition.begin(), byPosition.end());
         for (const auto& p : byPosition) sortedFiles.push_back(p.second);
 
-        std::vector<double> deltas;
-        deltas.reserve(byPosition.size());
-        for (size_t i = 1; i < byPosition.size(); ++i) {
-            deltas.push_back(std::abs(byPosition[i].first - byPosition[i-1].first));
-        }
-        zSp = medianSpacing(std::move(deltas));
+        sliceDeltas.reserve(byPosition.size());
+        for (size_t i = 1; i < byPosition.size(); ++i)
+            sliceDeltas.push_back(std::abs(byPosition[i].first - byPosition[i - 1].first));
     }
 
     // Fallback: Instance Number
@@ -296,24 +323,8 @@ DicomVolumeLoader::loadWithGDCM(const std::string& folderPath)
         if (ySp <= 0.0) ySp = xSp;
         xySpacingFromTags = xSp > 0.0 && ySp > 0.0;
     }
-    if (xSp <= 0.0) xSp = 1.0;
-    if (ySp <= 0.0) ySp = 1.0;
 
-    // ── 5. Z spacing fallback chain ────────────────────────────────────────
-    if (!plausibleCtSpacing(zSp)) {
-        const char* s = tagVal(sortedFiles[0], gdcm::Tag(0x0018, 0x0088));
-        const double candidate = s ? std::atof(s) : 0.0;
-        if (plausibleCtSpacing(candidate)) zSp = candidate;
-    }
-    if (!plausibleCtSpacing(zSp)) {
-        const char* s = tagVal(sortedFiles[0], gdcm::Tag(0x0018, 0x0050));
-        const double candidate = s ? std::atof(s) : 0.0;
-        if (plausibleCtSpacing(candidate)) zSp = candidate;
-    }
-    if (!plausibleCtSpacing(zSp) && plausibleCtSpacing(zSp / 1000.0)) zSp /= 1000.0;
-    if (!plausibleCtSpacing(zSp)) zSp = 1.0;
-
-    // ── 6. Origin from IPP of first sorted slice ───────────────────────────
+    // ── 5. Origin from IPP of first sorted slice ───────────────────────────
     double ox = 0.0, oy = 0.0, oz = 0.0;
     if (const char* ipp = tagVal(sortedFiles[0], gdcm::Tag(0x0020, 0x0032))) {
         ox = parseDS(ipp, 0);
@@ -334,18 +345,23 @@ DicomVolumeLoader::loadWithGDCM(const std::string& folderPath)
     unsigned int rows    = dims[1];
     unsigned int nSlices = static_cast<unsigned int>(sortedFiles.size());
 
-    const double* imageSpacing = first.GetSpacing();
-    if (imageSpacing) {
-        if (!xySpacingFromTags) {
-            if (plausibleCtSpacing(imageSpacing[0])) xSp = imageSpacing[0];
-            if (plausibleCtSpacing(imageSpacing[1])) ySp = imageSpacing[1];
-        }
-        if (std::abs(zSp - 1.0) < 1e-6 &&
-            std::abs(imageSpacing[2] - 1.0) > 1e-6 &&
-            plausibleCtSpacing(imageSpacing[2])) {
-            zSp = imageSpacing[2];
-        }
+    const char* between = tagVal(sortedFiles[0], gdcm::Tag(0x0018, 0x0088));
+    const char* thickness = tagVal(sortedFiles[0], gdcm::Tag(0x0018, 0x0050));
+    const char* tilt = tagVal(sortedFiles[0], gdcm::Tag(0x0018, 0x1120));
+    const DicomSpacingDecision spacing = resolveSpacing(
+        sliceDeltas, xySpacingFromTags ? xSp : 0.0, xySpacingFromTags ? ySp : 0.0,
+        between ? std::atof(between) : 0.0, thickness ? std::atof(thickness) : 0.0,
+        tilt ? std::atof(tilt) : 0.0, tagVal(sortedFiles[0], gdcm::Tag(0x0020, 0x0037)),
+        first.GetSpacing());
+    if (spacing.status == DicomSpacingStatus::Blocked) {
+        m_meta.autoSegmentationBlocked = true;
+        m_meta.spacingMessage = spacing.message;
+        m_meta.errorMessage = spacing.message;
+        return nullptr;
     }
+    xSp = spacing.spacingMm[0];
+    ySp = spacing.spacingMm[1];
+    const double zSp = spacing.spacingMm[2];
 
     int vtkType = VTK_SHORT;
     switch (first.GetPixelFormat().GetScalarType()) {
@@ -406,8 +422,13 @@ DicomVolumeLoader::loadWithGDCM(const std::string& folderPath)
     m_meta.studyDate   = safeStr(tagVal(sortedFiles[0], gdcm::Tag(0x0008, 0x0020)));
     m_meta.studyInstanceUid  = safeStr(tagVal(sortedFiles[0], gdcm::Tag(0x0020, 0x000d)));
     m_meta.seriesInstanceUid = safeStr(tagVal(sortedFiles[0], gdcm::Tag(0x0020, 0x000e)));
+    m_meta.modality = safeStr(tagVal(sortedFiles[0], gdcm::Tag(0x0008, 0x0060)));
+    m_meta.manufacturer = safeStr(tagVal(sortedFiles[0], gdcm::Tag(0x0008, 0x0070)));
+    m_meta.manufacturerModel = safeStr(tagVal(sortedFiles[0], gdcm::Tag(0x0008, 0x1090)));
 
     populateMetadata(ss->GetOutput());
+    noteSpacingDecision(m_meta, spacing, static_cast<int>(cols), static_cast<int>(rows),
+                        static_cast<int>(nSlices));
     m_meta.valid = true;
 
     auto out = vtkSmartPointer<vtkImageData>::New();
@@ -464,6 +485,10 @@ DicomVolumeLoader::loadFromFilesGDCM(const std::vector<std::string>& sortedFiles
     sc.AddTag(gdcm::Tag(0x0010, 0x0010)); // Patient Name
     sc.AddTag(gdcm::Tag(0x0010, 0x0020)); // Patient ID
     sc.AddTag(gdcm::Tag(0x0008, 0x0020)); // Study Date
+    sc.AddTag(gdcm::Tag(0x0008, 0x0060)); // Modality
+    sc.AddTag(gdcm::Tag(0x0008, 0x0070)); // Manufacturer
+    sc.AddTag(gdcm::Tag(0x0008, 0x1090)); // Manufacturer's Model Name
+    sc.AddTag(gdcm::Tag(0x0018, 0x1120)); // Gantry/Detector Tilt
 
     const gdcm::Directory::FilenamesType gdcmFiles(
         sortedFiles.begin(), sortedFiles.end());
@@ -485,44 +510,25 @@ DicomVolumeLoader::loadFromFilesGDCM(const std::vector<std::string>& sortedFiles
         if (ySp <= 0.0) ySp = xSp;
         xySpacingFromTags = xSp > 0.0 && ySp > 0.0;
     }
-    if (xSp <= 0.0) xSp = 1.0;
-    if (ySp <= 0.0) ySp = 1.0;
 
-    // ── Z spacing: project IPP onto the slice normal, use median delta ──────
-    double zSp = 0.0;
+    // Slice deltas stay in millimetres. The spacing decision, after the first image is read,
+    // is what turns them into one z spacing. Nothing here substitutes 1 mm.
+    std::vector<double> sliceDeltas;
     if (sortedFiles.size() >= 2) {
         const auto normal = sliceNormalFromIOP(
             tagVal(sortedFiles[0], gdcm::Tag(0x0020, 0x0037)));
-
-        std::vector<double> deltas;
-        deltas.reserve(sortedFiles.size() - 1);
+        sliceDeltas.reserve(sortedFiles.size() - 1);
         double prevPos = 0.0;
-        bool   prevOk  = false;
+        bool prevOk = false;
         for (const auto& f : sortedFiles) {
             double pos = 0.0;
-            if (projectedSlicePosition(tagVal(f, gdcm::Tag(0x0020, 0x0032)),
-                                        normal, pos)) {
-                if (prevOk) deltas.push_back(std::abs(pos - prevPos));
+            if (projectedSlicePosition(tagVal(f, gdcm::Tag(0x0020, 0x0032)), normal, pos)) {
+                if (prevOk) sliceDeltas.push_back(std::abs(pos - prevPos));
                 prevPos = pos;
-                prevOk  = true;
+                prevOk = true;
             }
         }
-        zSp = medianSpacing(std::move(deltas));
     }
-
-    // ── Z spacing fallback chain ────────────────────────────────────────────
-    if (!plausibleCtSpacing(zSp)) {
-        const char* s = tagVal(sortedFiles[0], gdcm::Tag(0x0018, 0x0088));
-        const double c = s ? std::atof(s) : 0.0;
-        if (plausibleCtSpacing(c)) zSp = c;
-    }
-    if (!plausibleCtSpacing(zSp)) {
-        const char* s = tagVal(sortedFiles[0], gdcm::Tag(0x0018, 0x0050));
-        const double c = s ? std::atof(s) : 0.0;
-        if (plausibleCtSpacing(c)) zSp = c;
-    }
-    if (!plausibleCtSpacing(zSp) && plausibleCtSpacing(zSp / 1000.0)) zSp /= 1000.0;
-    if (!plausibleCtSpacing(zSp)) zSp = 1.0;
 
     // ── Origin from IPP of first sorted slice ───────────────────────────────
     double ox = 0.0, oy = 0.0, oz = 0.0;
@@ -545,18 +551,23 @@ DicomVolumeLoader::loadFromFilesGDCM(const std::vector<std::string>& sortedFiles
     const unsigned int rows    = dims[1];
     const unsigned int nSlices = static_cast<unsigned int>(sortedFiles.size());
 
-    // Allow image-embedded spacing to fill gaps left by tag parsing
-    if (const double* sp = first.GetSpacing()) {
-        if (!xySpacingFromTags) {
-            if (plausibleCtSpacing(sp[0])) xSp = sp[0];
-            if (plausibleCtSpacing(sp[1])) ySp = sp[1];
-        }
-        if (std::abs(zSp - 1.0) < 1e-6 &&
-            plausibleCtSpacing(sp[2]) &&
-            std::abs(sp[2] - 1.0) > 1e-6) {
-            zSp = sp[2];
-        }
+    const char* between = tagVal(sortedFiles[0], gdcm::Tag(0x0018, 0x0088));
+    const char* thickness = tagVal(sortedFiles[0], gdcm::Tag(0x0018, 0x0050));
+    const char* tilt = tagVal(sortedFiles[0], gdcm::Tag(0x0018, 0x1120));
+    const DicomSpacingDecision spacing = resolveSpacing(
+        sliceDeltas, xySpacingFromTags ? xSp : 0.0, xySpacingFromTags ? ySp : 0.0,
+        between ? std::atof(between) : 0.0, thickness ? std::atof(thickness) : 0.0,
+        tilt ? std::atof(tilt) : 0.0, tagVal(sortedFiles[0], gdcm::Tag(0x0020, 0x0037)),
+        first.GetSpacing());
+    if (spacing.status == DicomSpacingStatus::Blocked) {
+        m_meta.autoSegmentationBlocked = true;
+        m_meta.spacingMessage = spacing.message;
+        m_meta.errorMessage = spacing.message;
+        return nullptr;
     }
+    xSp = spacing.spacingMm[0];
+    ySp = spacing.spacingMm[1];
+    const double zSp = spacing.spacingMm[2];
 
     int vtkType = VTK_SHORT;
     switch (first.GetPixelFormat().GetScalarType()) {
@@ -617,8 +628,13 @@ DicomVolumeLoader::loadFromFilesGDCM(const std::vector<std::string>& sortedFiles
     m_meta.studyDate         = safeStr(tagVal(sortedFiles[0], gdcm::Tag(0x0008, 0x0020)));
     m_meta.studyInstanceUid  = safeStr(tagVal(sortedFiles[0], gdcm::Tag(0x0020, 0x000d)));
     m_meta.seriesInstanceUid = safeStr(tagVal(sortedFiles[0], gdcm::Tag(0x0020, 0x000e)));
+    m_meta.modality = safeStr(tagVal(sortedFiles[0], gdcm::Tag(0x0008, 0x0060)));
+    m_meta.manufacturer = safeStr(tagVal(sortedFiles[0], gdcm::Tag(0x0008, 0x0070)));
+    m_meta.manufacturerModel = safeStr(tagVal(sortedFiles[0], gdcm::Tag(0x0008, 0x1090)));
 
     populateMetadata(ss->GetOutput());
+    noteSpacingDecision(m_meta, spacing, static_cast<int>(cols), static_cast<int>(rows),
+                        static_cast<int>(nSlices));
     m_meta.valid = true;
 
     auto out = vtkSmartPointer<vtkImageData>::New();
@@ -651,6 +667,16 @@ DicomVolumeLoader::loadWithVTK(const std::string& folderPath)
     m_meta.patientName = safeStr(reader->GetPatientName());
     m_meta.patientId   = safeStr(reader->GetStudyID());
     populateMetadata(raw);
+    const bool unverifiedOneMillimetre = std::abs(m_meta.spacing[0] - 1.0) < 1e-6
+        && std::abs(m_meta.spacing[1] - 1.0) < 1e-6
+        && std::abs(m_meta.spacing[2] - 1.0) < 1e-6;
+    if (unverifiedOneMillimetre) {
+        m_meta.autoSegmentationBlocked = true;
+        m_meta.spacingMessage = "Este lector no aportó un espaciado medido. La segmentación automática queda "
+                                "bloqueada. No se usará 1,0 mm.";
+    }
+    m_meta.fovMm = {m_meta.dimensions[0] * m_meta.spacing[0], m_meta.dimensions[1] * m_meta.spacing[1],
+                    m_meta.dimensions[2] * m_meta.spacing[2]};
     m_meta.valid = true;
     auto out = vtkSmartPointer<vtkImageData>::New();
     out->DeepCopy(raw);

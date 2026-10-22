@@ -8,6 +8,7 @@
 #include <map>
 
 #include "ProjectSerializer.h"
+#include "ThresholdMaskCore.h"
 #include "AppStateManager.h"
 #include "SplintDesignCore.h"
 #include "GuidePlanCore.h"
@@ -46,6 +47,7 @@ class MeasurementTool;
 class SplintDesignPanel;
 class OsteotomyWizardPanel;
 class SegmentationProgressDialog;
+class ThresholdSegmentDialog;
 class SplintPreviewScheduler;
 
 QT_BEGIN_NAMESPACE
@@ -509,6 +511,10 @@ private:
     void setLoadingUiEnabled(bool enabled);
     void showSegmentationBackendInfo();
     void startAISegmentation(SegmentationTarget target);
+    void beginThresholdSegmentation(bool bone);
+    void refreshThresholdPreview();
+    void endThresholdPreview();
+    void applyThresholdSegmentation(bool bone, const ThresholdRequest& request);
     void onSegmentationFinished(const QString& outputSegmentationPath);
     void onSegmentationError(const QString& error);
     void refreshSegmentationOverlays();
@@ -869,6 +875,11 @@ private:
     QToolButton*                      m_lassoSubButton = nullptr;
     QAction*                          m_fillBoneCavityAct = nullptr;
     int                               m_fillBoneCavityLabel = -1;
+    ThresholdSegmentDialog*           m_thresholdDialog = nullptr;
+    vtkSmartPointer<vtkImageData>     m_thresholdPreview;
+    bool                              m_thresholdPreviewOn = false;
+    double                            m_thresholdMinHu = 226.0;
+    double                            m_thresholdMaxHu = 3071.0;
 
     DentalPointSet                    m_dentalPointSet = DentalPointSet::None;
     QVector<DentalPointSet>           m_dentalPointUndo;

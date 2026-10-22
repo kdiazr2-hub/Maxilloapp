@@ -152,6 +152,19 @@ bool ProjectSerializer::save(const QString& projectFilePath,
     QJsonObject root;
     root[QStringLiteral("version")] = 1;
     root[QStringLiteral("dicomFolder")] = state.dicomFolder;
+    if (state.acquisitionSpacing.size() == 3) {
+        QJsonObject acquisition;
+        QJsonArray spacing;
+        for (double value : state.acquisitionSpacing) spacing.append(value);
+        acquisition[QStringLiteral("spacing")] = spacing;
+        acquisition[QStringLiteral("manufacturer")] = state.acquisitionManufacturer;
+        acquisition[QStringLiteral("model")] = state.acquisitionModel;
+        acquisition[QStringLiteral("modality")] = state.acquisitionModality;
+        QJsonArray fov;
+        for (double value : state.acquisitionFovMm) fov.append(value);
+        acquisition[QStringLiteral("fovMm")] = fov;
+        root[QStringLiteral("acquisition")] = acquisition;
+    }
 
     // Window / level
     QJsonObject preset;
@@ -357,6 +370,16 @@ bool ProjectSerializer::load(const QString& projectFilePath,
     };
 
     state.dicomFolder = root[QStringLiteral("dicomFolder")].toString();
+    state.acquisitionSpacing.clear();
+    state.acquisitionFovMm.clear();
+    const QJsonObject acquisition = root[QStringLiteral("acquisition")].toObject();
+    for (const auto& value : acquisition[QStringLiteral("spacing")].toArray())
+        state.acquisitionSpacing.append(value.toDouble());
+    state.acquisitionManufacturer = acquisition[QStringLiteral("manufacturer")].toString();
+    state.acquisitionModel = acquisition[QStringLiteral("model")].toString();
+    state.acquisitionModality = acquisition[QStringLiteral("modality")].toString();
+    for (const auto& value : acquisition[QStringLiteral("fovMm")].toArray())
+        state.acquisitionFovMm.append(value.toDouble());
 
     // Window / level
     const QJsonObject preset = root[QStringLiteral("preset")].toObject();

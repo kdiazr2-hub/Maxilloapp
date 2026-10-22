@@ -34,16 +34,25 @@ public:
     struct VolumeMetadata
     {
         std::array<int,    3> dimensions   = {0, 0, 0};
-        std::array<double, 3> spacing      = {1, 1, 1};
+        std::array<double, 3> spacing      = {0, 0, 0};
         std::array<double, 3> origin       = {0, 0, 0};
+        std::array<double, 3> fovMm        = {0, 0, 0};
         std::array<double, 2> scalarRange  = {0, 0};
         int                   numSlices    = 0;
         std::string           patientId;
         std::string           patientName;
         std::string           studyDate;
+        std::string           manufacturer;
+        std::string           manufacturerModel;
+        std::string           modality;
         std::string           studyInstanceUid;
         std::string           seriesInstanceUid;
         bool                  valid        = false;
+        bool                  autoSegmentationBlocked = false;
+        bool                  offerResample = false;
+        bool                  gantryTilt = false;
+        double                sliceSpacingVariation = 0.0;
+        std::string           spacingMessage;
         std::string           errorMessage;
     };
 

@@ -536,6 +536,12 @@ void MPRView::setMeasurementPreview(const std::optional<Measurement>& measuremen
     render();
 }
 
+void MPRView::noteSegmentationDataChanged()
+{
+    if (m_segmentationOverlay)
+        m_segmentationOverlay->invalidate();
+}
+
 void MPRView::setSegmentationLabelmap(vtkSmartPointer<vtkImageData> labelmap)
 {
     if (!m_viewer || !m_viewer->GetRenderer()) return;

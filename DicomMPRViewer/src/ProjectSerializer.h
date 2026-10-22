@@ -63,6 +63,12 @@ struct ProjectState
     ProjMandibleMovement mandibleMovement;
     // ── Provenance ────────────────────────────────────────────────────────────
     QString dicomFolder;              // path used to load the volume
+    // Optional. Empty spacing means an older project that did not record the study.
+    QVector<double> acquisitionSpacing;
+    QString acquisitionManufacturer;
+    QString acquisitionModel;
+    QString acquisitionModality;
+    QVector<double> acquisitionFovMm;
 
     // ── Window / level ────────────────────────────────────────────────────────
     double presetWindow = 2000.0;

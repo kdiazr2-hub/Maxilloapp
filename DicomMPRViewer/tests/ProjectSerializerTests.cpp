@@ -12,6 +12,7 @@
 #include <vtkCellData.h>
 #include <vtkCubeSource.h>
 
+#include <cmath>
 #include <functional>
 #include <iostream>
 #include <stdexcept>
@@ -198,6 +199,33 @@ void testLegacyProjectWithoutDesigns()
     require(!resavedText.contains("guidesPlan"), "an empty guides plan was written");
     require(loaded.solidBoneLabels.isEmpty(), "a legacy project came back with solid bone labels");
     require(!resavedText.contains("solidBoneLabels"), "empty solid bone labels were written");
+    require(!resavedText.contains("acquisition"), "a legacy project grew an acquisition record");
+}
+
+void testAcquisitionRoundTrip()
+{
+    QTemporaryDir dir;
+    require(dir.isValid(), "no temporary directory");
+    const QString path = dir.filePath(QStringLiteral("estudio.maxilloproject"));
+    ProjectState state;
+    state.dicomFolder = QStringLiteral("C:/dicom/estudio");
+    state.acquisitionSpacing = {0.377, 0.377, 0.700};
+    state.acquisitionManufacturer = QStringLiteral("Siemens");
+    state.acquisitionModel = QStringLiteral("SOMATOM");
+    state.acquisitionModality = QStringLiteral("CT");
+    state.acquisitionFovMm = {220.8, 192.9, 202.9};
+    QString error;
+    require(ProjectSerializer::save(path, state, &error), "save failed: " + error.toStdString());
+    ProjectState loaded;
+    require(ProjectSerializer::load(path, loaded, &error), "load failed: " + error.toStdString());
+    require(loaded.acquisitionSpacing.size() == 3 && std::abs(loaded.acquisitionSpacing[2] - 0.700) < 1e-9,
+            "the spacing was not stored");
+    require(loaded.acquisitionManufacturer == QStringLiteral("Siemens")
+                && loaded.acquisitionModel == QStringLiteral("SOMATOM")
+                && loaded.acquisitionModality == QStringLiteral("CT"),
+            "the scanner or the modality was not stored");
+    require(loaded.acquisitionFovMm.size() == 3 && std::abs(loaded.acquisitionFovMm[0] - 220.8) < 1e-9,
+            "the field of view was not stored");
 }
 
 void testSolidBoneLabelsRoundTrip()
@@ -224,6 +252,7 @@ int main()
         {"guides plan round trip", testGuidesPlanRoundTrip},
         {"legacy project without designs", testLegacyProjectWithoutDesigns},
         {"solid bone labels round trip", testSolidBoneLabelsRoundTrip},
+        {"acquisition round trip", testAcquisitionRoundTrip},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {

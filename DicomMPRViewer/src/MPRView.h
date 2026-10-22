@@ -93,6 +93,7 @@ public:
     void setMeasurements(const std::vector<Measurement>& measurements, bool visible);
     void setMeasurementPreview(const std::optional<Measurement>& measurement);
     void setSegmentationLabelmap(vtkSmartPointer<vtkImageData> labelmap);
+    void noteSegmentationDataChanged();
     void setSegmentationHiddenLabels(const std::set<int>& hiddenLabels);
     void setSegmentationVisible(bool visible);
     void setSegmentationOpacity(double opacity);

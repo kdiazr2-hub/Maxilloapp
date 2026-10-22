@@ -25,6 +25,8 @@ public:
     void setVisible(bool visible);
     void setOpacity(double opacity);
     void refresh();
+    // The labelmap's voxels changed. Keeps the current slice on screen.
+    void invalidate();
     void clear();
 
 private:

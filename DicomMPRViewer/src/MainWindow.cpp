@@ -26,6 +26,7 @@
 #include "SeriesSelectionDialog.h"
 #include "SegmentationImporter.h"
 #include "StandaloneDentalSegmentatorService.h"
+#include "ThresholdSegmentDialog.h"
 #include "SegmentationProgressDialog.h"
 #include "SplintGenerator.h"
 #include "TransformCore.h"
@@ -122,6 +123,7 @@
 #include <vtkMatrix4x4.h>
 #include <vtkResliceCursor.h>
 #include <vtkImageData.h>
+#include <vtkImageReslice.h>
 #include <vtkLineSource.h>
 #include <vtkPointData.h>
 #include <vtkPoints.h>
@@ -1066,19 +1068,12 @@ void MainWindow::buildToolBar()
         auto* page = mod.first;
         auto* row  = mod.second;
 
-        // Segment + auto-mesh: stores the label so onSegmentationFinished()
-        // knows which mesh to generate without any user interaction.
-        auto addSeg = [&](const QString& text, SegmentationTarget target, int label) -> QAction* {
-            auto* act = new QAction(text, this);
-            connect(act, &QAction::triggered, this, [this, target, label] {
-                m_pendingAutoMeshLabel = label;   // onSegmentationFinished reads this
-                startAISegmentation(target);
-            });
-            row->addWidget(makeActBtn(act, page));
-            m_autoSegmentationAct = act;
-            return act;
-        };
-        addSeg(tr("Segmentación\nAutomática"), SegmentationTarget::FullAuto, -3);
+        m_autoSegmentationAct = new QAction(tr("Segmentar"), this);
+        m_autoSegmentationAct->setObjectName(QStringLiteral("ThresholdBoneAction"));
+        m_autoSegmentationAct->setToolTip(tr("Rango en unidades Hounsfield para hueso o tejido blando. "
+                                             "El hueso se separa en maxilar y mandíbula."));
+        connect(m_autoSegmentationAct, &QAction::triggered, this, [this] { beginThresholdSegmentation(true); });
+        row->addWidget(makeActBtn(m_autoSegmentationAct, page));
 
         m_manualAirwayAct = new QAction(tr("Vía Aérea\nManual"), this);
         connect(m_manualAirwayAct, &QAction::triggered, this, [this] {
@@ -2288,8 +2283,9 @@ QWidget* MainWindow::buildLeftMenuPanel()
         });
         segmentLayout->addWidget(makeActionButton(action, segmentationPage));
     };
-    addSegmentationAction(tr("Segmentar hueso"), SegmentationTarget::Bone);
-    addSegmentationAction(tr("Segmentar tejido blando"), SegmentationTarget::SoftTissue);
+    auto* thresholdAct = new QAction(tr("Segmentar"), this);
+    connect(thresholdAct, &QAction::triggered, this, [this] { beginThresholdSegmentation(true); });
+    segmentLayout->addWidget(makeActionButton(thresholdAct, segmentationPage));
     addSegmentationAction(tr("Segmentar dientes"), SegmentationTarget::Teeth);
     addSegmentationAction(tr("Segmentar via aerea"), SegmentationTarget::Airway);
 
@@ -6038,6 +6034,13 @@ ProjectState MainWindow::collectProjectState() const
 {
     ProjectState state;
     state.dicomFolder   = m_dicomFolder;
+    if (m_volumeMeta.spacing[0] > 0.0 && m_volumeMeta.spacing[1] > 0.0 && m_volumeMeta.spacing[2] > 0.0) {
+        state.acquisitionSpacing = {m_volumeMeta.spacing[0], m_volumeMeta.spacing[1], m_volumeMeta.spacing[2]};
+        state.acquisitionManufacturer = QString::fromStdString(m_volumeMeta.manufacturer);
+        state.acquisitionModel = QString::fromStdString(m_volumeMeta.manufacturerModel);
+        state.acquisitionModality = QString::fromStdString(m_volumeMeta.modality);
+        state.acquisitionFovMm = {m_volumeMeta.fovMm[0], m_volumeMeta.fovMm[1], m_volumeMeta.fovMm[2]};
+    }
     state.presetWindow  = m_currentPreset.window;
     state.presetLevel   = m_currentPreset.level;
     state.labelmap      = m_segmentationLabelmap;
@@ -6615,7 +6618,7 @@ void MainWindow::updateButtonStates()
         setGuidedDone(m_openAction);
         if (!hasSegmentation && m_autoSegmentationAct) {
             setGuidedNext(m_autoSegmentationAct,
-                          tr("Estudio cargado. Ejecute segmentacion automatica para crear las mascaras."));
+                          tr("Estudio cargado. Segmente el hueso o el tejido blando."));
         } else if (hasSegmentation && (!hasMaxilla || !hasMandible) && m_splitAct) {
             setGuidedNext(m_splitAct,
                           tr("Mascara lista. Divida maxilar y mandibula para continuar."));
@@ -7084,6 +7087,37 @@ void MainWindow::onVolumeReady(vtkSmartPointer<vtkImageData> volume,
         }
     }
 
+    if (!m_pendingProjectState && meta.offerResample && m_volume) {
+        QMessageBox box(this);
+        box.setIcon(QMessageBox::Warning);
+        box.setWindowTitle(tr("Espaciado del estudio"));
+        box.setText(QString::fromStdString(meta.spacingMessage));
+        auto* resample = box.addButton(tr("Remuestrear"), QMessageBox::AcceptRole);
+        box.addButton(tr("Continuar"), QMessageBox::RejectRole);
+        box.exec();
+        if (box.clickedButton() == resample) {
+            double current[3] = {};
+            m_volume->GetSpacing(current);
+            const double uniform = std::min(current[0], std::min(current[1], current[2]));
+            auto reslice = vtkSmartPointer<vtkImageReslice>::New();
+            reslice->SetInputData(m_volume);
+            reslice->SetOutputSpacing(uniform, uniform, uniform);
+            reslice->SetInterpolationModeToLinear();
+            reslice->Update();
+            auto resampled = vtkSmartPointer<vtkImageData>::New();
+            resampled->DeepCopy(reslice->GetOutput());
+            m_volume = resampled;
+            int dims[3] = {};
+            m_volume->GetDimensions(dims);
+            m_volumeMeta.spacing = {uniform, uniform, uniform};
+            m_volumeMeta.dimensions = {dims[0], dims[1], dims[2]};
+            m_volumeMeta.fovMm = {dims[0] * uniform, dims[1] * uniform, dims[2] * uniform};
+            m_volumeMeta.numSlices = dims[2];
+            m_volumeMeta.offerResample = false;
+            distributeVolume();
+        }
+    }
+
     // If a project was being opened, apply its state now that the volume is ready
     if (m_pendingProjectState) {
         applyProjectState(*m_pendingProjectState);
@@ -7265,6 +7299,8 @@ void MainWindow::syncResliceViews(MPRView*)
     m_axialView->syncFromCursor();
     m_coronalView->syncFromCursor();
     m_sagittalView->syncFromCursor();
+    if (m_thresholdPreviewOn)
+        refreshThresholdPreview();
     refreshMeasurementOverlays();
 
     m_axialView->render();
@@ -7912,9 +7948,212 @@ void MainWindow::showSegmentationBackendInfo()
            "Tejido blando sigue usando segmentacion local por HU."));
 }
 
+namespace
+{
+int sliceAxisOf(const MPRView* view)
+{
+    if (!view) return 2;
+    switch (view->orientation()) {
+        case MPROrientation::Sagittal: return 0;
+        case MPROrientation::Coronal: return 1;
+        case MPROrientation::Axial: return 2;
+    }
+    return 2;
+}
+}
+
+void MainWindow::beginThresholdSegmentation(bool bone)
+{
+    cancelBoneCavityFill();
+    if (!m_volume) {
+        QMessageBox::warning(this, tr("Umbral"), tr("Primero cargue un volumen DICOM."));
+        return;
+    }
+    if (m_previewActive || m_loadInProgress) {
+        QMessageBox::warning(this, tr("Umbral"),
+                             tr("Espere a que termine de cargar el TAC completo antes de segmentar."));
+        return;
+    }
+    if (m_thresholdDialog) {
+        m_thresholdDialog->reject();
+        m_thresholdDialog = nullptr;
+    }
+
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    const HuHistogram histogram = ThresholdMaskCore::histogram(m_volume, 256);
+    QApplication::restoreOverrideCursor();
+    if (histogram.voxels == 0) {
+        QMessageBox::warning(this, tr("Umbral"), tr("El volumen no tiene valores para umbralizar."));
+        return;
+    }
+
+    auto* dialog = new ThresholdSegmentDialog(bone, histogram, this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    m_thresholdDialog = dialog;
+    const ThresholdRequest initial = dialog->request();
+    m_thresholdMinHu = initial.minHu;
+    m_thresholdMaxHu = initial.maxHu;
+    m_thresholdPreview = ThresholdMaskCore::blank(m_volume);
+    m_thresholdPreviewOn = m_thresholdPreview != nullptr;
+    for (MPRView* view : {m_axialView, m_coronalView, m_sagittalView}) {
+        if (!view) continue;
+        view->setSegmentationLabelmap(m_thresholdPreview);
+        view->setSegmentationHiddenLabels({});
+        view->setSegmentationOpacity(0.55);
+        view->setSegmentationVisible(true);
+    }
+    refreshThresholdPreview();
+
+    connect(dialog, &ThresholdSegmentDialog::rangeEdited, this, [this](double minHu, double maxHu) {
+        m_thresholdMinHu = minHu;
+        m_thresholdMaxHu = maxHu;
+        refreshThresholdPreview();
+    });
+    connect(dialog, &QDialog::finished, this, [this, dialog](int result) {
+        const ThresholdRequest chosen = dialog->request();
+        const bool forBone = dialog->forBone();
+        if (m_thresholdDialog == dialog)
+            m_thresholdDialog = nullptr;
+        endThresholdPreview();
+        if (result == QDialog::Accepted)
+            applyThresholdSegmentation(forBone, chosen);
+    });
+    dialog->show();
+    statusBar()->showMessage(tr("Mueva el rango. Lo verde en los cortes es lo que se va a segmentar."));
+}
+
+void MainWindow::refreshThresholdPreview()
+{
+    if (!m_thresholdPreviewOn || !m_thresholdPreview || !m_volume) return;
+    for (MPRView* view : {m_axialView, m_coronalView, m_sagittalView}) {
+        if (!view) continue;
+        ThresholdMaskCore::paintSlice(m_volume, m_thresholdPreview, sliceAxisOf(view), view->currentSlice(),
+                                      m_thresholdMinHu, m_thresholdMaxHu, 4);
+        view->noteSegmentationDataChanged();
+        view->render();
+    }
+}
+
+void MainWindow::endThresholdPreview()
+{
+    if (!m_thresholdPreviewOn && !m_thresholdPreview) return;
+    m_thresholdPreviewOn = false;
+    m_thresholdPreview = nullptr;
+    refreshSegmentationOverlays();
+}
+
+void MainWindow::applyThresholdSegmentation(bool bone, const ThresholdRequest& request)
+{
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    std::int64_t voxels = 0;
+    auto mask = ThresholdMaskCore::build(m_volume, request, &voxels);
+    QApplication::restoreOverrideCursor();
+    if (!mask || voxels <= 0) {
+        QMessageBox::warning(this, bone ? tr("Segmentar hueso") : tr("Segmentar tejido blando"),
+                             tr("Ningún vóxel cae en ese rango."));
+        return;
+    }
+
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    if (bone) {
+        ThresholdMaskCore::separateMandible(mask);
+        ThresholdMaskCore::sealThinBone(mask, m_volume);
+    }
+    QApplication::restoreOverrideCursor();
+
+    pushLabelmapUndo();
+    if (!m_segmentationLabelmap || m_segmentationLabelmap->GetNumberOfPoints() != mask->GetNumberOfPoints()) {
+        m_segmentationLabelmap = mask;
+    } else {
+        auto destination = ThresholdMaskCore::unsignedLabelmap(m_segmentationLabelmap);
+        const int clearBone[] = {1, 5, 6};
+        const int clearSoft[] = {2};
+        const std::int64_t written = bone
+            ? ThresholdMaskCore::stampMask(destination, mask, clearBone, 3)
+            : ThresholdMaskCore::stamp(destination, mask, request.label, clearSoft, 1);
+        if (written < 0) {
+            QMessageBox::warning(this, tr("Umbral"), tr("La máscara no coincide con la segmentación actual."));
+            return;
+        }
+        m_segmentationLabelmap = destination;
+    }
+
+    refreshSegmentationOverlays();
+    m_appState.setSegmentationDone(true);
+    m_appState.setProjectDirty(true);
+
+    // The window is already the bone the user chose. Chord fill would lay
+    // rectangular slabs across it, the same ones a thresholded skull showed.
+    auto publishLabel = [&](int label) {
+        if (label == 1 || label == 5 || label == 6)
+            m_solidBoneLabels.insert(label);
+        const QString name = meshLabelName(label);
+        const QColor color = meshLabelColor(label);
+        addMaskEntry(name, color, label);
+        addObjectEntry(name, color, label);
+        QString meshError;
+        const int smoothing = smoothingIterationsForPreset(MeshSmoothingPreset::Optimal);
+        m_maskSmoothingIterations[label] = smoothing;
+        auto mesh = MeshGenerator::generateMesh(m_segmentationLabelmap, label, true, smoothing, &meshError,
+                                                closeCorticesFor(label), m_volume);
+        if (mesh)
+            publishSegmentationMesh(label, mesh);
+        else if (!meshError.isEmpty())
+            statusBar()->showMessage(tr("%1: %2").arg(name, meshError));
+    };
+    auto dropLabel = [&](int label) {
+        if (m_maskTable) {
+            for (int row = m_maskTable->rowCount() - 1; row >= 0; --row) {
+                auto* item = m_maskTable->item(row, 0);
+                if (item && item->data(Qt::UserRole).toInt() == label) {
+                    m_maskTable->removeRow(row);
+                    break;
+                }
+            }
+        }
+        removeObjectEntry(label);
+        if (m_mesh3DView) {
+            m_mesh3DView->removeMesh(label);
+            m_mesh3DView->removeMesh(objectActorKey(label));
+        }
+        m_solidBoneLabels.erase(label);
+    };
+
+    const int wanted[] = {bone ? 1 : 2, bone ? 5 : 0, bone ? 6 : 0};
+    bool present[7] = {};
+    if (auto* scalars = static_cast<unsigned char*>(m_segmentationLabelmap->GetScalarPointer())) {
+        const vtkIdType n = m_segmentationLabelmap->GetNumberOfPoints();
+        for (vtkIdType i = 0; i < n; ++i) {
+            const unsigned char value = scalars[i];
+            if (value < 7) present[value] = true;
+        }
+    }
+    for (int label : wanted) {
+        if (label <= 0) continue;
+        if (present[label]) publishLabel(label);
+        else dropLabel(label);
+    }
+    if (m_inspectorTabs && m_objectsInspectorTab)
+        m_inspectorTabs->setCurrentWidget(m_objectsInspectorTab);
+    updateButtonStates();
+    if (!bone)
+        statusBar()->showMessage(tr("Tejido blando creado: %1 vóxeles.").arg(voxels));
+    else if (present[5] && present[6])
+        statusBar()->showMessage(tr("Maxilar y mandíbula creados: %1 vóxeles de hueso.").arg(voxels));
+    else
+        statusBar()->showMessage(tr("Hueso creado: %1 vóxeles. No se pudo separar la mandíbula.").arg(voxels));
+}
+
 void MainWindow::startAISegmentation(SegmentationTarget target)
 {
     cancelBoneCavityFill();
+    if (m_volumeMeta.autoSegmentationBlocked) {
+        const QString message = m_volumeMeta.spacingMessage.empty()
+            ? tr("No hay un espaciado fiable. La segmentación automática queda bloqueada. No se usará 1,0 mm.")
+            : QString::fromStdString(m_volumeMeta.spacingMessage);
+        QMessageBox::warning(this, tr("Segmentación automática"), message);
+        return;
+    }
     if (!m_volume || !m_aiSegmentationService) {
         QMessageBox::warning(this, tr("Segmentacion IA"), tr("Primero cargue un volumen DICOM."));
         return;
@@ -8127,6 +8366,10 @@ void MainWindow::onSegmentationError(const QString& error)
 
 void MainWindow::refreshSegmentationOverlays()
 {
+    if (m_thresholdPreviewOn) {
+        refreshThresholdPreview();
+        return;
+    }
     const bool visible = m_toggleSegmentationOverlayAct
         ? m_toggleSegmentationOverlayAct->isChecked()
         : true;

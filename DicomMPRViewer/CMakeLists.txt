@@ -69,6 +69,7 @@ set(SOURCES
     src/main.cpp
     src/MainWindow.cpp
     src/DicomVolumeLoader.cpp
+    src/DicomGeometryCore.cpp
     src/DicomSeriesIndexer.cpp
     src/AsyncDicomLoader.cpp
     src/VolumeCacheManager.cpp
@@ -97,6 +98,8 @@ set(SOURCES
     src/MaskToObjectCore.cpp
     src/MainWindowSegmentation.cpp
     src/SegmentationOverlay.cpp
+    src/ThresholdMaskCore.cpp
+    src/ThresholdSegmentDialog.cpp
     src/SegmentationMaskEditor.cpp
     src/BoneSplitterService.cpp
     src/BoneCavityFill.cpp
@@ -345,6 +348,8 @@ add_core_test(GuidePlanTests tests/GuidePlanTests.cpp src/GuidePlanCore.cpp src/
     src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)
 add_core_test(MeshRepairTests tests/MeshRepairTests.cpp src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)
 add_core_test(CollisionTests tests/CollisionTests.cpp src/CollisionCore.cpp)
+add_core_test(ThresholdMaskTests tests/ThresholdMaskTests.cpp src/ThresholdMaskCore.cpp)
+add_core_test(DicomGeometryTests tests/DicomGeometryTests.cpp src/DicomGeometryCore.cpp)
 add_core_test(SegmentationProgressTests tests/SegmentationProgressTests.cpp src/SegmentationProgressCore.cpp
     src/AISegmentationService.cpp src/AISegmentationService.h)
 add_core_test(MaskToObjectTests tests/MaskToObjectTests.cpp src/MaskToObjectCore.cpp

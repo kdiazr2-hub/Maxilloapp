@@ -68,6 +68,16 @@ void SegmentationOverlay::setOpacity(double opacity)
     refresh();
 }
 
+void SegmentationOverlay::invalidate()
+{
+    if (!m_labelmap || !m_actor || !m_colorMap) return;
+    m_labelmap->Modified();
+    m_colorMap->Modified();
+    if (m_actor->GetMapper())
+        m_actor->GetMapper()->Modified();
+    updateDisplayExtent();
+}
+
 void SegmentationOverlay::refresh()
 {
     clear();
