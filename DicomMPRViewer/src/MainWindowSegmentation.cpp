@@ -59,7 +59,7 @@ void MainWindow::calculateObjectFromMask(int label, bool smooth)
 
 void MainWindow::importUpperTeethSidecar(const QString& outputSegmentationPath)
 {
-    // Both arches come out on their own. The labelmap still keeps them inside the jaw.
+    // Both arches are already labels 3 and 8. The sidecar is the copy root analysis reads.
     importToothSidecar(outputSegmentationPath, QStringLiteral("_dientes_superiores"), kUpperTeethLabel);
     importToothSidecar(outputSegmentationPath, QStringLiteral("_dientes_inferiores"), kLowerTeethLabel);
 }
@@ -95,6 +95,5 @@ void MainWindow::importToothSidecar(const QString& outputSegmentationPath, const
         m_mesh3DView->addMesh(key, mesh, objectName);
         m_mesh3DView->setMeshColor(key, objectColorForLabel(label));
     }
-    setObjectEntryVisible(label, false);
     m_appState.setProjectDirty(true);
 }

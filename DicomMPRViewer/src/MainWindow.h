@@ -35,6 +35,7 @@
 #include "DicomVolumeLoader.h"     // VolumeMetadata
 #include "AISegmentationService.h"
 #include "BoneSplitterService.h"
+#include "ObjectLabels.h"
 #include "MeasurementManager.h"
 #include "WindowLevelPresets.h"
 
@@ -855,7 +856,11 @@ private:
     // meshes skip fillBetweenCortices: its axis chords up to 20 mm only added rectangular slabs to them, in
     // the nose and the palate (user's report, 2026-10-19). Saved as the optional "solidBoneLabels" key.
     std::set<int>                     m_solidBoneLabels;
-    bool closeCorticesFor(int label) const { return m_solidBoneLabels.count(label) == 0; }
+    bool closeCorticesFor(int label) const {
+        // Teeth are their own objects. The chord fill is for hollow cortical bone.
+        if (label == kUpperTeethLabel || label == kLowerTeethLabel) return false;
+        return m_solidBoneLabels.count(label) == 0;
+    }
     QMap<int, int>                    m_maskSmoothingIterations;
 
     // ── Labelmap undo stack (2-D lasso edits) ─────────────────────────────

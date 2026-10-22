@@ -1075,6 +1075,13 @@ void MainWindow::buildToolBar()
         connect(m_autoSegmentationAct, &QAction::triggered, this, [this] { beginThresholdSegmentation(true); });
         row->addWidget(makeActBtn(m_autoSegmentationAct, page));
 
+        auto* dentalAct = new QAction(tr("Automática"), this);
+        dentalAct->setToolTip(tr("DentalSegmentator: maxilar, mandíbula, dientes superiores y dientes inferiores."));
+        connect(dentalAct, &QAction::triggered, this, [this] {
+            startAISegmentation(SegmentationTarget::FullAuto);
+        });
+        row->addWidget(makeActBtn(dentalAct, page));
+
         m_manualAirwayAct = new QAction(tr("Vía Aérea\nManual"), this);
         connect(m_manualAirwayAct, &QAction::triggered, this, [this] {
             if (!m_volume) {
@@ -8180,6 +8187,12 @@ void MainWindow::startAISegmentation(SegmentationTarget target)
         m_progressBar->setFormat(tr("Segmentacion IA  %p%"));
     }
 
+    if (target == SegmentationTarget::Airway)
+        m_pendingAutoMeshLabel = 4;
+    else if (target == SegmentationTarget::SoftTissue)
+        m_pendingAutoMeshLabel = 2;
+    else
+        m_pendingAutoMeshLabel = -2; // every label the script wrote: the four automatic objects
     statusBar()->showMessage(tr("Segmentando el TAC cargado sin Slicer.exe..."));
     // Progress dialog: stage, percentage (or busy bar), elapsed time and Cancelar.
     closeSegmentationProgress();

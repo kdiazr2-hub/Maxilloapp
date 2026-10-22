@@ -236,6 +236,369 @@ class ThinBoneTests(unittest.TestCase):
         self.assertFalse(np.any(result[labels == 3]) or result[10, 9, 9], "another label was taken as bone")
 
 
+class ThinSheetExtensionTests(unittest.TestCase):
+    """The maxilla keeps holes where the wall is a thin plate the network never labelled (user's report,
+    2026-10-20). The plate is continued; the cheek, the sinus and a thick bone are not."""
+
+    spacing = (0.5, 0.5, 0.5)
+
+    def extend(self, labels, intensities, source_label=1):
+        before = labels.copy()
+        result = segmentator.extend_thin_walls(labels == source_label, labels, intensities, self.spacing,
+                                               source_label, reach_mm=8.0, thin_mm=2.5, min_hu=100.0)
+        np.testing.assert_array_equal(labels, before)
+        return result
+
+    def test_a_missed_thin_wall_is_continued(self):
+        # One-voxel plate along y. The near half is labelled; the far half reads as bone and was not.
+        shape = (20, 40, 16)
+        labels = np.zeros(shape, dtype=np.uint8)
+        labels[4:16, 4:16, 8] = 1
+        intensities = np.full(shape, -1000.0, dtype=np.float32)
+        intensities[:, :, 9:] = 40.0
+        intensities[4:16, 4:36, 8] = 180.0
+        result = self.extend(labels, intensities)
+        self.assertTrue(np.all(result[4:16, 16:30, 8]), "the continuation of the thin wall was left open")
+        self.assertFalse(result[8, 34, 8], "the walk ran past its reach")
+        self.assertFalse(np.any(result[:, :, 9:]), "the cheek was labelled bone")
+        self.assertFalse(np.any(result[:, :, :8]), "the sinus was labelled bone")
+
+    def test_thick_bone_does_not_grow_a_crust(self):
+        shape = (40, 40, 40)
+        labels = np.zeros(shape, dtype=np.uint8)
+        labels[8:32, 8:32, 8:32] = 1
+        intensities = np.full(shape, 180.0, dtype=np.float32)
+        intensities[8:32, 8:32, 8:32] = 1200.0
+        result = self.extend(labels, intensities)
+        self.assertFalse(np.any(result & (labels == 0)), "thick bone grew into the tissue around it")
+
+    def test_an_air_gap_is_not_invented(self):
+        shape = (16, 40, 12)
+        labels = np.zeros(shape, dtype=np.uint8)
+        labels[2:14, 2:14, 6] = 1
+        labels[2:14, 26:38, 6] = 1
+        intensities = np.full(shape, -1000.0, dtype=np.float32)
+        intensities[2:14, 2:14, 6] = 400.0
+        intensities[2:14, 26:38, 6] = 400.0
+        result = self.extend(labels, intensities)
+        self.assertFalse(np.any(result[2:14, 14:26, 6]), "air between two plates was turned into bone")
+
+    def test_faint_cortex_against_air_is_a_layer_not_a_sheet_of_mucosa(self):
+        shape = (16, 30, 14)
+        labels = np.zeros(shape, dtype=np.uint8)
+        labels[2:14, 2:14, 6] = 1
+        intensities = np.full(shape, -1000.0, dtype=np.float32)
+        intensities[:, :, 7:] = 40.0
+        intensities[2:14, 2:28, 6] = 70.0  # faint bone, then mucosa at the same density, both facing air
+        intensities[2:14, 2:14, 6] = 400.0
+        result = self.extend(labels, intensities)
+        self.assertTrue(result[8, 16, 6], "the first faint voxel of the wall was skipped")
+        self.assertFalse(result[8, 24, 6], "mucosa past the faint layer was labelled bone")
+
+    def test_a_palate_between_air_continues_from_thick_bone(self):
+        # The alveolus is thick, so it is not a "thin" seed. The palate is a 90 HU plate with air on both
+        # sides (mouth and nose) and used to stay a hole (user's report, 2026-10-20).
+        shape = (24, 64, 16)
+        labels = np.zeros(shape, dtype=np.uint8)
+        labels[4:20, 4:16, 2:14] = 1
+        intensities = np.full(shape, -1000.0, dtype=np.float32)
+        intensities[4:20, 4:16, 2:14] = 900.0
+        intensities[8:16, 16:56, 8] = 90.0
+        result = self.extend(labels, intensities)
+        self.assertTrue(np.all(result[8:16, 16:40, 8]), "the palate between air was left open")
+        self.assertFalse(result[10, 52, 8], "the plate was followed past its reach")
+        self.assertFalse(np.any(result[:, :, :2] | result[:, :, 14:]), "air beside the palate was labelled bone")
+
+    def test_a_soft_tissue_sheet_between_air_is_not_bone(self):
+        shape = (24, 40, 16)
+        labels = np.zeros(shape, dtype=np.uint8)
+        labels[4:20, 4:16, 2:14] = 1
+        intensities = np.full(shape, -1000.0, dtype=np.float32)
+        intensities[4:20, 4:16, 2:14] = 900.0
+        intensities[8:16, 16:36, 8] = 30.0  # mucosa, not partial-volume bone
+        result = self.extend(labels, intensities)
+        self.assertFalse(np.any(result[8:16, 16:36, 8]), "a soft-tissue sheet was labelled bone")
+
+    def test_a_faint_one_sided_wall_continues_past_the_mucosa_layer(self):
+        # Air on one side and cheek on the other: the anterior wall and the orbital floor. 90 HU is bone
+        # that partial volume dimmed; it has to run further than the 1.5 mm mucosa layer.
+        shape = (20, 48, 16)
+        labels = np.zeros(shape, dtype=np.uint8)
+        labels[4:16, 4:14, 8] = 1
+        intensities = np.full(shape, -1000.0, dtype=np.float32)
+        intensities[:, :, 9:] = 40.0
+        intensities[4:16, 4:46, 8] = 90.0
+        intensities[4:16, 4:14, 8] = 400.0
+        result = self.extend(labels, intensities)
+        self.assertTrue(np.all(result[4:16, 14:34, 8]), "the faint wall stopped at the mucosa layer")
+        self.assertFalse(result[8, 40, 8], "the faint wall ran past its reach")
+        self.assertFalse(np.any(result[:, :, 9:]), "the cheek was labelled bone")
+        self.assertFalse(np.any(result[:, :, :8]), "the sinus was labelled bone")
+
+    def test_the_mandible_is_not_extended(self):
+        shape = (12, 24, 8)
+        labels = np.zeros(shape, dtype=np.uint8)
+        labels[2:10, 2:8, 4] = 2
+        intensities = np.full(shape, 180.0, dtype=np.float32)
+        result = self.extend(labels, intensities, source_label=2)
+        np.testing.assert_array_equal(result, labels == 2)
+
+    def test_another_label_is_not_taken(self):
+        shape = (16, 24, 10)
+        labels = np.zeros(shape, dtype=np.uint8)
+        labels[2:14, 2:10, 5] = 1
+        labels[2:14, 10:18, 5] = 3  # a tooth continuing the wall
+        intensities = np.full(shape, -1000.0, dtype=np.float32)
+        intensities[2:14, 2:22, 5] = 180.0
+        result = self.extend(labels, intensities)
+        self.assertFalse(np.any(result & (labels == 3)), "a tooth was taken as bone")
+        self.assertFalse(np.any(result[:, :, :5]) or np.any(result[:, :, 6:]), "the walk left the wall")
+
+    def test_a_thick_dense_mass_is_not_a_plate(self):
+        # The soft palate in a cone-beam CT reads over 100 HU and is 8 mm thick; the walk coated it
+        # (user's CBCT, 2026-10-20). A plate the same density, one voxel thick, is still continued.
+        shape = (24, 48, 40)
+        labels = np.zeros(shape, dtype=np.uint8)
+        labels[4:20, 4:14, 18] = 1
+        intensities = np.full(shape, -1000.0, dtype=np.float32)
+        intensities[4:20, 4:14, 18] = 400.0
+        intensities[4:20, 14:30, 18] = 180.0        # a plate continuing the wall
+        intensities[4:20, 24:40, 19:35] = 180.0     # a thick mass the plate runs into, same density, 8 mm across
+        result = self.extend(labels, intensities)
+        self.assertTrue(np.all(result[6:18, 16:20, 18]), "the thin plate was not continued")
+        self.assertFalse(np.any(result[:, :, 21:35]), "a thick dense mass was labelled bone")
+        self.assertLess(int((result & (labels == 0))[:, :, 19:35].sum()), 10, "the mass's surface was coated")
+
+    def test_thick_bone_near_a_thin_wall_keeps_no_crust(self):
+        # A zygoma within reach of a thin wall: its partial-volume rim reads over 100 HU too, and the walk
+        # laid it on as a crust. The wall's own continuation stays attached to the bone.
+        shape = (30, 60, 30)
+        labels = np.zeros(shape, dtype=np.uint8)
+        labels[6:24, 6:26, 6:24] = 1                # thick block
+        labels[12:18, 26:34, 14] = 1                # a thin plate leaving its +y face
+        intensities = np.full(shape, 40.0, dtype=np.float32)
+        intensities[5:25, 5:27, 5:25] = 160.0       # the block's partial-volume rim, one voxel
+        intensities[6:24, 6:26, 6:24] = 1200.0
+        intensities[12:18, 26:34, 14] = 400.0
+        intensities[12:18, 34:50, 14] = 160.0       # the plate continues, unlabelled
+        result = self.extend(labels, intensities)
+        added = result & (labels == 0)
+        self.assertTrue(np.all(result[12:18, 34:42, 14]), "the plate was not continued")
+        self.assertFalse(result[15, 15, 24] or result[24, 15, 15] or result[15, 15, 5], "the block grew a crust")
+        import scipy.ndimage as ndi
+        pieces, count = ndi.label(result, structure=np.ones((3, 3, 3), dtype=bool))
+        self.assertEqual(count, 1, "the continued plate lost its attachment to the bone")
+        self.assertLess(int(added.sum()), 6 * 24 * 3, "far more than the plate was added")
+
+
+class WallPerforationTests(unittest.TestCase):
+    """The anterior wall over the canine fossa reads about 20 HU where the sinus thins it out, so no density
+    walk reaches it and it stays a hole about 7 mm across (user's CBCT, 2026-10-20). A hole with bone on both
+    sides and the sinus on one side is closed; the nasal airway and a real opening are not."""
+
+    spacing = (0.5, 0.5, 0.5)
+
+    def seal(self, labels, intensities):
+        return segmentator.seal_wall_perforations(labels == 1, labels, intensities, self.spacing, 1,
+                                                  hole_mm=4.5, min_hu=-300.0, nose_mm=15.0)
+
+    def test_a_perforation_over_the_sinus_is_closed(self):
+        # The wall is one voxel, the sinus behind it, the cheek in front. The hole is 6 mm, reads 20 HU and
+        # sits lateral to the midline, where the canine fossa is. The sinus air stays lateral too, so it is
+        # not the nasal airway.
+        shape = (24, 30, 120)
+        labels = np.zeros(shape, dtype=np.uint8)
+        labels[4:20, 14, 8:112] = 1
+        labels[4:20, 14, 90:102] = 0
+        intensities = np.full(shape, 40.0, dtype=np.float32)
+        intensities[:, :14, 70:] = -1000.0
+        intensities[4:20, 14, 8:112] = 400.0
+        intensities[4:20, 14, 90:102] = 20.0
+        result = self.seal(labels, intensities)
+        self.assertTrue(np.all(result[6:18, 14, 92:100]), "the perforation over the sinus was left open")
+        self.assertFalse(np.any(result[:, :14, :]), "the sinus was labelled bone")
+        self.assertFalse(np.any(result[:, 17:, :]), "the cheek was labelled bone")
+
+    def test_the_airway_beside_the_septum_stays_open(self):
+        # Mucosa between the septum and a turbinate: bone on both sides, soft tissue, air close by, on the midline.
+        shape = (20, 20, 80)
+        labels = np.zeros(shape, dtype=np.uint8)
+        labels[4:16, 8, 24:32] = 1
+        labels[4:16, 8, 44:52] = 1
+        intensities = np.full(shape, 40.0, dtype=np.float32)
+        intensities[:, 7, :] = -1000.0
+        intensities[4:16, 8, 24:32] = 400.0
+        intensities[4:16, 8, 44:52] = 400.0
+        intensities[4:16, 8, 32:44] = 20.0
+        result = self.seal(labels, intensities)
+        self.assertFalse(np.any(result[:, :, 32:44]), "the nasal airway was labelled bone")
+
+    def test_an_opening_wider_than_the_rim_stays_open(self):
+        shape = (20, 20, 80)
+        labels = np.zeros(shape, dtype=np.uint8)
+        labels[4:16, 8, 4:20] = 1
+        labels[4:16, 8, 60:76] = 1
+        intensities = np.full(shape, 40.0, dtype=np.float32)
+        intensities[:, :8, :] = -1000.0
+        intensities[4:16, 8, :] = 20.0
+        intensities[4:16, 8, 4:20] = 400.0
+        intensities[4:16, 8, 60:76] = 400.0
+        result = self.seal(labels, intensities)
+        self.assertFalse(result[10, 8, 40], "an opening wider than 9 mm was closed")
+
+    def test_frank_air_in_the_hole_stays_open(self):
+        shape = (16, 16, 60)
+        labels = np.zeros(shape, dtype=np.uint8)
+        labels[4:12, 8, 8:52] = 1
+        labels[4:12, 8, 28:36] = 0
+        intensities = np.full(shape, -1000.0, dtype=np.float32)
+        intensities[4:12, 8, 8:52] = 400.0
+        result = self.seal(labels, intensities)
+        self.assertFalse(np.any(result[4:12, 8, 28:36]), "air was turned into bone")
+
+    def test_the_ear_behind_the_arch_is_not_sealed(self):
+        # The canal and the mastoid are air against bone, like the canine fossa, but behind the upper teeth.
+        # The fossa in front of the arch still closes (user's screenshot, 2026-10-20). The holes sit lateral
+        # to the midline, so the nasal-airway guard is not what spares the canal.
+        shape = (16, 100, 160)
+        labels = np.zeros(shape, dtype=np.uint8)
+        labels[4:12, 8:20, 20:100] = 3
+        labels[4:12, 16, 20:150] = 1
+        labels[4:12, 16, 124:140] = 0
+        labels[4:12, 80, 110:150] = 1
+        labels[4:12, 80, 124:140] = 0
+        intensities = np.full(shape, 40.0, dtype=np.float32)
+        intensities[:, 15, 110:] = -1000.0
+        intensities[:, 79, 110:] = -1000.0
+        intensities[4:12, 16, 20:150] = 400.0
+        intensities[4:12, 16, 124:140] = 20.0
+        intensities[4:12, 80, 110:150] = 400.0
+        intensities[4:12, 80, 124:140] = 20.0
+        result = self.seal(labels, intensities)
+        self.assertTrue(np.any(result[4:12, 16, 124:140]), "the wall in front of the arch was left open")
+        self.assertFalse(np.any(result[4:12, 80, 124:140]), "the canal behind the arch was closed")
+
+    def test_the_orbit_above_the_teeth_is_not_sealed(self):
+        # The orbital floor is the roof of the sinus, so it takes the same sheet as the canine fossa, and that
+        # sheet is the disc inside the orbit (user's CBCT, 2026-10-20: one disc in each orbit and a flake by
+        # the rim). The fossa is level with the roots and still closes. orbit_mm is tightened so the phantom
+        # stays small; the holes sit lateral to the midline, so the nasal-airway guard is not what spares the floor.
+        shape = (36, 80, 160)
+        labels = np.zeros(shape, dtype=np.uint8)
+        labels[4:12, 8:18, 20:150] = 3
+        labels[4:22, 18, 20:150] = 1
+        labels[12:20, 18, 124:140] = 0
+        labels[4:12, 70, 20:150] = 1
+        labels[30:32, 12:22, 110:150] = 1
+        labels[30:32, 14:20, 124:140] = 0
+        intensities = np.full(shape, 40.0, dtype=np.float32)
+        intensities[:, :18, 110:] = -1000.0
+        intensities[labels == 3] = 1500.0
+        intensities[4:22, 18, 20:150] = 400.0
+        intensities[12:20, 18, 124:140] = 20.0
+        intensities[4:12, 70, 20:150] = 400.0
+        intensities[30:32, 12:22, 110:150] = 400.0
+        intensities[30:32, 14:20, 124:140] = 20.0
+        result = segmentator.seal_wall_perforations(labels == 1, labels, intensities, self.spacing, 1,
+                                                    hole_mm=4.5, min_hu=-300.0, nose_mm=15.0, orbit_mm=8.0)
+        self.assertTrue(np.all(result[14:18, 18, 126:138]), "the wall level with the teeth was left open")
+        self.assertFalse(np.any(result[30:32, 14:20, 124:140]), "the orbital floor above the teeth was closed")
+
+    def test_the_mandible_is_not_sealed(self):
+        shape = (12, 12, 30)
+        labels = np.zeros(shape, dtype=np.uint8)
+        labels[2:10, 6, 2:28] = 2
+        intensities = np.full(shape, 20.0, dtype=np.float32)
+        result = segmentator.seal_wall_perforations(labels == 2, labels, intensities, self.spacing, 2)
+        np.testing.assert_array_equal(result, labels == 2)
+
+
+class CrownHaloTests(unittest.TestCase):
+    """Around the crowns the CT reads dense from the enamel's scatter, and every bone step wrapped the upper
+    arch in bone (user's CBCT, 2026-10-20). Nothing may be added more than 1 mm past the alveolar crest."""
+
+    spacing = (0.5, 0.5, 0.5)
+
+    def jaw(self, upper=True):
+        # Maxilla: bone block z 10..20 with the root of a tooth in it; the crown hangs below (z 2..10).
+        shape = (24, 24, 24)
+        labels = np.zeros(shape, dtype=np.uint8)
+        labels[10:20, 4:20, 4:20] = 1
+        labels[2:15, 10:14, 10:14] = 3
+        labels[11:14, 14:16, 10:14] = 0  # a gap beside the root: unlabelled, inside the bone's span
+        if not upper:
+            labels = labels[::-1].copy()
+            labels[labels == 1] = 2
+            labels[labels == 3] = 4
+        return labels
+
+    def test_tissue_beside_the_crown_is_in_the_halo(self):
+        halo = segmentator.crown_halo(self.jaw(), 1, 3, self.spacing)
+        self.assertTrue(halo[5, 15, 12], "tissue 1 mm from the crown is not in the halo")
+        self.assertTrue(halo[7, 15, 12], "tissue just under the crest, past the margin, is not in the halo")
+        self.assertFalse(halo[9, 15, 12], "tissue within the 1 mm margin under the crest was taken")
+
+    def test_the_root_and_far_tissue_are_not_in_the_halo(self):
+        labels = self.jaw()
+        halo = segmentator.crown_halo(labels, 1, 3, self.spacing)
+        self.assertFalse(halo[12, 14, 12], "the gap beside the root is in the halo")
+        self.assertFalse(halo[5, 21, 12], "tissue 3.5 mm from the crown is in the halo")
+        self.assertFalse(np.any(halo & (labels != 0)), "the halo took labelled voxels")
+
+    def test_the_mandible_reads_its_crowns_upwards(self):
+        halo = segmentator.crown_halo(self.jaw(upper=False), 2, 4, self.spacing)
+        self.assertTrue(halo[23 - 5, 15, 12], "tissue beside the lower crown is not in the halo")
+        self.assertFalse(halo[23 - 12, 14, 12], "the gap beside the lower root is in the halo")
+
+    def test_no_teeth_no_halo(self):
+        labels = self.jaw()
+        labels[labels == 3] = 0
+        self.assertFalse(np.any(segmentator.crown_halo(labels, 1, 3, self.spacing)))
+
+    def test_the_guarded_prediction_blocks_every_bone_step(self):
+        labels = self.jaw()
+        guarded = segmentator.guard_crowns(labels, 1, self.spacing)
+        halo = guarded == segmentator.CROWN_HALO_LABEL
+        self.assertTrue(halo[5, 15, 12])
+        np.testing.assert_array_equal(guarded[~halo], labels[~halo])
+        intensities = np.full(labels.shape, 200.0, dtype=np.float32)  # everything reads dense
+        grown = segmentator.thicken_thin_bone(labels == 1, guarded, intensities, self.spacing,
+                                              **dict(segmentator.bone_thickening_params(1), grow_thin_mm=0.0))
+        self.assertTrue(grown[9, 15, 12], "the grow did not reach the tissue within the margin under the crest")
+        self.assertFalse(np.any(grown & halo), "the grow entered the crown halo")
+        solid = segmentator.solid_bone_mask(grown, guarded, intensities, self.spacing, 1)
+        self.assertFalse(np.any(solid & halo), "the marrow fill entered the crown halo")
+
+
+class ThinOnlyGrowTests(unittest.TestCase):
+    """The 1.2 mm grow at 100 HU laid a crust over the whole skull — 64 cm3 on the user's CBCT, 2026-10-20 — so
+    for the maxilla only thin bone grows."""
+
+    spacing = (0.5, 0.5, 0.5)
+
+    def test_a_thick_block_does_not_grow_but_a_thin_wall_does(self):
+        shape = (30, 30, 30)
+        labels = np.zeros(shape, dtype=np.uint8)
+        labels[4:20, 4:20, 4:20] = 1   # thick
+        labels[25, 4:26, 4:26] = 1     # a wall one voxel thick
+        intensities = np.full(shape, 200.0, dtype=np.float32)  # the rim reads dense everywhere
+        result = segmentator.thicken_thin_bone(labels == 1, labels, intensities, self.spacing,
+                                               **dict(segmentator.bone_thickening_params(1), seal_mm=0.0))
+        self.assertTrue(result[24, 10, 10] and result[26, 10, 10], "the thin wall did not thicken")
+        self.assertFalse(result[20, 10, 10] or result[10, 3, 10], "the thick block grew a crust")
+
+    def test_zero_means_every_bone_grows(self):
+        shape = (20, 20, 20)
+        labels = np.zeros(shape, dtype=np.uint8)
+        labels[4:16, 4:16, 4:16] = 1
+        intensities = np.full(shape, 200.0, dtype=np.float32)
+        result = segmentator.thicken_thin_bone(labels == 1, labels, intensities, self.spacing,
+                                               grow_mm=1.0, seal_mm=0.0, grow_thin_mm=0.0)
+        self.assertTrue(result[16, 10, 10] and result[3, 10, 10])
+        self.assertTrue(segmentator.bone_thickening_params(2).get("grow_thin_mm", 0.0) == 0.0,
+                        "the mandible was not asked to change")
+
+
 def mandible_body(shape=(120, 40, 36), spacing=(0.5, 0.5, 0.5)):
     """A closed 5 x 1.6 x 1.2 cm body of cortex (1 mm) round a medulla of cancellous bone, as the network leaves a
     jaw: pores in the cortex, partial-volume voxels under -300 HU in the marrow, and a medulla far wider than the
@@ -413,12 +776,26 @@ class SolidBoneTests(unittest.TestCase):
         self.assertFalse(np.any(result[8:22, 5:35, 8:22]), "the nasal cavity or its mucosa became bone")
 
     def test_an_outer_groove_stays_open(self):
-        labels = np.zeros((30, 30, 30), dtype=np.uint8)
-        labels[4:26, 4:26, 4:26] = 2
-        labels[10:20, 10:20, 18:26] = 0  # a 5 mm notch cut in from one face
+        # A fossa on the surface, 12 mm wide and 3 mm deep (mental, submandibular): open, not marrow. Only its
+        # inner corners round off, as a closing would: nothing more than 2 mm from its walls and floor is filled.
+        labels = np.zeros((44, 44, 30), dtype=np.uint8)
+        labels[4:40, 4:40, 4:26] = 2
+        labels[10:34, 10:34, 20:26] = 0
         intensities = np.full(labels.shape, 300.0, dtype=np.float32)
         result = self.solid(labels, intensities)
-        self.assertFalse(np.any(result[12:18, 12:18, 20:26]))
+        self.assertFalse(np.any(result[14:30, 14:30, 24:26]))
+        self.assertLess(int(result[10:34, 10:34, 20:26].sum()), int(0.25 * 24 * 24 * 6), "the fossa was filled")
+
+    def test_the_marrow_of_a_plate_is_filled(self):
+        # The ramus: a plate 30 x 30 mm, 4 mm thick, marrow between its cortices. Only the lines across it close.
+        labels = np.zeros((70, 70, 16), dtype=np.uint8)
+        labels[5:65, 5:65, 4:12] = 2
+        labels[7:63, 7:63, 6:10] = 0
+        intensities = np.full(labels.shape, -50.0, dtype=np.float32)
+        intensities[5:65, 5:65, 4:12] = 1200.0
+        intensities[7:63, 7:63, 6:10] = -380.0  # cone-beam marrow
+        result = self.solid(labels, intensities)
+        self.assertTrue(np.all(result[12:58, 12:58, 6:10]), "the marrow of the ramus stayed hollow")
 
     def test_other_labels_keep_their_voxels(self):
         labels, intensities = cortical_box()
@@ -555,7 +932,7 @@ class BoneRemapTests(unittest.TestCase):
         labels[4:12, 4:12, 4:12] = 3
         labels[7:9, 7:9, 7:9] = 0
         result = self.remap(labels, "dientes")
-        self.assertTrue(np.all(result[4:12, 4:12, 4:12] == 5), "the hole inside the tooth was left empty")
+        self.assertTrue(np.all(result[4:12, 4:12, 4:12] == 3), "the hole inside the tooth was left empty")
         self.assertEqual(result[2, 2, 2], 0, "filling the tooth grew into the space around it")
 
     def test_individual_bones_are_completed_even_without_smoothing(self):
@@ -569,26 +946,29 @@ class BoneRemapTests(unittest.TestCase):
         labels[2:23, 2:23, 2:23] = shell(source_label=1)
         labels[2:23, 2:23, 25:46] = shell(source_label=2)
         labels[12, 12, 35] = 5
-        labels[8, 8, 8] = 3
-        labels[8, 8, 31] = 4
+        labels[6:11, 6:11, 6:11] = 3
+        labels[6:11, 6:11, 30:35] = 4
         for closing in ("0", "1"):
             with self.subTest(closing=closing), patch.dict(os.environ, {
                     "DENTALSEGMENTATOR_BONE_CLOSE_RADIUS": closing}):
                 result = self.remap(labels, "completo")
                 self.assertEqual(result[12, 12, 12], 5)
                 self.assertEqual(result[13, 13, 35], 6)
-                self.assertEqual(result[12, 12, 35], 6)
-                self.assertEqual(result[8, 8, 8], 5)
-                self.assertEqual(result[8, 8, 31], 6)
-                self.assertTrue(np.any(result == 2))
+                self.assertEqual(result[12, 12, 35], 6, "the canal was left as its own object")
+                self.assertEqual(result[8, 8, 8], 3, "an upper tooth was fused into the maxilla")
+                self.assertEqual(result[8, 8, 32], 8, "a lower tooth was fused into the mandible")
+                self.assertFalse(np.any((result == 5) & (labels == 3)))
+                self.assertFalse(np.any((result == 6) & (labels == 4)))
+                self.assertFalse(np.any(result == 2), "automatic mode still built soft tissue")
                 self.assertEqual(np.count_nonzero(result == 7), 0)
 
     def test_teeth_only_does_not_fill_bone(self):
         labels = shell()
-        labels[8, 8, 8] = 4
+        labels[6:11, 6:11, 6:11] = 4
         result = self.remap(labels, "dientes")
-        self.assertEqual(result[8, 8, 8], 6)
-        self.assertEqual(np.count_nonzero(result), 1)
+        self.assertTrue(np.all(result[6:11, 6:11, 6:11] == 8))
+        self.assertEqual(np.count_nonzero(result == 6), 0)
+        self.assertEqual(np.count_nonzero(result == 2), 0)
 
     def test_bone_target_includes_both_completed_jaws(self):
         labels = np.zeros((21, 21, 44), dtype=np.uint8)
@@ -864,3 +1244,62 @@ class UpperTeethSidecarTests(unittest.TestCase):
             np.testing.assert_array_equal(sitk.GetArrayFromImage(written), teeth.astype(np.uint8))
             self.assertEqual(written.GetSpacing(), reference.GetSpacing())
             self.assertFalse((Path(folder) / "output_segmentation_dientes_superiores.nrrd").exists())
+
+
+class DentalObjectTests(unittest.TestCase):
+    def test_four_objects_and_no_tooth_inside_the_maxilla(self):
+        masks = {1: np.zeros((4, 4, 4), dtype=bool), 2: np.zeros((4, 4, 4), dtype=bool),
+                 3: np.zeros((4, 4, 4), dtype=bool), 4: np.zeros((4, 4, 4), dtype=bool)}
+        masks[1][1:3, 1:3, 1:3] = True
+        masks[2][1, 1, 0] = True
+        masks[3][1, 1, 1] = True  # overlaps the maxilla
+        masks[4][2, 2, 2] = True
+        out = segmentator.compose_dental_labelmap(masks)
+        self.assertEqual(sorted(int(v) for v in np.unique(out) if v), [3, 5, 6, 8])
+        self.assertEqual(out[1, 1, 1], 3)
+        self.assertFalse(np.any((out == 5) & masks[3]))
+        self.assertFalse(np.any((out == 6) & masks[4]))
+        self.assertNotIn(7, out)
+
+    def test_components_above_the_threshold_all_stay(self):
+        mask = np.zeros((6, 6, 6), dtype=bool)
+        mask[0:2, 0:2, 0:2] = True   # 8 voxels
+        mask[4:6, 4:6, 4:6] = True   # 8 voxels
+        mask[0, 5, 0] = True         # one voxel of debris
+        spacing = (1.0, 1.0, 1.0)
+        kept = segmentator.keep_large_components(mask, spacing, 5.0)
+        self.assertTrue(np.all(kept[0:2, 0:2, 0:2]))
+        self.assertTrue(np.all(kept[4:6, 4:6, 4:6]))
+        self.assertFalse(kept[0, 5, 0])
+
+    def test_tooth_opening_stays_next_to_metal(self):
+        spacing = (0.5, 0.5, 0.5)
+        mask = np.zeros((12, 12, 12), dtype=bool)
+        mask[4:8, 4:8, 4:8] = True
+        mask[1, 1, 1] = True   # speck far from metal
+        mask[1, 10, 10] = True  # speck next to metal
+        intensities = np.zeros(mask.shape, dtype=np.float32)
+        untouched = segmentator.open_near_metal(mask, intensities, spacing)
+        np.testing.assert_array_equal(untouched, mask)
+        intensities[0, 10, 10] = 4000
+        opened = segmentator.open_near_metal(mask, intensities, spacing)
+        self.assertTrue(opened[1, 1, 1], "a speck far from metal was opened")
+        self.assertFalse(opened[1, 10, 10], "a speck on the metal stayed")
+        self.assertTrue(opened[6, 6, 6], "the tooth body was opened")
+
+    def test_a_submillimetre_gap_closes_on_both_grids(self):
+        def gap(spacing):
+            # One missing voxel along x is 0.4 mm on both grids.
+            shape = (5, 5, 7)
+            mask = np.ones(shape, dtype=bool)
+            mask[:, :, 3] = False
+            return segmentator.close_mm(mask, 0.5, spacing)
+
+        isotropic = gap((0.4, 0.4, 0.4))
+        anisotropic = gap((1.0, 0.4, 0.4))
+        self.assertTrue(np.all(isotropic[1:-1, 1:-1, 3]))
+        self.assertTrue(np.all(anisotropic[1:-1, 1:-1, 3]))
+        # A 1 mm gap along z survives the 0.5 mm closing.
+        thick = np.ones((5, 5, 5), dtype=bool)
+        thick[:, 2, :] = False
+        self.assertFalse(np.any(segmentator.close_mm(thick, 0.5, (1.0, 1.0, 1.0))[:, 2, :]))
