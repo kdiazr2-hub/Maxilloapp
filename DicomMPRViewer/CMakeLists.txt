@@ -100,6 +100,7 @@ set(SOURCES
     src/SegmentationOverlay.cpp
     src/ThresholdMaskCore.cpp
     src/ThresholdSegmentDialog.cpp
+    src/SplitMaskCore.cpp
     src/SegmentationMaskEditor.cpp
     src/BoneSplitterService.cpp
     src/BoneCavityFill.cpp
@@ -349,6 +350,7 @@ add_core_test(GuidePlanTests tests/GuidePlanTests.cpp src/GuidePlanCore.cpp src/
 add_core_test(MeshRepairTests tests/MeshRepairTests.cpp src/MeshRepairCore.cpp src/CompositeBlockCore.cpp)
 add_core_test(CollisionTests tests/CollisionTests.cpp src/CollisionCore.cpp)
 add_core_test(ThresholdMaskTests tests/ThresholdMaskTests.cpp src/ThresholdMaskCore.cpp)
+add_core_test(SplitMaskTests tests/SplitMaskTests.cpp src/SplitMaskCore.cpp)
 add_core_test(DicomGeometryTests tests/DicomGeometryTests.cpp src/DicomGeometryCore.cpp)
 add_core_test(SegmentationProgressTests tests/SegmentationProgressTests.cpp src/SegmentationProgressCore.cpp
     src/AISegmentationService.cpp src/AISegmentationService.h)

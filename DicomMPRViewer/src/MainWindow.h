@@ -517,6 +517,15 @@ private:
     void refreshThresholdPreview();
     void endThresholdPreview();
     void applyThresholdSegmentation(bool bone, const ThresholdRequest& request);
+    void beginSplitMask();
+    void addSplitMark(double x, double y, double z, bool erase, bool starting);
+    void rebuildSplitPreview();
+    void paintSplitMark(int region, const double centerMm[3], double radiusMm);
+    void calculateSplitMask();
+    void acceptSplitMask();
+    void finishSplitSession();
+    void undoSplitMark();
+    void redoSplitMark();
     void onSegmentationFinished(const QString& outputSegmentationPath);
     void onSegmentationError(const QString& error);
     void refreshSegmentationOverlays();
@@ -881,11 +890,29 @@ private:
     QToolButton*                      m_lassoAddButton = nullptr;
     QToolButton*                      m_lassoSubButton = nullptr;
     QAction*                          m_fillBoneCavityAct = nullptr;
+    QAction*                          m_splitMaskAct = nullptr;
     int                               m_fillBoneCavityLabel = -1;
     ThresholdSegmentDialog*           m_thresholdDialog = nullptr;
     vtkSmartPointer<vtkImageData>     m_thresholdPreview;
     // The Hueso mask as created. Split mask reads this and does not write it.
     vtkSmartPointer<vtkImageData>     m_originBoneMask;
+    struct SplitMarkRecord {
+        int region = 0;
+        double mm[3] = {0.0, 0.0, 0.0};
+        double radiusMm = 2.0;
+    };
+    QVector<SplitMarkRecord>          m_splitMarks;
+    QVector<QVector<SplitMarkRecord>> m_splitUndo;
+    QVector<QVector<SplitMarkRecord>> m_splitRedo;
+    int                               m_splitRegion = 0;
+    double                            m_splitRadiusMm = 2.0;
+    bool                              m_splitAssignIslands = false;
+    bool                              m_splitSession = false;
+    QDialog*                          m_splitDialog = nullptr;
+    QLabel*                           m_splitStatus = nullptr;
+    QDoubleSpinBox*                   m_splitRadiusBox = nullptr;
+    vtkSmartPointer<vtkImageData>     m_splitPreview;
+    vtkSmartPointer<vtkImageData>     m_splitResult;
     bool                              m_thresholdPreviewOn = false;
     double                            m_thresholdMinHu = 226.0;
     double                            m_thresholdMaxHu = 3071.0;

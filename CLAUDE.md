@@ -95,6 +95,17 @@ cmake --build build-linux-core --parallel && ctest --test-dir build-linux-core -
   of the ORTOGNÁTICA step bar (`MainWindowOrthognathic.cpp`). Module switches show the frontal standard view.
 - DICOM: `AsyncDicomLoader` (worker thread) → `DicomSeriesIndexer` → `VolumeCacheManager` (.mha cache in
   `%LOCALAPPDATA%`) → `DicomVolumeLoader`. Views: `MPRView` (2D reslice), `Mesh3DView` (3D, gizmos, picking).
+- Segmentar opens one window (`ThresholdMaskCore`) and creates a single mask, Hueso (label 1). It does not
+  split the jaws and it does not seal gaps: the mask is the range the user chose (decision 2026-10-22).
+  Presets: Hueso (CT) 226–3071, Hueso fino 150–3071, Esmalte 1200–3071; soft tissue stays. A cone-beam study
+  proposes a window from its histogram and the panel says the values are not Hounsfield units. "Conservar solo
+  la región conectada al clic" keeps the 26-connected component of that click (`ThresholdMaskTests`).
+  `separateMandible` remains in the core for its old tests; the ribbon button that called it, Max/Mand, is hidden.
+  Split mask (`SplitMaskCore`, UI in `MainWindowSegmentation.cpp`) paints maxillary and mandibular marks on the
+  slices and divides Hueso by continuity into new masks, labels 5 and 6. The cranium stays with the maxilla.
+  The origin mask is never written (`SplitMaskTests`: the cut falls on a one-voxel low-density bridge, including
+  at spacing 0.4×0.4×1.0 mm; a mark outside the mask does nothing; an unmarked island is "Sin asignar", label 10,
+  or the nearest region). The nnU-Net service stays in the code; its ribbon button does not.
 - AI segmentation: `StandaloneDentalSegmentatorService` runs `scripts/run_standalone_dental_segmentator.py`
   (log in `AISegmentation/<fecha>/segmentacion.log`): bone, teeth and canal from nnU-Net DentalSegmentator
   (user's decision, 2026-10-19; `DENTALSEGMENTATOR_BONE_SOURCE=totalsegmentator` takes skull and mandible from

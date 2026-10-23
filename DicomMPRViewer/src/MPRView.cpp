@@ -238,6 +238,51 @@ bool MPRView::eventFilter(QObject* watched, QEvent* event)
             return true;
         }
 
+        if (m_brushActive && m_vtkWidget) {
+            if (event->type() == QEvent::MouseButtonPress) {
+                auto* me = static_cast<QMouseEvent*>(event);
+                if (me->button() == Qt::LeftButton) {
+                    if (me->modifiers() & Qt::AltModifier) {
+                        m_brushSizing = true;
+                        m_brushLastY = me->pos().y();
+                    } else {
+                        m_brushPainting = true;
+                        std::array<double, 3> point = {};
+                        if (pickPhysicalPoint(me->pos(), point)) {
+                            emit brushStroked(this, point[0], point[1], point[2],
+                                              (me->modifiers() & Qt::ControlModifier) != 0, true);
+                        }
+                    }
+                    return true;
+                }
+            }
+            if (event->type() == QEvent::MouseMove) {
+                auto* me = static_cast<QMouseEvent*>(event);
+                if (m_brushSizing) {
+                    const int y = me->pos().y();
+                    emit brushRadiusDragged(this, m_brushLastY - y);
+                    m_brushLastY = y;
+                    return true;
+                }
+                if (m_brushPainting) {
+                    std::array<double, 3> point = {};
+                    if (pickPhysicalPoint(me->pos(), point)) {
+                        emit brushStroked(this, point[0], point[1], point[2],
+                                          (me->modifiers() & Qt::ControlModifier) != 0, false);
+                    }
+                    return true;
+                }
+            }
+            if (event->type() == QEvent::MouseButtonRelease) {
+                auto* me = static_cast<QMouseEvent*>(event);
+                if (me->button() == Qt::LeftButton) {
+                    m_brushPainting = false;
+                    m_brushSizing = false;
+                    return true;
+                }
+            }
+        }
+
         // ── Lasso mode event handling ─────────────────────────────────────
         if (m_lassoActive) {
             if (event->type() == QEvent::MouseButtonPress) {
@@ -990,6 +1035,18 @@ void MPRView::refreshSliceLabel()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+void MPRView::setBrushMode(bool active)
+{
+    m_brushActive = active;
+    if (!active) {
+        m_brushPainting = false;
+        m_brushSizing = false;
+    }
+    const Qt::CursorShape cursor = active ? Qt::CrossCursor : Qt::ArrowCursor;
+    setCursor(cursor);
+    if (m_vtkWidget) m_vtkWidget->setCursor(cursor);
+}
+
 void MPRView::setLassoMode(bool active, bool addMode)
 {
     m_lassoActive  = active;

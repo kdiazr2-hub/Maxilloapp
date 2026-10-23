@@ -67,6 +67,7 @@ add_core_test(ProjectSerializerTests tests/ProjectSerializerTests.cpp
 add_core_test(OrientationCoreTests tests/OrientationCoreTests.cpp src/OrientationCore.cpp)
 add_core_test(RegistrationCoreTests tests/RegistrationCoreTests.cpp src/RegistrationCore.cpp)
 add_core_test(ThresholdMaskTests tests/ThresholdMaskTests.cpp src/ThresholdMaskCore.cpp)
+add_core_test(SplitMaskTests tests/SplitMaskTests.cpp src/SplitMaskCore.cpp)
 add_core_test(DicomGeometryTests tests/DicomGeometryTests.cpp src/DicomGeometryCore.cpp)
 target_link_libraries(ProjectSerializerTests PRIVATE Qt6::Gui)
 

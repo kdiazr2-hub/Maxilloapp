@@ -397,6 +397,7 @@ QString meshLabelName(int label)
         case 7: return "Canal mandibular";
         case 8: return "Dientes inferiores";
         case kWorkMaxillaLabel: return "Maxilar (trabajo)";
+        case kUnassignedBoneLabel: return "Sin asignar";
         case kUpperArchLabel: return "Arco superior STL";
         case kLowerArchLabel: return "Arco inferior STL";
         case kUpperCompositeLabel: return "Compuesto maxilar";
@@ -438,6 +439,7 @@ QColor meshLabelColor(int label)
         case 7: return CranioPalette::canal();
         case 8: return CranioPalette::dental();
         case kWorkMaxillaLabel: return CranioPalette::boneDark();
+        case kUnassignedBoneLabel: return QColor(150, 150, 150);
         case kUpperArchLabel: return CranioPalette::dental();
         case kLowerArchLabel: return CranioPalette::dental();
         case kUpperCompositeLabel: return CranioPalette::maxilla();
@@ -1136,7 +1138,16 @@ void MainWindow::buildToolBar()
                     [this] { updateButtonStates(); },
                     Qt::SingleShotConnection);
         });
-        row->addWidget(makeActBtn(m_splitAct, page));
+        // Max/Mand stays compiled and connected. Split mask is the control on the ribbon.
+        auto* legacySplit = makeActBtn(m_splitAct, page);
+        legacySplit->hide();
+
+        m_splitMaskAct = new QAction(tr("Split\nmask"), this);
+        m_splitMaskAct->setToolTip(
+            tr("Pinte el maxilar y la mandíbula sobre la máscara Hueso. "
+               "La máscara de origen no se modifica."));
+        connect(m_splitMaskAct, &QAction::triggered, this, [this] { beginSplitMask(); });
+        row->addWidget(makeActBtn(m_splitMaskAct, page));
         addSep(row, page);
 
         // ── Lasso edit tools ─────────────────────────────────────────────
@@ -6555,7 +6566,7 @@ void MainWindow::updateButtonStates()
 
     clearGuidedActionStates({
         m_openAction, m_saveProjectAct, m_autoSegmentationAct,
-        m_toggleSegmentationOverlayAct, m_splitAct
+        m_toggleSegmentationOverlayAct, m_splitAct, m_splitMaskAct
     });
 
     m_appState.setMaxillaAvailable(hasMaxilla);
@@ -6571,6 +6582,8 @@ void MainWindow::updateButtonStates()
     if (m_toggleSegmentationOverlayAct) m_toggleSegmentationOverlayAct->setEnabled(hasSegmentation);
     if (m_fillBoneCavityAct) m_fillBoneCavityAct->setEnabled(hasVolume && hasSegmentation && !m_loadInProgress);
     if (m_splitAct)        m_splitAct->setEnabled(m_appState.can(C::SplitBone));
+    if (m_splitMaskAct)
+        m_splitMaskAct->setEnabled(hasVolume && !m_loadInProgress && (m_originBoneMask || hasSegmentation));
     if (m_importUpperAct)  m_importUpperAct->setEnabled(m_appState.can(C::ImportUpperArch));
     if (m_importLowerAct)  m_importLowerAct->setEnabled(m_appState.can(C::ImportLowerArch));
     if (m_maxPtsAct)       m_maxPtsAct->setEnabled(m_appState.can(C::SelectMaxillaryPoints));
@@ -6628,11 +6641,11 @@ void MainWindow::updateButtonStates()
         if (!hasSegmentation && m_autoSegmentationAct) {
             setGuidedNext(m_autoSegmentationAct,
                           tr("Estudio cargado. Segmente el hueso o el tejido blando."));
-        } else if (hasSegmentation && (!hasMaxilla || !hasMandible) && m_splitAct) {
-            setGuidedNext(m_splitAct,
-                          tr("Mascara lista. Divida maxilar y mandibula para continuar."));
+        } else if (hasSegmentation && (!hasMaxilla || !hasMandible) && m_splitMaskAct) {
+            setGuidedNext(m_splitMaskAct,
+                          tr("Hueso listo. Pinte el maxilar y la mandíbula."));
         } else if (hasMaxilla && hasMandible) {
-            setGuidedDone(m_splitAct);
+            setGuidedDone(m_splitMaskAct);
         }
     }
 

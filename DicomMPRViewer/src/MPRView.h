@@ -110,6 +110,8 @@ public:
     // active=true enables freehand lasso drawing on mouse drag.
     // addMode=true paints the label; false erases it.
     void setLassoMode(bool active, bool addMode);
+    // A round brush in millimetres. Left drag paints. Ctrl erases. Alt and a vertical drag changes the radius.
+    void setBrushMode(bool active);
 
     // Expose the VTK renderer so SegmentationMaskEditor can convert coords.
     vtkRenderer* renderer() const;
@@ -124,6 +126,8 @@ signals:
     // vtkDisplayPoints are in VTK display coords (y=0 at render window bottom).
     void lassoEditCompleted(MPRView* source, QVector<QPointF> vtkDisplayPoints,
                             bool addMode);
+    void brushStroked(MPRView* source, double x, double y, double z, bool erase, bool starting);
+    void brushRadiusDragged(MPRView* source, int deltaY);
 
 private slots:
     void onSliderValueChanged(int value);
@@ -180,6 +184,10 @@ private:
     bool             m_lassoActive  = false;
     bool             m_lassoAddMode = true;
     bool             m_lassoDrawing = false;
+    bool             m_brushActive = false;
+    bool             m_brushPainting = false;
+    bool             m_brushSizing = false;
+    int              m_brushLastY = 0;
     QVector<QPointF> m_lassoPoints;
     QWidget*         m_lassoCanvas  = nullptr;
 };

@@ -11,6 +11,8 @@ inline constexpr int kUpperTeethLabel = 3;
 inline constexpr int kLowerTeethLabel = 8;
 // Maxilla thickened to 1 mm, only into air. Measurement stays on label 5.
 inline constexpr int kWorkMaxillaLabel = 9;
+// Bone a split could not reach from either painted region.
+inline constexpr int kUnassignedBoneLabel = 10;
 inline constexpr int kUpperArchLabel = 201;
 inline constexpr int kLowerArchLabel = 202;
 inline constexpr int kUpperCompositeLabel  = 203;

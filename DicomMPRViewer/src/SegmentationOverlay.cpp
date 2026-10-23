@@ -1,4 +1,5 @@
 #include "SegmentationOverlay.h"
+#include "ObjectLabels.h"
 
 #include <algorithm>
 
@@ -122,8 +123,8 @@ void SegmentationOverlay::buildLookupTable()
     m_lookupTable->SetTableValue(2, 0.20, 0.75, 1.00, alphaFor(2)); // tejidos blandos
     m_lookupTable->SetTableValue(3, 1.00, 0.92, 0.25, alphaFor(3)); // dientes superiores
     m_lookupTable->SetTableValue(4, 0.20, 1.00, 0.35, alphaFor(4)); // via aerea
-    m_lookupTable->SetTableValue(5, 1.00, 0.62, 0.62, alphaFor(5)); // maxilar/craneo
-    m_lookupTable->SetTableValue(6, 0.55, 0.75, 1.00, alphaFor(6)); // mandibula
+    m_lookupTable->SetTableValue(5, 0.95, 0.82, 0.12, alphaFor(5)); // maxilar
+    m_lookupTable->SetTableValue(6, 0.25, 0.48, 0.95, alphaFor(6)); // mandibula
     m_lookupTable->SetTableValue(7, 0.86, 0.37, 0.31, alphaFor(7)); // canal mandibular
     m_lookupTable->SetTableValue(8, 1.00, 0.72, 0.20, alphaFor(8)); // dientes inferiores
 
@@ -133,6 +134,8 @@ void SegmentationOverlay::buildLookupTable()
         const double b = ((i * 19) % 255) / 255.0;
         m_lookupTable->SetTableValue(i, r, g, b, alphaFor(i));
     }
+    m_lookupTable->SetTableValue(kUnassignedBoneLabel, 0.55, 0.55, 0.55, alphaFor(kUnassignedBoneLabel) * 0.65);
+    m_lookupTable->SetTableValue(14, 0.45, 0.45, 0.45, alphaFor(14) * 0.35);
     m_lookupTable->Build();
 }
 
