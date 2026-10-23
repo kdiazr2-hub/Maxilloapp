@@ -9,6 +9,8 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QProcessEnvironment>
 #include <QRegularExpression>
 #include <QStandardPaths>
@@ -307,6 +309,10 @@ StandaloneDentalSegmentatorService::StandaloneDentalSegmentatorService(QObject* 
     connect(m_process, &QProcess::readyReadStandardError,
             this, &StandaloneDentalSegmentatorService::onReadyReadStderr);
     connect(m_process, &QProcess::started, this, [this] {
+        if (m_serve && !m_pendingServeLine.isEmpty() && m_process) {
+            m_process->write(m_pendingServeLine);
+            m_pendingServeLine.clear();
+        }
         if (!m_runActive || m_cancelRequested)
             return;
         emit progressChanged(35);
@@ -329,8 +335,8 @@ StandaloneDentalSegmentatorService::~StandaloneDentalSegmentatorService()
 
 bool StandaloneDentalSegmentatorService::isRunning() const
 {
-    return (m_process && m_process->state() != QProcess::NotRunning) ||
-           (m_workerWatcher && m_workerWatcher->isRunning());
+    // The model process stays up between cases. Only a case in progress counts as running.
+    return runActive() || (m_workerWatcher && m_workerWatcher->isRunning());
 }
 
 void StandaloneDentalSegmentatorService::segment(
@@ -347,6 +353,7 @@ void StandaloneDentalSegmentatorService::segment(
         return;
     }
 
+    m_activeTarget = target;
     m_outputDirectory = outputDirectory;
     QDir().mkpath(m_outputDirectory);
 
@@ -447,15 +454,46 @@ void StandaloneDentalSegmentatorService::onWorkerFinished()
     succeedRun(result.outputPath);
 }
 
-void StandaloneDentalSegmentatorService::startExternalProcess(const QString&,
-                                                              const QString&)
+void StandaloneDentalSegmentatorService::startExternalProcess(const QString& inputPath,
+                                                              const QString& outputPath)
 {
     emit statusChanged("Ejecutando DentalSegmentator standalone...");
     m_processLog.clear();
+    m_serveBuffer.clear();
     m_processLogFile.close();
     m_processLogFile.setFileName(QDir(m_outputDirectory).filePath("segmentacion.log"));
     if (!m_processLogFile.open(QIODevice::WriteOnly | QIODevice::Truncate))
         m_processLogFile.setFileName(QString());
+    m_serve = m_externalCommand.args.contains(QStringLiteral("--serve"));
+    if (m_serve) {
+        QJsonObject request;
+        request.insert(QStringLiteral("input"), inputPath);
+        request.insert(QStringLiteral("output"), outputPath);
+        request.insert(QStringLiteral("target"), targetName(m_activeTarget));
+        request.insert(QStringLiteral("mode"),
+                       segmentationMode() == QLatin1String("rapido")
+                           ? QStringLiteral("rapido") : QStringLiteral("preciso"));
+        if (!m_studyModality.isEmpty())
+            request.insert(QStringLiteral("modality"), m_studyModality);
+        if (hasAirwaySeeds()) {
+            const auto first = airwaySeed1();
+            const auto second = airwaySeed2();
+            request.insert(QStringLiteral("seed"),
+                           QStringLiteral("%1,%2,%3").arg(first[0]).arg(first[1]).arg(first[2]));
+            request.insert(QStringLiteral("seed2"),
+                           QStringLiteral("%1,%2,%3").arg(second[0]).arg(second[1]).arg(second[2]));
+        } else if (hasAirwaySeed()) {
+            const auto seed = airwaySeed();
+            request.insert(QStringLiteral("seed"),
+                           QStringLiteral("%1,%2,%3").arg(seed[0]).arg(seed[1]).arg(seed[2]));
+        }
+        const QByteArray line = QJsonDocument(request).toJson(QJsonDocument::Compact) + '\n';
+        if (m_process->state() != QProcess::NotRunning) {
+            m_process->write(line);
+            return;
+        }
+        m_pendingServeLine = line;
+    }
     const QString program = resolveExecutable(m_externalCommand.program);
     if (program.isEmpty()) {
         failRun(
@@ -491,6 +529,8 @@ void StandaloneDentalSegmentatorService::appendProcessText(const QByteArray& dat
     if (data.isEmpty())
         return;
     m_processLog += QString::fromUtf8(data);
+    if (m_serve)
+        noteServeOutput(QString::fromUtf8(data));
     if (m_processLogFile.isOpen()) {
         m_processLogFile.write(QDateTime::currentDateTime().toString("[hh:mm:ss] ").toUtf8());
         m_processLogFile.write(data);
@@ -503,6 +543,36 @@ void StandaloneDentalSegmentatorService::appendProcessText(const QByteArray& dat
     // Only explicit milestones ("45% Ejecutando…" or MAXILLO_PROGRESS) reach the
     // progress dialog; nnU-Net progress bars and logs stay in the error log.
     publishProcessProgress(data, stderrChannel);
+}
+
+void StandaloneDentalSegmentatorService::noteServeOutput(const QString& text)
+{
+    m_serveBuffer += text;
+    int newline = -1;
+    while ((newline = m_serveBuffer.indexOf(QLatin1Char('\n'))) >= 0) {
+        const QString line = m_serveBuffer.left(newline).trimmed();
+        m_serveBuffer = m_serveBuffer.mid(newline + 1);
+        const QString marker = QStringLiteral("MAXILLO_RESULT ");
+        const int at = line.indexOf(marker);
+        if (at < 0 || !m_runActive)
+            continue;
+        const QJsonObject obj = QJsonDocument::fromJson(line.mid(at + marker.size()).toUtf8()).object();
+        if (!obj.value(QStringLiteral("ok")).toBool(false)) {
+            const QString error = obj.value(QStringLiteral("error")).toString(
+                QStringLiteral("La segmentacion automatica no termino."));
+            failRun(error);
+            return;
+        }
+        if (!QFileInfo::exists(m_outputSegmentationPath)) {
+            failRun(QStringLiteral("DentalSegmentator termino, pero no genero output_segmentation.nrrd."));
+            return;
+        }
+        if (m_processLogFile.isOpen())
+            m_processLogFile.close();
+        emit progressChanged(100);
+        emit statusChanged(QStringLiteral("Segmentacion DentalSegmentator finalizada."));
+        succeedRun(m_outputSegmentationPath);
+    }
 }
 
 void StandaloneDentalSegmentatorService::onProcessFinished(
@@ -593,8 +663,7 @@ StandaloneDentalSegmentatorService::resolveExternalCommand(
         if (!python.isEmpty()) {
             ExternalCommand command;
             command.program = python;
-            command.args << scriptPath << inputPath << outputPath
-                         << "--target" << targetName(target);
+            command.args << scriptPath << QStringLiteral("--serve");
             if (!m_studyModality.isEmpty())
                 command.args << "--modality" << m_studyModality;
             command.args << "--mode"

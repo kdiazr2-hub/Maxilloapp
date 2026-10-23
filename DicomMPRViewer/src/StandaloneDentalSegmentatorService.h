@@ -54,6 +54,7 @@ private:
     QString resolveScriptPath() const;
     void startExternalProcess(const QString& inputPath, const QString& outputPath);
     void appendProcessText(const QByteArray& data, bool stderrChannel);
+    void noteServeOutput(const QString& text);
 
     QString m_outputDirectory;
     QString m_outputSegmentationPath;
@@ -62,6 +63,11 @@ private:
     // error dialog, and the file still says which step it reached (user's report, 2026-10-19: "se congeló").
     QFile m_processLogFile;
     ExternalCommand m_externalCommand;
+    SegmentationTarget m_activeTarget = SegmentationTarget::FullAuto;
+    // One Python process, started on the first case. Later cases are one JSON line on its input.
+    bool m_serve = false;
+    QByteArray m_pendingServeLine;
+    QString m_serveBuffer;
     QProcess* m_process = nullptr;
     QFutureWatcher<StandaloneSegmentationResult>* m_workerWatcher = nullptr;
 };

@@ -1548,3 +1548,90 @@ class FacialCropTests(unittest.TestCase):
         image = sitk.GetImageFromArray(hu)
         image.SetSpacing((0.4, 0.4, 1.0))  # 100 mm craniocaudal
         self.assertIsNone(segmentator.facial_crop_box(image))
+
+
+class _QuietPredictor:
+    def __init__(self):
+        self.network = None
+        self.inits = 0
+        self.calls = 0
+        self.use_mirroring = True
+        self.tile_step_size = 0.5
+        self.perform_everything_on_device = True
+
+    def initialize_from_trained_model_folder(self, folder, folds):
+        self.inits += 1
+        self.folder = folder
+        self.folds = list(folds)
+
+    def predict_single_npy_array(self, array, properties, previous, output, probabilities):
+        self.calls += 1
+        self.saw_properties = properties
+        return array[0], None
+
+
+class _OomPredictor(_QuietPredictor):
+    def predict_single_npy_array(self, array, properties, previous, output, probabilities):
+        self.calls += 1
+        if self.perform_everything_on_device:
+            raise RuntimeError("CUDA out of memory. Tried to allocate 20.00 GiB")
+        return array[0], None
+
+
+class InMemoryPredictorTests(unittest.TestCase):
+    def test_the_array_matches_the_simpleitk_reader_and_comes_back_on_the_same_grid(self):
+        hu = np.arange(24, dtype=np.int16).reshape(2, 3, 4)  # z, y, x
+        image = sitk.GetImageFromArray(hu)
+        image.SetSpacing((0.5, 0.4, 1.0))
+        image.SetOrigin((1.0, 2.0, 3.0))
+        array, properties = segmentator.nnunet_input_from_image(image)
+        self.assertEqual(array.shape, (1, 2, 3, 4))
+        self.assertEqual(array.dtype, np.float32)
+        self.assertEqual(properties["spacing"], [1.0, 0.4, 0.5])
+        back = segmentator.image_from_nnunet_segmentation((array[0] > 10).astype(np.uint8), image)
+        self.assertEqual(back.GetSize(), image.GetSize())
+        self.assertTrue(np.allclose(back.GetOrigin(), image.GetOrigin()))
+        self.assertTrue(np.allclose(back.GetSpacing(), image.GetSpacing()))
+        self.assertTrue(np.allclose(back.GetDirection(), image.GetDirection()))
+
+    def test_the_model_is_loaded_once_and_reused(self):
+        created = []
+
+        def factory(device, on_device):
+            created.append((device, on_device))
+            return _QuietPredictor()
+
+        holder = segmentator.InMemoryPredictor(factory, "cuda")
+        array = np.zeros((1, 2, 2, 2), dtype=np.float32)
+        holder.ensure("models")
+        holder.predict_array(array, {"spacing": [1, 1, 1]}, "preciso")
+        holder.predict_array(array, {"spacing": [1, 1, 1]}, "rapido")
+        self.assertEqual(len(created), 1)
+        self.assertEqual(holder.loads, 1)
+        self.assertEqual(holder.predictor.calls, 2)
+        self.assertEqual(holder.predictor.inits, 1)
+        self.assertTrue(holder.predictor.use_mirroring is False)
+        self.assertEqual(holder.attempts, [True, True])
+
+    def test_a_short_gpu_falls_back_without_reloading_or_using_cpu(self):
+        holder = segmentator.InMemoryPredictor(lambda device, on_device: _OomPredictor(), "cuda")
+        holder.ensure("models")
+        array = np.zeros((1, 2, 2, 2), dtype=np.float32)
+        import contextlib
+        import io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            holder.predict_array(array, {"spacing": [1, 1, 1]}, "preciso")
+        self.assertEqual(holder.loads, 1)
+        self.assertEqual(holder.attempts, [True, False])
+        self.assertEqual(holder.predictor.calls, 2)
+        self.assertIn("No hubo VRAM", buf.getvalue())
+        self.assertNotIn("CPU", buf.getvalue())
+
+    def test_cpu_keeps_the_volume_in_memory(self):
+        holder = segmentator.InMemoryPredictor(lambda device, on_device: _QuietPredictor(), "cpu")
+        holder.ensure("models")
+        array = np.zeros((1, 2, 2, 2), dtype=np.float32)
+        holder.predict_array(array, {"spacing": [1, 1, 1]}, "preciso")
+        self.assertEqual(holder.attempts, [False])
+        self.assertEqual(holder.loads, 1)

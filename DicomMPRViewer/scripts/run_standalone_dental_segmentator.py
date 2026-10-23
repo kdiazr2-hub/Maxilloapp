@@ -1866,12 +1866,44 @@ def write_lower_teeth_sidecar(teeth_mask, reference, output_path):
     return write_teeth_sidecar(teeth_mask, reference, output_path, "dientes_inferiores")
 
 
+def probability_channel(volume, spatial_shape, source_label=1, crop_zyx=None):
+    """One class of an in-memory probability tensor, pasted onto `spatial_shape` when it was cropped."""
+    import numpy as np
+
+    channel = np.asarray(volume)
+    if channel.ndim == 4:
+        if not (0 <= int(source_label) < channel.shape[0]):
+            return None
+        channel = channel[int(source_label)]
+    wanted = tuple(spatial_shape)
+    if channel.shape == tuple(reversed(wanted)) and channel.shape != wanted:
+        channel = np.transpose(channel, (2, 1, 0))
+    if channel.shape != wanted and crop_zyx is not None:
+        start, box = crop_zyx
+        if channel.shape == tuple(reversed(box)) and channel.shape != tuple(box):
+            channel = np.transpose(channel, (2, 1, 0))
+        if channel.shape == tuple(box):
+            full = np.zeros(wanted, dtype=np.float32)
+            z0, y0, x0 = (int(value) for value in start)
+            dz, dy, dx = channel.shape
+            full[z0:z0 + dz, y0:y0 + dy, x0:x0 + dx] = channel
+            return np.ascontiguousarray(full, dtype=np.float32)
+    if channel.shape != wanted:
+        return None
+    return np.ascontiguousarray(channel, dtype=np.float32)
+
+
 def remap_prediction(input_path, prediction_path, output_path, target, seed=None, seed2=None,
-                     bone_from_totalsegmentator=False, probability_path=None, crop_zyx=None):
+                     bone_from_totalsegmentator=False, probability_path=None, crop_zyx=None,
+                     prediction_image=None, probability_volume=None):
     import numpy as np
     import SimpleITK as sitk
 
-    if prediction_path:
+    if prediction_image is not None:
+        seg = prediction_image
+        arr = sitk.GetArrayFromImage(seg)
+        out = np.zeros(arr.shape, dtype=np.uint8)
+    elif prediction_path:
         seg = sitk.ReadImage(str(prediction_path))
         arr = sitk.GetArrayFromImage(seg)
         out = np.zeros(arr.shape, dtype=np.uint8)
@@ -1881,7 +1913,13 @@ def remap_prediction(input_path, prediction_path, output_path, target, seed=None
         out = np.zeros(sitk.GetArrayFromImage(seg).shape, dtype=np.uint8)
 
     maxilla_probability = None
-    if arr is not None and (probability_path or prediction_path):
+    if arr is not None and probability_volume is not None:
+        maxilla_probability = probability_channel(probability_volume, arr.shape, 1, crop_zyx)
+        if maxilla_probability is None:
+            log("    [Hueso - Maxilar] Probabilidades en memoria con forma inesperada; se ignoran.")
+        else:
+            log("    [Hueso - Maxilar] Probabilidad del maxilar cargada.")
+    elif arr is not None and (probability_path or prediction_path):
         maxilla_probability = load_label_probability(
             probability_path or prediction_path, 1, arr.shape, crop_zyx)
 
@@ -2681,12 +2719,187 @@ def prediction_flags(mode):
     return flags
 
 
+def is_cuda_oom(exc):
+    text = str(exc).lower()
+    return "out of memory" in text
+
+
+def nnunet_input_from_image(image):
+    """The array and spacing nnU-Net's SimpleITK reader would have produced, without a file."""
+    import numpy as np
+
+    array = np.ascontiguousarray(sitk.GetArrayFromImage(image)[None], dtype=np.float32)
+    spacing = [abs(float(value)) for value in image.GetSpacing()[::-1]]
+    return array, {"spacing": spacing}
+
+
+def image_from_nnunet_segmentation(segmentation, reference):
+    """Put a (z, y, x) label array back on `reference`'s grid."""
+    import numpy as np
+
+    labels = np.asarray(segmentation)
+    if labels.ndim == 4 and labels.shape[0] == 1:
+        labels = labels[0]
+    image = sitk.GetImageFromArray(np.ascontiguousarray(labels.astype(np.uint8)))
+    image.CopyInformation(reference)
+    return image
+
+
+def configuration_folder(dataset_dir):
+    dataset_dir = Path(dataset_dir)
+    for checkpoint in dataset_dir.rglob("checkpoint_final.pth"):
+        if checkpoint.parent.name.startswith("fold_"):
+            return checkpoint.parent.parent
+    raise RuntimeError("No está el checkpoint de DentalSegmentator en %s." % dataset_dir)
+
+
+class ThermalWatch:
+    """Between network steps, wait while the GPU is at 80 °C or more. The process itself keeps running."""
+
+    def __init__(self):
+        self.hot = False
+        self.stop = False
+        self._announced = False
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self):
+        while not self.stop:
+            temp = gpu_temperature()
+            if temp is not None and temp >= 80 and not self.hot:
+                self.hot = True
+                self._announced = True
+                log("GPU a %d°. Pausa para que no llegue a 90°." % temp)
+            elif self.hot and temp is not None and temp <= 68:
+                self.hot = False
+                log("GPU a %d°. Sigue la segmentacion." % temp)
+            time.sleep(2)
+
+    def wait(self):
+        while self.hot and not self.stop:
+            time.sleep(0.5)
+
+    def close(self):
+        self.stop = True
+        self.hot = False
+
+
+class InMemoryPredictor:
+    """One nnUNetPredictor for the life of this process. The weights are read once."""
+
+    def __init__(self, factory, device):
+        self.factory = factory
+        self.device = device
+        self.predictor = None
+        self.loads = 0
+        self.attempts = []
+        self.watch = None
+
+    def ensure(self, folder, folds=(0,)):
+        if self.predictor is None:
+            self.predictor = self.factory(self.device, self.device != "cpu")
+            self.predictor.initialize_from_trained_model_folder(str(folder), list(folds))
+            self.loads += 1
+            self._arm_thermal()
+            log("Modelo DentalSegmentator cargado. Las siguientes segmentaciones lo reutilizan.")
+        return self.predictor
+
+    def _arm_thermal(self):
+        network = getattr(self.predictor, "network", None)
+        if network is None or getattr(network, "_maxillo_thermal", False):
+            return
+        if self.watch is None:
+            self.watch = ThermalWatch()
+        original = network.forward
+        watch = self.watch
+
+        def forward(*args, **kwargs):
+            watch.wait()
+            return original(*args, **kwargs)
+
+        network.forward = forward
+        network._maxillo_thermal = True
+
+    def predict_array(self, array, properties, mode):
+        predictor = self.predictor
+        if predictor is None:
+            raise RuntimeError("El modelo no está cargado.")
+        predictor.use_mirroring = "--disable_tta" not in prediction_flags(mode)
+        predictor.tile_step_size = 0.5
+
+        def attempt(on_device):
+            predictor.perform_everything_on_device = bool(on_device)
+            self.attempts.append(bool(on_device))
+            return predictor.predict_single_npy_array(array, properties, None, None, True)
+
+        if self.device == "cpu":
+            return attempt(False)
+        try:
+            return attempt(True)
+        except RuntimeError as exc:
+            if not is_cuda_oom(exc):
+                raise
+            log("No hubo VRAM para dejar el volumen en la GPU. "
+                "Se reintenta con el volumen en la memoria del equipo.")
+            return attempt(False)
+
+    def predict_image(self, image, folder, mode, folds=(0,)):
+        array, properties = nnunet_input_from_image(image)
+        self.ensure(folder, folds)
+        fast = "--disable_tta" in prediction_flags(mode)
+        if fast:
+            log("DentalSegmentator: modo rápido, sin TTA, step_size 0.5, volumen en memoria.")
+        else:
+            log("DentalSegmentator: modo preciso, TTA activa, step_size 0.5, volumen en memoria.")
+        segmentation, probabilities = self.predict_array(array, properties, mode)
+        return image_from_nnunet_segmentation(segmentation, image), probabilities
+
+
+def build_nnunet_predictor(device_name, on_device):
+    import torch
+    from nnunetv2.inference.predict_from_raw_data import nnUNetPredictor
+    import nnunetv2.inference.predict_from_raw_data as predict_module
+    from tqdm import tqdm
+
+    class ReportingTqdm(tqdm):
+        def update(self, n=1):
+            shown = super().update(n)
+            total = self.total or 0
+            if total:
+                done = int(self.n)
+                percent = 58 + int(30 * done / total)
+                progress(min(percent, 88),
+                         "Dientes con DentalSegmentator: %d/%d" % (done, int(total)))
+            return shown
+
+    predict_module.tqdm = ReportingTqdm
+    return nnUNetPredictor(
+        tile_step_size=0.5,
+        use_gaussian=True,
+        use_mirroring=True,
+        perform_everything_on_device=bool(on_device and device_name != "cpu"),
+        device=torch.device(device_name),
+        verbose=False,
+        allow_tqdm=True,
+    )
+
+
+_PREDICTOR = None
+
+
+def shared_predictor(device):
+    global _PREDICTOR
+    if _PREDICTOR is None:
+        _PREDICTOR = InMemoryPredictor(build_nnunet_predictor, device)
+    return _PREDICTOR
+
+
 def run_dentalsegmentator_nnunet(input_path, output_path, target, seed=None, seed2=None, mode="preciso"):
 
     # Stop before converting or predicting when the GPU cannot run. CPU is not a fallback.
     device = resolve_inference_device()
     try:
-        mode_flags = prediction_flags(mode)
+        prediction_flags(mode)
     except ValueError as exc:
         log(str(exc))
         raise SystemExit(1)
@@ -2730,90 +2943,50 @@ def run_dentalsegmentator_nnunet(input_path, output_path, target, seed=None, see
         if cc_mm <= FACIAL_CROP_SMALL_FOV_MM:
             log("Campo craneocaudal de %.0f mm: el FOV ya es pequeño y no se recorta." % cc_mm)
     case_input = images_dir / "case_0000.nii.gz"
-    sitk.WriteImage(image, str(case_input), True)
 
-
-    env = os.environ.copy()
-    env["nnUNet_results"] = str(results_root)
-    env.setdefault("nnUNet_raw", str(raw_dir))
-    env.setdefault("nnUNet_preprocessed", str(prep_dir))
+    os.environ["nnUNet_results"] = str(results_root)
+    os.environ.setdefault("nnUNet_raw", str(raw_dir))
+    os.environ.setdefault("nnUNet_preprocessed", str(prep_dir))
+    env = os.environ
 
     log(f"Python: {sys.executable}")
 
     bone_from_totalsegmentator = False
     bone_source = os.environ.get("DENTALSEGMENTATOR_BONE_SOURCE", "dentalsegmentator").strip().lower()
     if target.lower() not in ("teeth", "dientes") and bone_source == "totalsegmentator":
+        sitk.WriteImage(image, str(case_input), True)
         ts_path = pred_dir / "totalsegmentator_craniofacial.nii.gz"
         run_totalsegmentator_bone(case_input, ts_path, device)
         bone_from_totalsegmentator = True
 
     log(f"58% Maxilar, mandibula y dientes con DentalSegmentator ({device}).")
-    cmd = [
-        nnunet_predict_executable(),
-        "-i", str(images_dir),
-        "-o", str(pred_dir),
-        "-d", env.get("DENTALSEGMENTATOR_DATASET_ID", DATASET_ID),
-        "-c", env.get("DENTALSEGMENTATOR_CONFIGURATION", CONFIGURATION),
-        "-f", env.get("DENTALSEGMENTATOR_FOLDS", FOLDS),
-        "-device", device,
-        # One case: extra preprocessing/export workers only add process start-up (torch import) and RAM.
-        "-npp", env.get("DENTALSEGMENTATOR_NPP", "1"),
-        "-nps", env.get("DENTALSEGMENTATOR_NPS", "1"),
-    ]
-    # Preciso mirrors every window (TTA). Rápido does not. Both overlap by half a patch.
-    cmd += mode_flags
-    if "--disable_tta" in mode_flags:
-        log("DentalSegmentator: modo rápido, sin TTA, step_size 0.5, probabilidades guardadas.")
-    else:
-        log("DentalSegmentator: modo preciso, TTA activa, step_size 0.5, probabilidades guardadas.")
-    run_logged(cmd, env=env, progress_range=(58, 88), stage="Dientes con DentalSegmentator",
-               guard_gpu=(device != "cpu"))
+    folds = tuple(int(part) for part in env.get("DENTALSEGMENTATOR_FOLDS", FOLDS).split(",") if part.strip())
+    predicted, probabilities = shared_predictor(device).predict_image(
+        image, configuration_folder(dataset_dir), mode, folds or (0,))
     log("88% Exportando dientes...")
 
-    prediction_path = pred_dir / "case.nii.gz"
-    if not prediction_path.exists():
-        alternatives = [path for path in pred_dir.glob("*.nii.gz")
-                        if path.name != "totalsegmentator_craniofacial.nii.gz"]
-        if alternatives:
-            prediction_path = alternatives[0]
-    if not prediction_path.exists():
-        raise RuntimeError("nnU-Net termino, pero no genero prediccion NIfTI.")
-
     if bone_from_totalsegmentator:
-        dental_img = sitk.ReadImage(str(prediction_path))
         merged = replace_bone_with_totalsegmentator(
-            sitk.GetArrayFromImage(dental_img),
-            resample_label_array(sitk.ReadImage(str(ts_path)), dental_img),
+            sitk.GetArrayFromImage(predicted),
+            resample_label_array(sitk.ReadImage(str(ts_path)), predicted),
         )
         merged_img = sitk.GetImageFromArray(np.ascontiguousarray(merged.astype(np.uint8)))
-        merged_img.CopyInformation(dental_img)
-        combined_path = pred_dir / "bone_totalsegmentator.nii.gz"
-        sitk.WriteImage(merged_img, str(combined_path), True)
-        prediction_path = combined_path
+        merged_img.CopyInformation(predicted)
+        predicted = merged_img
         log("92% Craneo y mandibula de TotalSegmentator; dientes de DentalSegmentator. Sin canal.")
 
     if crop_index is not None:
-        predicted = sitk.ReadImage(str(prediction_path))
-        if not same_physical_grid(predicted, image):
-            resampler = sitk.ResampleImageFilter()
-            resampler.SetReferenceImage(image)
-            resampler.SetInterpolator(sitk.sitkNearestNeighbor)
-            resampler.SetDefaultPixelValue(0)
-            predicted = resampler.Execute(predicted)
-        full_pred = reinsert_label(predicted, full_ct, crop_index)
-        full_path = pred_dir / "prediction_full_grid.nii.gz"
-        sitk.WriteImage(full_pred, str(full_path), True)
-        prediction_path = full_path
-        if not same_physical_grid(full_pred, full_ct):
+        predicted = reinsert_label(predicted, full_ct, crop_index)
+        if not same_physical_grid(predicted, full_ct):
             raise RuntimeError("La prediccion reinsertada no conserva la grilla del TAC.")
         log("La prediccion quedo con el origen, el espaciado y la direccion del TAC original.")
 
     log("93% Remapeando etiquetas a la app...")
-    remap_prediction(input_path, prediction_path, output_path, target, seed, seed2,
+    remap_prediction(input_path, None, output_path, target, seed, seed2,
                      bone_from_totalsegmentator=bone_from_totalsegmentator,
-                     probability_path=pred_dir / "case.npz",
-                     crop_zyx=crop_zyx)
-
+                     crop_zyx=crop_zyx,
+                     prediction_image=predicted,
+                     probability_volume=probabilities)
     if not Path(output_path).exists():
         raise RuntimeError("No se genero labelmap NRRD de salida.")
     log(f"100% Labelmap guardado: {output_path}")
@@ -2843,22 +3016,7 @@ def run_command(command):
     return process.wait()
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("input")
-    parser.add_argument("output")
-    parser.add_argument("--target", default="hueso")
-    parser.add_argument("--seed", default=None)
-    parser.add_argument("--seed2", default=None)
-    parser.add_argument("--modality", default="")
-    parser.add_argument("--mode", default="preciso")
-    args = parser.parse_args()
-    if args.modality.strip():
-        os.environ["DENTALSEGMENTATOR_MODALITY"] = args.modality.strip()
-
-    input_path = os.path.abspath(args.input)
-    output_path = os.path.abspath(args.output)
-    target = args.target
+def run_requested_case(input_path, output_path, target, seed, seed2, mode):
     if not os.path.exists(input_path):
         raise RuntimeError(f"No existe input: {input_path}")
 
@@ -2867,7 +3025,7 @@ def main():
     # Bypass nnU-Net entirely for airway/via aerea segmentation
     if target.lower() in ("via aerea", "via_aerea", "airway"):
         log("20% Segmentando via aerea sin nnU-Net...")
-        remap_prediction(input_path, None, output_path, target, args.seed, args.seed2)
+        remap_prediction(input_path, None, output_path, target, seed, seed2)
         if not os.path.exists(output_path):
             raise RuntimeError("No se genero labelmap de via aerea.")
         log(f"100% Labelmap de via aerea guardado: {output_path}")
@@ -2897,7 +3055,61 @@ def main():
         log(f"100% Labelmap guardado: {output_path}")
         return
 
-    run_dentalsegmentator_nnunet(input_path, output_path, target, args.seed, args.seed2, args.mode)
+    run_dentalsegmentator_nnunet(input_path, output_path, target, seed, seed2, mode)
+
+
+def serve(stdin):
+    """Stay up, load the model on the first case, and reuse it. The app closes this process on exit."""
+    resolve_inference_device()
+    log("MAXILLO_READY")
+    for line in stdin:
+        text = line.strip()
+        if not text:
+            continue
+        try:
+            request = json.loads(text)
+            if request.get("modality"):
+                os.environ["DENTALSEGMENTATOR_MODALITY"] = str(request["modality"])
+            run_requested_case(
+                os.path.abspath(request["input"]),
+                os.path.abspath(request["output"]),
+                request.get("target", "completo"),
+                request.get("seed"),
+                request.get("seed2"),
+                request.get("mode", "preciso"),
+            )
+        except Exception as exc:
+            log("ERROR: " + str(exc))
+            traceback.print_exc()
+            log("MAXILLO_RESULT " + json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+            continue
+        log("MAXILLO_RESULT " + json.dumps({"ok": True}, ensure_ascii=False))
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("input", nargs="?")
+    parser.add_argument("output", nargs="?")
+    parser.add_argument("--target", default="hueso")
+    parser.add_argument("--seed", default=None)
+    parser.add_argument("--seed2", default=None)
+    parser.add_argument("--modality", default="")
+    parser.add_argument("--mode", default="preciso")
+    parser.add_argument("--serve", action="store_true")
+    args = parser.parse_args()
+    if args.serve:
+        try:
+            sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+        serve(sys.stdin)
+        return
+    if not args.input or not args.output:
+        raise RuntimeError("Faltan la entrada y la salida.")
+    if args.modality.strip():
+        os.environ["DENTALSEGMENTATOR_MODALITY"] = args.modality.strip()
+    run_requested_case(os.path.abspath(args.input), os.path.abspath(args.output),
+                       args.target, args.seed, args.seed2, args.mode)
 
 
 if __name__ == "__main__":
