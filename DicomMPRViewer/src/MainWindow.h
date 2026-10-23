@@ -866,6 +866,10 @@ private:
     // meshes skip fillBetweenCortices: its axis chords up to 20 mm only added rectangular slabs to them, in
     // the nose and the palate (user's report, 2026-10-19). Saved as the optional "solidBoneLabels" key.
     std::set<int>                     m_solidBoneLabels;
+    // Last DentalSegmentator mode that actually ran: "preciso" or "rapido". Empty until then, so an
+    // older project and a project that never ran the automatic segmentation omit the key.
+    QString                           m_dentalSegmentatorMode;
+    QComboBox*                        m_dentalModeCombo = nullptr;
     bool closeCorticesFor(int label) const {
         // Teeth are their own objects. The chord fill is for hollow cortical bone.
         if (label == kUpperTeethLabel || label == kLowerTeethLabel || label == kWorkMaxillaLabel)

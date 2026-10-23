@@ -1470,3 +1470,25 @@ class CudaRequiredTests(unittest.TestCase):
             device = segmentator.resolve_inference_device("cpu", probe=(False, None, "cpu", None, []))
         self.assertEqual(device, "cpu")
         self.assertIn("elegido con DENTALSEGMENTATOR_DEVICE=cpu", buf.getvalue())
+
+
+class SegmentationModeTests(unittest.TestCase):
+    """Preciso mirrors, like the 3D Slicer extension. Rápido does not. The step stays 0.5."""
+
+    def test_precise_keeps_mirroring_and_half_step(self):
+        flags = segmentator.prediction_flags("preciso")
+        self.assertNotIn("--disable_tta", flags)
+        self.assertEqual(flags[flags.index("-step_size") + 1], "0.5")
+
+    def test_fast_drops_mirroring_and_keeps_half_step(self):
+        flags = segmentator.prediction_flags("rapido")
+        self.assertIn("--disable_tta", flags)
+        self.assertEqual(flags[flags.index("-step_size") + 1], "0.5")
+
+    def test_the_default_is_precise(self):
+        self.assertNotIn("--disable_tta", segmentator.prediction_flags(None))
+        self.assertNotIn("--disable_tta", segmentator.prediction_flags(""))
+
+    def test_an_unknown_mode_is_refused(self):
+        with self.assertRaises(ValueError):
+            segmentator.prediction_flags("cpu")

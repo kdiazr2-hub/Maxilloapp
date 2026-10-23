@@ -597,6 +597,10 @@ StandaloneDentalSegmentatorService::resolveExternalCommand(
                          << "--target" << targetName(target);
             if (!m_studyModality.isEmpty())
                 command.args << "--modality" << m_studyModality;
+            command.args << "--mode"
+                         << (segmentationMode() == QLatin1String("rapido")
+                                 ? QStringLiteral("rapido")
+                                 : QStringLiteral("preciso"));
             if (target == SegmentationTarget::Airway) {
                 if (hasAirwaySeeds()) {
                     const auto s1 = airwaySeed1();

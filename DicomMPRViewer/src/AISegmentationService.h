@@ -45,6 +45,9 @@ public:
     }
     void setStudyModality(const QString& modality) { m_studyModality = modality; }
     QString studyModality() const { return m_studyModality; }
+    // "preciso" (TTA, the 3D Slicer default) or "rapido" (no TTA). Both use step_size 0.5.
+    void setSegmentationMode(const QString& mode) { m_segmentationMode = mode; }
+    QString segmentationMode() const { return m_segmentationMode; }
     void clearAirwaySeed() {
         m_hasAirwaySeed = false;
         m_hasAirwaySeeds = false;
@@ -88,4 +91,5 @@ protected:
     std::array<double, 3> m_airwaySeed2 = {0.0, 0.0, 0.0};
     bool m_hasAirwaySeeds = false;
     QString m_studyModality;
+    QString m_segmentationMode = QStringLiteral("preciso");
 };

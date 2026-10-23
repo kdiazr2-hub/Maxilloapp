@@ -199,6 +199,8 @@ void testLegacyProjectWithoutDesigns()
     require(!resavedText.contains("guidesPlan"), "an empty guides plan was written");
     require(loaded.solidBoneLabels.isEmpty(), "a legacy project came back with solid bone labels");
     require(!resavedText.contains("solidBoneLabels"), "empty solid bone labels were written");
+    require(loaded.dentalSegmentatorMode.isEmpty(), "a legacy project invented a segmentation mode");
+    require(!resavedText.contains("dentalSegmentatorMode"), "an unused segmentation mode was written");
     require(!resavedText.contains("acquisition"), "a legacy project grew an acquisition record");
 }
 
@@ -236,11 +238,14 @@ void testSolidBoneLabelsRoundTrip()
     ProjectState state;
     state.dicomFolder = QStringLiteral("C:/dicom/solido");
     state.solidBoneLabels = {5, 6};
+    state.dentalSegmentatorMode = QStringLiteral("rapido");
     QString error;
     require(ProjectSerializer::save(path, state, &error), "save failed: " + error.toStdString());
     ProjectState loaded;
     require(ProjectSerializer::load(path, loaded, &error), "load failed: " + error.toStdString());
     require(loaded.solidBoneLabels == QVector<int>({5, 6}), "solid bone labels did not survive the round trip");
+    require(loaded.dentalSegmentatorMode == QStringLiteral("rapido"),
+            "the segmentation mode did not survive the round trip");
 }
 } // namespace
 

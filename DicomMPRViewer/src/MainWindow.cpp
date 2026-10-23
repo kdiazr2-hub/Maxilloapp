@@ -1086,6 +1086,16 @@ void MainWindow::buildToolBar()
         });
         row->addWidget(makeActBtn(dentalAct, page));
 
+        m_dentalModeCombo = new QComboBox(page);
+        m_dentalModeCombo->setObjectName(QStringLiteral("DentalSegmentatorMode"));
+        m_dentalModeCombo->addItem(tr("Preciso"), QStringLiteral("preciso"));
+        m_dentalModeCombo->addItem(tr("Rápido"), QStringLiteral("rapido"));
+        m_dentalModeCombo->setToolTip(tr(
+            "Preciso: la red mira el volumen en las ocho orientaciones, como la extensión de 3D Slicer. "
+            "Rápido: una sola orientación. El modelo y el solape de 0,5 son los mismos."));
+        m_dentalModeCombo->setCurrentIndex(0);
+        row->addWidget(m_dentalModeCombo);
+
         m_manualAirwayAct = new QAction(tr("Vía Aérea\nManual"), this);
         connect(m_manualAirwayAct, &QAction::triggered, this, [this] {
             if (!m_volume) {
@@ -6097,6 +6107,7 @@ ProjectState MainWindow::collectProjectState() const
         state.hiddenMaskLabels.append(lbl);
     for (int lbl : m_solidBoneLabels)
         state.solidBoneLabels.append(lbl);
+    state.dentalSegmentatorMode = m_dentalSegmentatorMode;
 
     // Mask table rows
     if (m_maskTable) {
@@ -6235,6 +6246,14 @@ void MainWindow::applyProjectState(const ProjectState& state)
     for (int lbl : state.hiddenMaskLabels)
         m_hiddenMaskLabels.insert(lbl);
     m_solidBoneLabels = std::set<int>(state.solidBoneLabels.begin(), state.solidBoneLabels.end());
+    m_dentalSegmentatorMode = state.dentalSegmentatorMode;
+    if (m_dentalModeCombo) {
+        const int modeIndex = m_dentalModeCombo->findData(
+            m_dentalSegmentatorMode == QLatin1String("rapido")
+                ? QStringLiteral("rapido") : QStringLiteral("preciso"));
+        if (modeIndex >= 0)
+            m_dentalModeCombo->setCurrentIndex(modeIndex);
+    }
     refreshSegmentationOverlays();
 
     // ── Window / level preset ─────────────────────────────────────────────
@@ -8224,6 +8243,12 @@ void MainWindow::startAISegmentation(SegmentationTarget target)
             || model.contains(QStringLiteral("9600"), Qt::CaseInsensitive))
             mode = QStringLiteral("cbct");
         m_aiSegmentationService->setStudyModality(mode);
+        QString speed = QStringLiteral("preciso");
+        if (m_dentalModeCombo && m_dentalModeCombo->currentData().toString() == QLatin1String("rapido"))
+            speed = QStringLiteral("rapido");
+        m_aiSegmentationService->setSegmentationMode(speed);
+        if (target == SegmentationTarget::FullAuto)
+            m_dentalSegmentatorMode = speed;
     }
     if (target == SegmentationTarget::Airway)
         m_pendingAutoMeshLabel = 4;

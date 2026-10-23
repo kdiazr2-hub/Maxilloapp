@@ -81,6 +81,9 @@ struct ProjectState
     // Bone labels the segmentation script delivered solid (marrow filled by solid_bone_mask): meshing skips
     // fillBetweenCortices for them. Optional key, written only when not empty; older projects have none.
     QVector<int>             solidBoneLabels;
+    // "preciso" or "rapido": the automatic-segmentation mode of the last run. Empty in older projects,
+    // which means Preciso. Written only after a run.
+    QString                  dentalSegmentatorMode;
 
     // ── Registration points ───────────────────────────────────────────────────
     QVector<QVector3D> maxillaBonePoints;

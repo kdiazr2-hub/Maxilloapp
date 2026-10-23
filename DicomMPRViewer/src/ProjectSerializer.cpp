@@ -219,6 +219,9 @@ bool ProjectSerializer::save(const QString& projectFilePath,
         for (int lbl : state.solidBoneLabels) solidArr.append(lbl);
         root[QStringLiteral("solidBoneLabels")] = solidArr;
     }
+    if (state.dentalSegmentatorMode == QLatin1String("preciso")
+        || state.dentalSegmentatorMode == QLatin1String("rapido"))
+        root[QStringLiteral("dentalSegmentatorMode")] = state.dentalSegmentatorMode;
 
     // Dental points
     QJsonObject ptsObj;
@@ -431,6 +434,11 @@ bool ProjectSerializer::load(const QString& projectFilePath,
     state.solidBoneLabels.clear();
     for (const auto& v : root[QStringLiteral("solidBoneLabels")].toArray())
         state.solidBoneLabels.append(v.toInt());
+    {
+        const QString mode = root.value(QStringLiteral("dentalSegmentatorMode")).toString();
+        state.dentalSegmentatorMode = (mode == QLatin1String("preciso") || mode == QLatin1String("rapido"))
+            ? mode : QString();
+    }
 
     // Dental points
     const QJsonObject ptsObj = root[QStringLiteral("dentalPoints")].toObject();

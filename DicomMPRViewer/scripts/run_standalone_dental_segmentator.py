@@ -2478,10 +2478,34 @@ def resolve_inference_device(requested=None, probe=None):
     return "cuda"
 
 
-def run_dentalsegmentator_nnunet(input_path, output_path, target, seed=None, seed2=None):
+def prediction_flags(mode):
+    """Preciso is the 3D Slicer default: test-time mirroring and step_size 0.5.
+
+    Rápido drops the mirroring and keeps the same step. The model does not change.
+    """
+    name = (mode or "preciso").strip().lower()
+    if name in ("preciso", "precise"):
+        fast = False
+    elif name in ("rapido", "rápido", "fast"):
+        fast = True
+    else:
+        raise ValueError(
+            "Modo de segmentación desconocido: %r. Use preciso o rapido." % (mode,)
+        )
+    flags = ["--disable_tta"] if fast else []
+    flags += ["--save_probabilities", "-step_size", "0.5"]
+    return flags
+
+
+def run_dentalsegmentator_nnunet(input_path, output_path, target, seed=None, seed2=None, mode="preciso"):
 
     # Stop before converting or predicting when the GPU cannot run. CPU is not a fallback.
     device = resolve_inference_device()
+    try:
+        mode_flags = prediction_flags(mode)
+    except ValueError as exc:
+        log(str(exc))
+        raise SystemExit(1)
 
     require_imports()
     dataset_dir = ensure_weights(default_model_dir())
@@ -2531,10 +2555,12 @@ def run_dentalsegmentator_nnunet(input_path, output_path, target, seed=None, see
         "-npp", env.get("DENTALSEGMENTATOR_NPP", "1"),
         "-nps", env.get("DENTALSEGMENTATOR_NPS", "1"),
     ]
-    # This mode always mirrors and overlaps the windows, and keeps the probabilities.
-    # DENTALSEGMENTATOR_DISABLE_TTA and DENTALSEGMENTATOR_STEP_SIZE do not apply here.
-    cmd += ["--save_probabilities", "-step_size", "0.5"]
-    log("DentalSegmentator: TTA activa, step_size 0.5, probabilidades guardadas.")
+    # Preciso mirrors every window (TTA). Rápido does not. Both overlap by half a patch.
+    cmd += mode_flags
+    if "--disable_tta" in mode_flags:
+        log("DentalSegmentator: modo rápido, sin TTA, step_size 0.5, probabilidades guardadas.")
+    else:
+        log("DentalSegmentator: modo preciso, TTA activa, step_size 0.5, probabilidades guardadas.")
     run_logged(cmd, env=env, progress_range=(58, 88), stage="Dientes con DentalSegmentator",
                guard_gpu=(device != "cpu"))
     log("88% Exportando dientes...")
@@ -2602,6 +2628,7 @@ def main():
     parser.add_argument("--seed", default=None)
     parser.add_argument("--seed2", default=None)
     parser.add_argument("--modality", default="")
+    parser.add_argument("--mode", default="preciso")
     args = parser.parse_args()
     if args.modality.strip():
         os.environ["DENTALSEGMENTATOR_MODALITY"] = args.modality.strip()
@@ -2647,7 +2674,7 @@ def main():
         log(f"100% Labelmap guardado: {output_path}")
         return
 
-    run_dentalsegmentator_nnunet(input_path, output_path, target, args.seed, args.seed2)
+    run_dentalsegmentator_nnunet(input_path, output_path, target, args.seed, args.seed2, args.mode)
 
 
 if __name__ == "__main__":
