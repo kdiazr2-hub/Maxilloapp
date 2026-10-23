@@ -884,6 +884,8 @@ private:
     int                               m_fillBoneCavityLabel = -1;
     ThresholdSegmentDialog*           m_thresholdDialog = nullptr;
     vtkSmartPointer<vtkImageData>     m_thresholdPreview;
+    // The Hueso mask as created. Split mask reads this and does not write it.
+    vtkSmartPointer<vtkImageData>     m_originBoneMask;
     bool                              m_thresholdPreviewOn = false;
     double                            m_thresholdMinHu = 226.0;
     double                            m_thresholdMaxHu = 3071.0;

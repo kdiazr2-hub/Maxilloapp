@@ -11,11 +11,23 @@ class vtkImageData;
 // minHu <= value <= maxHu belong to the mask. The window is chosen per study.
 struct ThresholdRequest
 {
-    double minHu = 150.0;
+    double minHu = 226.0;
     double maxHu = 3071.0;
     bool fillHoles = false;
+    // Kept for tests. The bone presets no longer turn it on: a click selects the piece.
     bool keepLargest = false;
+    // 26-connected component of seedMm. A click outside the window yields an empty mask.
+    bool keepConnectedToSeed = false;
+    bool hasSeed = false;
+    double seedMm[3] = {0.0, 0.0, 0.0};
     int label = 1;
+};
+
+// A starting window for a cone-beam study, whose grays are not Hounsfield units.
+struct StudyWindow
+{
+    double minimum = 0.0;
+    double maximum = 0.0;
 };
 
 struct HuHistogram
@@ -34,6 +46,10 @@ public:
     // Up to `bins` buckets spanning the finite voxels of the volume.
     static HuHistogram histogram(vtkImageData* volume, int bins = 256);
 
+    // Minimum is the 90th percentile of the voxels above the 20th of the study.
+    // Maximum is the study maximum. The panel must say these are not Hounsfield units.
+    static StudyWindow coneBeamBoneWindow(const HuHistogram& histogram);
+
     // Empty unsigned-char labelmap with the volume's geometry.
     static vtkSmartPointer<vtkImageData> blank(vtkImageData* volume);
 
@@ -46,8 +62,9 @@ public:
     static void paintSlice(vtkImageData* volume, vtkImageData* labelmap,
                            int axis, int slice, double minHu, double maxHu, int label);
 
-    // Full mask. `keepLargest` runs before `fillHoles`, so a noise island is
-    // dropped and only the remaining object is closed. Null when nothing matches.
+    // Full mask. `keepConnectedToSeed` keeps the 26-connected piece of the click
+    // and ignores `keepLargest`. Otherwise `keepLargest` runs before `fillHoles`.
+    // Null when nothing matches, or when the click misses the window.
     static vtkSmartPointer<vtkImageData> build(vtkImageData* volume, const ThresholdRequest& request,
                                                std::int64_t* voxels = nullptr);
 

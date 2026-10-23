@@ -7996,9 +7996,21 @@ void MainWindow::beginThresholdSegmentation(bool bone)
         return;
     }
 
-    auto* dialog = new ThresholdSegmentDialog(bone, histogram, this);
+    const QString model = QString::fromStdString(m_volumeMeta.manufacturerModel).toLower();
+    const QString modality = QString::fromStdString(m_volumeMeta.modality).toLower();
+    const bool coneBeam = modality.contains(QStringLiteral("cbct"))
+        || model.contains(QStringLiteral("cbct"))
+        || model.contains(QStringLiteral("cone"))
+        || model.contains(QStringLiteral("9600"));
+    StudyWindow suggested;
+    if (coneBeam)
+        suggested = ThresholdMaskCore::coneBeamBoneWindow(histogram);
+
+    auto* dialog = new ThresholdSegmentDialog(bone, histogram, this, coneBeam,
+                                              suggested.minimum, suggested.maximum);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     m_thresholdDialog = dialog;
+    auto seedPicking = std::make_shared<bool>(false);
     const ThresholdRequest initial = dialog->request();
     m_thresholdMinHu = initial.minHu;
     m_thresholdMaxHu = initial.maxHu;
@@ -8018,11 +8030,34 @@ void MainWindow::beginThresholdSegmentation(bool bone)
         m_thresholdMaxHu = maxHu;
         refreshThresholdPreview();
     });
-    connect(dialog, &QDialog::finished, this, [this, dialog](int result) {
+    connect(dialog, &ThresholdSegmentDialog::seedModeChanged, this, [this, seedPicking](bool on) {
+        *seedPicking = on;
+        for (MPRView* view : {m_axialView, m_coronalView, m_sagittalView}) {
+            if (!view) continue;
+            view->setMeasurementPickingEnabled(on);
+            if (on) view->setMeasurementFinishRequiresDoubleRightClick(true);
+        }
+        statusBar()->showMessage(on
+            ? tr("Haga clic en el hueso que quiere conservar.")
+            : tr("Mueva el rango. Lo verde en los cortes es lo que se va a segmentar."));
+    });
+    for (MPRView* view : {m_axialView, m_coronalView, m_sagittalView}) {
+        if (!view) continue;
+        connect(view, &MPRView::physicalPointClicked, dialog,
+                [dialog](MPRView*, double x, double y, double z) {
+                    if (dialog->wantsSeed())
+                        dialog->setSeed(x, y, z);
+                });
+    }
+    connect(dialog, &QDialog::finished, this, [this, dialog, seedPicking](int result) {
         const ThresholdRequest chosen = dialog->request();
         const bool forBone = dialog->forBone();
         if (m_thresholdDialog == dialog)
             m_thresholdDialog = nullptr;
+        if (*seedPicking) {
+            for (MPRView* view : {m_axialView, m_coronalView, m_sagittalView})
+                if (view) view->setMeasurementPickingEnabled(false);
+        }
         endThresholdPreview();
         if (result == QDialog::Accepted)
             applyThresholdSegmentation(forBone, chosen);
@@ -8058,17 +8093,20 @@ void MainWindow::applyThresholdSegmentation(bool bone, const ThresholdRequest& r
     auto mask = ThresholdMaskCore::build(m_volume, request, &voxels);
     QApplication::restoreOverrideCursor();
     if (!mask || voxels <= 0) {
-        QMessageBox::warning(this, bone ? tr("Segmentar hueso") : tr("Segmentar tejido blando"),
-                             tr("Ningún vóxel cae en ese rango."));
+        const QString title = bone ? tr("Segmentar hueso") : tr("Segmentar tejido blando");
+        const QString message = (request.keepConnectedToSeed && !request.hasSeed)
+            ? tr("Marque con un clic el hueso que quiere conservar.")
+            : request.keepConnectedToSeed
+                ? tr("El clic no cayó dentro del rango.")
+                : tr("Ningún vóxel cae en ese rango.");
+        QMessageBox::warning(this, title, message);
         return;
     }
 
-    QApplication::setOverrideCursor(Qt::WaitCursor);
     if (bone) {
-        ThresholdMaskCore::separateMandible(mask);
-        ThresholdMaskCore::sealThinBone(mask, m_volume);
+        m_originBoneMask = vtkSmartPointer<vtkImageData>::New();
+        m_originBoneMask->DeepCopy(mask);
     }
-    QApplication::restoreOverrideCursor();
 
     pushLabelmapUndo();
     if (!m_segmentationLabelmap || m_segmentationLabelmap->GetNumberOfPoints() != mask->GetNumberOfPoints()) {
@@ -8078,7 +8116,7 @@ void MainWindow::applyThresholdSegmentation(bool bone, const ThresholdRequest& r
         const int clearBone[] = {1, 5, 6};
         const int clearSoft[] = {2};
         const std::int64_t written = bone
-            ? ThresholdMaskCore::stampMask(destination, mask, clearBone, 3)
+            ? ThresholdMaskCore::stamp(destination, mask, 1, clearBone, 3)
             : ThresholdMaskCore::stamp(destination, mask, request.label, clearSoft, 1);
         if (written < 0) {
             QMessageBox::warning(this, tr("Umbral"), tr("La máscara no coincide con la segmentación actual."));
@@ -8087,29 +8125,6 @@ void MainWindow::applyThresholdSegmentation(bool bone, const ThresholdRequest& r
         m_segmentationLabelmap = destination;
     }
 
-    refreshSegmentationOverlays();
-    m_appState.setSegmentationDone(true);
-    m_appState.setProjectDirty(true);
-
-    // The window is already the bone the user chose. Chord fill would lay
-    // rectangular slabs across it, the same ones a thresholded skull showed.
-    auto publishLabel = [&](int label) {
-        if (label == 1 || label == 5 || label == 6)
-            m_solidBoneLabels.insert(label);
-        const QString name = meshLabelName(label);
-        const QColor color = meshLabelColor(label);
-        addMaskEntry(name, color, label);
-        addObjectEntry(name, color, label);
-        QString meshError;
-        const int smoothing = smoothingIterationsForPreset(MeshSmoothingPreset::Optimal);
-        m_maskSmoothingIterations[label] = smoothing;
-        auto mesh = MeshGenerator::generateMesh(m_segmentationLabelmap, label, true, smoothing, &meshError,
-                                                closeCorticesFor(label), m_volume);
-        if (mesh)
-            publishSegmentationMesh(label, mesh);
-        else if (!meshError.isEmpty())
-            statusBar()->showMessage(tr("%1: %2").arg(name, meshError));
-    };
     auto dropLabel = [&](int label) {
         if (m_maskTable) {
             for (int row = m_maskTable->rowCount() - 1; row >= 0; --row) {
@@ -8127,30 +8142,29 @@ void MainWindow::applyThresholdSegmentation(bool bone, const ThresholdRequest& r
         }
         m_solidBoneLabels.erase(label);
     };
+    if (bone) {
+        dropLabel(5);
+        dropLabel(6);
+    }
 
-    const int wanted[] = {bone ? 1 : 2, bone ? 5 : 0, bone ? 6 : 0};
-    bool present[7] = {};
-    if (auto* scalars = static_cast<unsigned char*>(m_segmentationLabelmap->GetScalarPointer())) {
-        const vtkIdType n = m_segmentationLabelmap->GetNumberOfPoints();
-        for (vtkIdType i = 0; i < n; ++i) {
-            const unsigned char value = scalars[i];
-            if (value < 7) present[value] = true;
-        }
-    }
-    for (int label : wanted) {
-        if (label <= 0) continue;
-        if (present[label]) publishLabel(label);
-        else dropLabel(label);
-    }
+    refreshSegmentationOverlays();
+    m_appState.setSegmentationDone(true);
+    m_appState.setProjectDirty(true);
+
+    const int label = bone ? 1 : 2;
+    if (bone)
+        m_solidBoneLabels.insert(label);
+    const QString name = meshLabelName(label);
+    addMaskEntry(name, meshLabelColor(label), label);
+    m_maskSmoothingIterations[label] = 0;
+    calculateObjectFromMask(label, true);
+    setObjectEntryVisible(label, true);
     if (m_inspectorTabs && m_objectsInspectorTab)
         m_inspectorTabs->setCurrentWidget(m_objectsInspectorTab);
     updateButtonStates();
-    if (!bone)
-        statusBar()->showMessage(tr("Tejido blando creado: %1 vóxeles.").arg(voxels));
-    else if (present[5] && present[6])
-        statusBar()->showMessage(tr("Maxilar y mandíbula creados: %1 vóxeles de hueso.").arg(voxels));
-    else
-        statusBar()->showMessage(tr("Hueso creado: %1 vóxeles. No se pudo separar la mandíbula.").arg(voxels));
+    statusBar()->showMessage(bone
+        ? tr("Hueso creado: %1 vóxeles. La separación en maxilar y mandíbula se hace pintando cada parte.").arg(voxels)
+        : tr("Tejido blando creado: %1 vóxeles.").arg(voxels));
 }
 
 void MainWindow::startAISegmentation(SegmentationTarget target)

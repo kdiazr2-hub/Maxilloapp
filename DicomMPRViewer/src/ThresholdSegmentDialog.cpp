@@ -26,13 +26,14 @@ struct Preset
     double minHu;
     double maxHu;
     bool fillHoles;
-    bool keepLargest;
 };
 
 const Preset kPresets[] = {
-    {"Personalizado", 0, 0, false, false},
-    {"Hueso (TC)", 150, 3071, false, true},
-    {"Tejido blando (TC)", -205, 235, true, true},
+    {"Personalizado", 0, 0, false},
+    {"Hueso (CT)", 226, 3071, false},
+    {"Hueso fino", 150, 3071, false},
+    {"Esmalte", 1200, 3071, false},
+    {"Tejido blando (TC)", -205, 235, true},
 };
 
 int clampHu(double value, double minimum, double maximum)
@@ -151,9 +152,13 @@ private:
     double m_grab = 0;
 };
 
-ThresholdSegmentDialog::ThresholdSegmentDialog(bool bone, const HuHistogram& histogram, QWidget* parent)
+ThresholdSegmentDialog::ThresholdSegmentDialog(bool bone, const HuHistogram& histogram, QWidget* parent,
+                                                 bool coneBeam, double suggestedMin, double suggestedMax)
     : QDialog(parent, Qt::Dialog | Qt::WindowTitleHint | Qt::WindowCloseButtonHint)
     , m_bone(bone)
+    , m_coneBeam(coneBeam)
+    , m_suggestedMin(suggestedMin)
+    , m_suggestedMax(suggestedMax)
     , m_histogram(histogram)
 {
     setWindowTitle(tr("Segmentar"));
@@ -179,6 +184,11 @@ ThresholdSegmentDialog::ThresholdSegmentDialog(bool bone, const HuHistogram& his
     m_hint->setWordWrap(true);
     layout->addWidget(m_hint);
 
+    m_coneBeamNote = new QLabel(tr("Estos valores no son unidades Hounsfield. El rango es una propuesta del histograma."), this);
+    m_coneBeamNote->setWordWrap(true);
+    m_coneBeamNote->setVisible(coneBeam && bone);
+    layout->addWidget(m_coneBeamNote);
+
     m_histogramView = new HuRangeWidget(histogram, this);
     layout->addWidget(m_histogramView);
 
@@ -190,13 +200,13 @@ ThresholdSegmentDialog::ThresholdSegmentDialog(bool bone, const HuHistogram& his
     m_minBox = new QSpinBox(this);
     m_minBox->setObjectName(QStringLiteral("thresholdMinHu"));
     m_minBox->setRange(dataMin, dataMax);
-    m_minBox->setSuffix(tr(" HU"));
+    m_minBox->setSuffix(coneBeam ? QString() : tr(" HU"));
     rangeRow->addWidget(m_minBox);
     rangeRow->addWidget(new QLabel(tr("Máximo"), this));
     m_maxBox = new QSpinBox(this);
     m_maxBox->setObjectName(QStringLiteral("thresholdMaxHu"));
     m_maxBox->setRange(dataMin, dataMax);
-    m_maxBox->setSuffix(tr(" HU"));
+    m_maxBox->setSuffix(coneBeam ? QString() : tr(" HU"));
     rangeRow->addWidget(m_maxBox);
     layout->addLayout(rangeRow);
 
@@ -208,15 +218,19 @@ ThresholdSegmentDialog::ThresholdSegmentDialog(bool bone, const HuHistogram& his
 
     m_fillHoles = new QCheckBox(tr("Rellenar huecos"), this);
     m_fillHoles->setObjectName(QStringLiteral("thresholdFillHoles"));
-    m_keepLargest = new QCheckBox(tr("Conservar el mayor"), this);
-    m_keepLargest->setObjectName(QStringLiteral("thresholdKeepLargest"));
+    m_keepConnected = new QCheckBox(tr("Conservar solo la región conectada al clic"), this);
+    m_keepConnected->setObjectName(QStringLiteral("thresholdKeepConnected"));
     auto* options = new QHBoxLayout();
     options->addWidget(m_fillHoles);
-    options->addWidget(m_keepLargest);
+    options->addWidget(m_keepConnected);
     layout->addLayout(options);
 
-    auto* note = new QLabel(tr("Rellenar huecos y conservar el mayor se aplican al crear el objeto. "
-                               "Conservar el mayor quita las piezas sueltas del borde del estudio."), this);
+    m_seedLabel = new QLabel(tr("Con la opción activa, haga clic en el hueso que quiere conservar."), this);
+    m_seedLabel->setWordWrap(true);
+    layout->addWidget(m_seedLabel);
+
+    auto* note = new QLabel(tr("Crear escribe una máscara, Hueso. La separación en maxilar y mandíbula "
+                               "se hace después, pintando cada parte."), this);
     note->setWordWrap(true);
     layout->addWidget(note);
 
@@ -251,31 +265,45 @@ ThresholdSegmentDialog::ThresholdSegmentDialog(bool bone, const HuHistogram& his
     });
     connect(m_preset, qOverload<int>(&QComboBox::currentIndexChanged), this, [this, timer](int index) {
         if (m_updating || index <= 0) return;
-        if (index == 1 || index == 2)
-            setBoneMode(index == 1);
+        setBoneMode(index < 4, index);
         timer->start();
     });
     connect(m_boneChoice, &QRadioButton::toggled, this, [this, timer](bool on) {
         if (!on || m_updating) return;
-        setBoneMode(true);
+        if (m_coneBeam) showSuggestedConeBeamRange();
+        else setBoneMode(true, 1);
         timer->start();
     });
     connect(m_softChoice, &QRadioButton::toggled, this, [this, timer](bool on) {
         if (!on || m_updating) return;
-        setBoneMode(false);
+        setBoneMode(false, 4);
         timer->start();
+    });
+    connect(m_keepConnected, &QCheckBox::toggled, this, [this](bool on) {
+        if (!on) {
+            m_hasSeed = false;
+            m_seedLabel->setText(tr("Con la opción activa, haga clic en el hueso que quiere conservar."));
+        }
+        emit seedModeChanged(on);
     });
     connect(cancel, &QPushButton::clicked, this, &QDialog::reject);
     connect(m_create, &QPushButton::clicked, this, [this, timer] {
+        if (wantsSeed() && !m_hasSeed) {
+            m_seedLabel->setText(tr("Haga clic en el hueso, dentro del rango, antes de crear la máscara."));
+            return;
+        }
         timer->stop();
         emitRange();
         accept();
     });
 
-    setBoneMode(bone);
+    if (bone && coneBeam)
+        showSuggestedConeBeamRange();
+    else
+        setBoneMode(bone, bone ? 1 : 4);
 }
 
-void ThresholdSegmentDialog::setBoneMode(bool bone)
+void ThresholdSegmentDialog::setBoneMode(bool bone, int presetIndex)
 {
     m_bone = bone;
     m_updating = true;
@@ -283,12 +311,48 @@ void ThresholdSegmentDialog::setBoneMode(bool bone)
     m_softChoice->setChecked(!bone);
     m_updating = false;
     m_hint->setText(bone
-        ? tr("Elija el rango en unidades Hounsfield. Los cortes muestran lo que entra. "
-             "Al crear, el hueso se divide en maxilar y mandíbula.")
-        : tr("Elija el rango en unidades Hounsfield. Los cortes muestran lo que entra. "
-             "Al crear, se genera el tejido blando."));
-    m_create->setText(bone ? tr("Crear y separar") : tr("Crear tejido"));
-    applyPreset(bone ? 1 : 2);
+        ? tr("Elija el rango que cubre todo el hueso. Los cortes muestran lo que entra. "
+             "Al crear queda una sola máscara, Hueso.")
+        : tr("Elija el rango. Los cortes muestran lo que entra. Al crear queda el tejido blando."));
+    m_create->setText(bone ? tr("Crear máscara") : tr("Crear tejido"));
+    if (m_coneBeamNote)
+        m_coneBeamNote->setVisible(bone && m_coneBeam);
+    applyPreset(presetIndex);
+}
+
+void ThresholdSegmentDialog::showSuggestedConeBeamRange()
+{
+    m_bone = true;
+    m_updating = true;
+    m_boneChoice->setChecked(true);
+    m_softChoice->setChecked(false);
+    m_updating = false;
+    m_hint->setText(tr("Elija el rango que cubre todo el hueso. Los cortes muestran lo que entra. "
+                       "Al crear queda una sola máscara, Hueso."));
+    m_create->setText(tr("Crear máscara"));
+    if (m_coneBeamNote)
+        m_coneBeamNote->setVisible(true);
+    setRange(m_suggestedMin, m_suggestedMax, false);
+    m_fillHoles->setChecked(false);
+    QSignalBlocker blocker(m_preset);
+    m_preset->setCurrentIndex(0);
+}
+
+bool ThresholdSegmentDialog::wantsSeed() const
+{
+    return m_keepConnected && m_keepConnected->isChecked();
+}
+
+void ThresholdSegmentDialog::setSeed(double x, double y, double z)
+{
+    m_hasSeed = true;
+    m_seed[0] = x;
+    m_seed[1] = y;
+    m_seed[2] = z;
+    m_seedLabel->setText(tr("Clic guardado: %1, %2, %3 mm")
+                             .arg(x, 0, 'f', 1)
+                             .arg(y, 0, 'f', 1)
+                             .arg(z, 0, 'f', 1));
 }
 
 ThresholdRequest ThresholdSegmentDialog::request() const
@@ -297,7 +361,12 @@ ThresholdRequest ThresholdSegmentDialog::request() const
     request.minHu = m_minBox->value();
     request.maxHu = m_maxBox->value();
     request.fillHoles = m_fillHoles->isChecked();
-    request.keepLargest = m_keepLargest->isChecked();
+    request.keepLargest = false;
+    request.keepConnectedToSeed = wantsSeed();
+    request.hasSeed = m_hasSeed;
+    request.seedMm[0] = m_seed[0];
+    request.seedMm[1] = m_seed[1];
+    request.seedMm[2] = m_seed[2];
     request.label = m_bone ? 1 : 2;
     return request;
 }
@@ -310,7 +379,6 @@ void ThresholdSegmentDialog::applyPreset(int index)
     const double maximum = m_histogram.voxels > 0 ? m_histogram.maximum : preset.maxHu;
     setRange(clampHu(preset.minHu, minimum, maximum), clampHu(preset.maxHu, minimum, maximum), false);
     m_fillHoles->setChecked(preset.fillHoles);
-    m_keepLargest->setChecked(preset.keepLargest);
     QSignalBlocker blocker(m_preset);
     m_preset->setCurrentIndex(index);
 }

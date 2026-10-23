@@ -181,6 +181,54 @@ void fillHoles(unsigned char* mask, const Grid& grid, int label)
         if (!mask[i] && !outside[static_cast<size_t>(i)])
             mask[i] = value;
 }
+
+// 26-connected. Returns false when the seed voxel is outside the grid or outside the mask.
+bool keepConnectedToSeed(unsigned char* mask, const Grid& grid, vtkImageData* image, const double seedMm[3])
+{
+    if (!mask || !image) return false;
+    double ijk[3] = {};
+    image->TransformPhysicalPointToContinuousIndex(seedMm, ijk);
+    const int sx = static_cast<int>(std::floor(ijk[0] + 0.5));
+    const int sy = static_cast<int>(std::floor(ijk[1] + 0.5));
+    const int sz = static_cast<int>(std::floor(ijk[2] + 0.5));
+    const int x0 = sx - grid.extent[0];
+    const int y0 = sy - grid.extent[2];
+    const int z0 = sz - grid.extent[4];
+    if (x0 < 0 || y0 < 0 || z0 < 0 || x0 >= grid.nx || y0 >= grid.ny || z0 >= grid.nz)
+        return false;
+
+    const int nx = grid.nx, ny = grid.ny, nz = grid.nz;
+    const vtkIdType seed = indexOf(x0, y0, z0, nx, ny);
+    if (!mask[seed]) return false;
+
+    std::vector<unsigned char> keep(static_cast<size_t>(grid.n), 0);
+    std::vector<vtkIdType> stack;
+    stack.push_back(seed);
+    keep[static_cast<size_t>(seed)] = 1;
+    while (!stack.empty()) {
+        const vtkIdType i = stack.back();
+        stack.pop_back();
+        const int z = static_cast<int>(i / (static_cast<vtkIdType>(nx) * ny));
+        const vtkIdType rem = i - static_cast<vtkIdType>(z) * nx * ny;
+        const int y = static_cast<int>(rem / nx);
+        const int x = static_cast<int>(rem - static_cast<vtkIdType>(y) * nx);
+        for (int dz = -1; dz <= 1; ++dz)
+            for (int dy = -1; dy <= 1; ++dy)
+                for (int dx = -1; dx <= 1; ++dx) {
+                    if (dx == 0 && dy == 0 && dz == 0) continue;
+                    const int xx = x + dx, yy = y + dy, zz = z + dz;
+                    if (xx < 0 || yy < 0 || zz < 0 || xx >= nx || yy >= ny || zz >= nz) continue;
+                    const vtkIdType j = indexOf(xx, yy, zz, nx, ny);
+                    if (!mask[j] || keep[static_cast<size_t>(j)]) continue;
+                    keep[static_cast<size_t>(j)] = 1;
+                    stack.push_back(j);
+                }
+    }
+    for (vtkIdType i = 0; i < grid.n; ++i)
+        if (!keep[static_cast<size_t>(i)])
+            mask[i] = 0;
+    return true;
+}
 }
 
 HuHistogram ThresholdMaskCore::histogram(vtkImageData* volume, int bins)
@@ -215,6 +263,49 @@ HuHistogram ThresholdMaskCore::histogram(vtkImageData* volume, int bins)
         ++result.counts[static_cast<size_t>(bin)];
     });
     return result;
+}
+
+StudyWindow ThresholdMaskCore::coneBeamBoneWindow(const HuHistogram& histogram)
+{
+    StudyWindow window;
+    window.minimum = histogram.minimum;
+    window.maximum = histogram.maximum;
+    if (histogram.counts.empty() || histogram.voxels <= 0 || histogram.binWidth <= 0.0)
+        return window;
+
+    const int bins = static_cast<int>(histogram.counts.size());
+    auto centerOf = [&](int bin) {
+        return histogram.minimum + (static_cast<double>(bin) + 0.5) * histogram.binWidth;
+    };
+    std::int64_t seen = 0;
+    const std::int64_t p20Rank = static_cast<std::int64_t>(histogram.voxels * 0.20);
+    double p20 = histogram.minimum;
+    for (int i = 0; i < bins; ++i) {
+        seen += histogram.counts[static_cast<size_t>(i)];
+        if (seen > p20Rank) {
+            p20 = centerOf(i);
+            break;
+        }
+    }
+
+    std::int64_t above = 0;
+    for (int i = 0; i < bins; ++i)
+        if (centerOf(i) > p20)
+            above += histogram.counts[static_cast<size_t>(i)];
+    if (above <= 0) return window;
+
+    const std::int64_t need = std::max<std::int64_t>(1, static_cast<std::int64_t>(above * 0.90));
+    std::int64_t walked = 0;
+    for (int i = 0; i < bins; ++i) {
+        if (centerOf(i) <= p20) continue;
+        walked += histogram.counts[static_cast<size_t>(i)];
+        if (walked >= need) {
+            window.minimum = centerOf(i);
+            break;
+        }
+    }
+    window.maximum = histogram.maximum;
+    return window;
 }
 
 vtkSmartPointer<vtkImageData> ThresholdMaskCore::blank(vtkImageData* volume)
@@ -323,8 +414,12 @@ vtkSmartPointer<vtkImageData> ThresholdMaskCore::build(vtkImageData* volume, con
     });
     if (count == 0) return nullptr;
 
-    if (request.keepLargest)
+    if (request.keepConnectedToSeed) {
+        if (!request.hasSeed || !keepConnectedToSeed(dst, grid, out, request.seedMm))
+            return nullptr;
+    } else if (request.keepLargest) {
         keepLargest(dst, grid);
+    }
     if (request.fillHoles)
         fillHoles(dst, grid, request.label);
 

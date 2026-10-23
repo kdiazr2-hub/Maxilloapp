@@ -1,5 +1,6 @@
 #include "ThresholdMaskCore.h"
 
+#include <cmath>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -203,6 +204,86 @@ void testASingleBoneDoesNotSplit()
     require(at(mask, 10, 10, 10) == 1, "the bone label changed");
 }
 
+void testClickKeepsOneComponent()
+{
+    std::vector<short> values(8 * 8 * 4, 0);
+    auto fill = [&](int x0, int x1, int y, int z) {
+        for (int x = x0; x <= x1; ++x)
+            values[static_cast<size_t>(z * 64 + y * 8 + x)] = 800;
+    };
+    fill(1, 2, 1, 1);
+    fill(5, 6, 1, 1);
+    auto volume = volumeFrom(8, 8, 4, values);
+    volume->SetSpacing(1.0, 1.0, 1.0);
+
+    ThresholdRequest full;
+    full.minHu = 200;
+    full.maxHu = 3000;
+    std::int64_t fullCount = 0;
+    auto everything = ThresholdMaskCore::build(volume, full, &fullCount);
+    require(fullCount == 4, "the window did not keep both blocks");
+
+    ThresholdRequest request = full;
+    request.keepConnectedToSeed = true;
+    request.hasSeed = true;
+    request.seedMm[0] = 1;
+    request.seedMm[1] = 1;
+    request.seedMm[2] = 1;
+    std::int64_t kept = 0;
+    auto mask = ThresholdMaskCore::build(volume, request, &kept);
+    require(mask && kept == 2, "the click did not keep its component");
+    require(at(mask, 1, 1, 1) == 1 && at(mask, 2, 1, 1) == 1, "the clicked block was dropped");
+    require(at(mask, 5, 1, 1) == 0 && at(mask, 6, 1, 1) == 0, "the other block stayed");
+    const auto* chosen = static_cast<const unsigned char*>(mask->GetScalarPointer());
+    const auto* all = static_cast<const unsigned char*>(everything->GetScalarPointer());
+    for (vtkIdType i = 0; i < mask->GetNumberOfPoints(); ++i)
+        require(!chosen[i] || all[i], "the click added a voxel outside the window");
+}
+
+void testClickOutsideTheWindowIsEmpty()
+{
+    auto volume = volumeFrom(4, 4, 2, std::vector<short>(32, 0));
+    static_cast<short*>(volume->GetScalarPointer())[0] = 800;
+    volume->SetSpacing(1.0, 1.0, 1.0);
+    ThresholdRequest request;
+    request.minHu = 200;
+    request.maxHu = 3000;
+    request.keepConnectedToSeed = true;
+    request.hasSeed = true;
+    request.seedMm[0] = 3;
+    request.seedMm[1] = 3;
+    request.seedMm[2] = 1;
+    std::int64_t kept = 99;
+    auto mask = ThresholdMaskCore::build(volume, request, &kept);
+    require(!mask && kept == 0, "a click outside the window produced a mask");
+}
+
+void testWithoutTheClickBothComponentsStay()
+{
+    std::vector<short> values(8 * 4 * 2, 0);
+    values[1] = 800;
+    values[6] = 800;
+    auto volume = volumeFrom(8, 4, 2, values);
+    ThresholdRequest request;
+    request.minHu = 200;
+    request.maxHu = 3000;
+    std::int64_t kept = 0;
+    auto mask = ThresholdMaskCore::build(volume, request, &kept);
+    require(mask && kept == 2, "the window dropped a component without a click");
+}
+
+void testConeBeamWindowUsesTheUpperTissue()
+{
+    std::vector<short> values(100, -1000);
+    for (int i = 80; i < 90; ++i) values[static_cast<size_t>(i)] = 40;
+    for (int i = 90; i < 100; ++i) values[static_cast<size_t>(i)] = 1800;
+    auto volume = volumeFrom(10, 10, 1, values);
+    const HuHistogram histogram = ThresholdMaskCore::histogram(volume, 64);
+    const StudyWindow window = ThresholdMaskCore::coneBeamBoneWindow(histogram);
+    require(window.minimum > 200.0, "the cone-beam proposal sat in the soft tissue");
+    require(std::abs(window.maximum - histogram.maximum) < 1.0, "the cone-beam maximum is not the study maximum");
+}
+
 void testStampWritesOntoEmptiedBone()
 {
     auto geometry = volumeFrom(1, 1, 1, {0});
@@ -230,6 +311,10 @@ int main()
         testSeparateMandibleBreaksTheOcclusion();
         testSealClosesABoneGapAndLeavesAir();
         testASingleBoneDoesNotSplit();
+        testClickKeepsOneComponent();
+        testClickOutsideTheWindowIsEmpty();
+        testWithoutTheClickBothComponentsStay();
+        testConeBeamWindowUsesTheUpperTissue();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;
