@@ -1420,3 +1420,53 @@ class WorkMaxillaTests(unittest.TestCase):
         self.assertGreaterEqual(float(np.max(2.0 * inside[medial])), 1.0 - 1e-3)
         # Air farther than the deficit stays empty.
         self.assertFalse(np.any(result[:, :6, :]))
+
+
+class CudaRequiredTests(unittest.TestCase):
+    """The automatic segmentation stops when CUDA cannot run. It does not switch to CPU."""
+
+    def test_missing_cuda_is_an_error_and_not_cpu(self):
+        import contextlib
+        import io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            with self.assertRaises(SystemExit) as caught:
+                segmentator.resolve_inference_device(
+                    "auto", probe=(False, None, "2.11.0+cpu", None, []))
+        self.assertEqual(caught.exception.code, 1)
+        text = buf.getvalue()
+        self.assertIn("no continúa en CPU", text)
+        self.assertIn("cu128", text)
+        self.assertIn("pip install --force-reinstall torch torchvision", text)
+        self.assertNotIn("elegido con DENTALSEGMENTATOR_DEVICE=cpu", text)
+
+    def test_blackwell_on_an_older_cuda_build_is_refused(self):
+        reason = segmentator.cuda_block_reason(
+            True, "12.1", "2.5.1+cu121", (12, 0), ["sm_90", "sm_80"])
+        self.assertIn("RTX 50", reason)
+        self.assertIn("cu128", reason)
+        self.assertIn("sm_120", reason)
+        self.assertIn("no continúa en CPU", reason)
+
+    def test_blackwell_without_its_kernel_is_refused_even_on_cuda_128(self):
+        reason = segmentator.cuda_block_reason(
+            True, "12.8", "2.11.0+cu128", (12, 0), ["sm_90"])
+        self.assertIn("sm_120", reason)
+        self.assertIn("no continúa en CPU", reason)
+
+    def test_blackwell_on_cu128_runs(self):
+        self.assertIsNone(segmentator.cuda_block_reason(
+            True, "12.8", "2.11.0+cu128", (12, 0), ["sm_120", "compute_120"]))
+
+    def test_an_older_gpu_on_its_own_cuda_build_runs(self):
+        self.assertIsNone(segmentator.cuda_block_reason(
+            True, "12.1", "2.5.1+cu121", (8, 9), ["sm_89", "sm_90"]))
+
+    def test_cpu_only_when_the_user_asks(self):
+        import contextlib
+        import io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            device = segmentator.resolve_inference_device("cpu", probe=(False, None, "cpu", None, []))
+        self.assertEqual(device, "cpu")
+        self.assertIn("elegido con DENTALSEGMENTATOR_DEVICE=cpu", buf.getvalue())

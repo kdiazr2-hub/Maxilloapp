@@ -2367,7 +2367,121 @@ def run_totalsegmentator_bone(nifti_path, output_file, device):
         raise RuntimeError("TotalSegmentator termino, pero no escribio el hueso.")
 
 
+# RTX 50 (Blackwell, compute capability 12.0) needs this wheel. An older CUDA build
+# loads and then fails inside the first kernel, which used to look like a hang.
+PYTORCH_CU128_INSTALL = (
+    "pip install --force-reinstall torch torchvision "
+    "--index-url https://download.pytorch.org/whl/cu128"
+)
+
+
+def _cuda_at_least(cuda_version, major, minor):
+    if not cuda_version:
+        return False
+    numbers = []
+    for part in str(cuda_version).split(".")[:2]:
+        try:
+            numbers.append(int(part))
+        except ValueError:
+            return False
+    while len(numbers) < 2:
+        numbers.append(0)
+    return (numbers[0], numbers[1]) >= (major, minor)
+
+
+def cuda_block_reason(available, cuda_version, torch_version, capability, arch_list):
+    """None when this PyTorch can run the GPU. Otherwise a Spanish error.
+
+    The caller never turns that into a CPU run. CPU happens only when the user
+    set DENTALSEGMENTATOR_DEVICE=cpu.
+    `capability` is (major, minor) or None. `arch_list` holds names like 'sm_89'.
+    """
+    install = (
+        "Para reinstalar PyTorch con CUDA 12.8, en el entorno dentalgpu:\n"
+        + PYTORCH_CU128_INSTALL
+    )
+    version = torch_version or "desconocida"
+    choose_cpu = (
+        "CPU solo si usted lo elige: defina DENTALSEGMENTATOR_DEVICE=cpu y vuelva a lanzarla."
+    )
+    if not available or not cuda_version:
+        return (
+            "PyTorch no ve CUDA (versión %s). La segmentación automática no continúa en CPU.\n"
+            "%s\n\n%s" % (version, choose_cpu, install)
+        )
+    major, minor = (int(capability[0]), int(capability[1])) if capability else (0, 0)
+    arch = "sm_%d%d" % (major, minor)
+    compiled = [str(name).lower() for name in (arch_list or [])]
+    arch_ready = any(
+        arch in name or ("compute_%d%d" % (major, minor)) in name for name in compiled
+    )
+    has_cu128 = "cu128" in version or _cuda_at_least(cuda_version, 12, 8)
+    # Blackwell (RTX 50, sm_120) is absent from every wheel older than cu128.
+    if major >= 12 and (not has_cu128 or (compiled and not arch_ready)):
+        return (
+            "Esta GPU es de la serie RTX 50 (capacidad %d.%d, %s) y esta instalación de "
+            "PyTorch es CUDA %s (%s). Esa serie necesita el paquete cu128, con soporte sm_120. "
+            "La segmentación automática no continúa en CPU.\n%s\n\n%s"
+            % (major, minor, arch, cuda_version, version, choose_cpu, install)
+        )
+    if compiled and not arch_ready:
+        return (
+            "PyTorch (CUDA %s, %s) no incluye esta GPU (%s). "
+            "La segmentación automática no continúa en CPU.\n%s\n\n%s"
+            % (cuda_version, version, arch, choose_cpu, install)
+        )
+    return None
+
+
+def _live_cuda_probe():
+    try:
+        import torch
+    except Exception as exc:
+        return (False, None, "no importado (%s)" % exc, None, [])
+    available = bool(torch.cuda.is_available())
+    capability = torch.cuda.get_device_capability(0) if available else None
+    arch_list = list(torch.cuda.get_arch_list()) if available else []
+    return (
+        available,
+        getattr(torch.version, "cuda", None),
+        torch.__version__,
+        capability,
+        arch_list,
+    )
+
+
+def resolve_inference_device(requested=None, probe=None):
+    """Return 'cuda', or 'cpu' only when the user asked for it.
+
+    `probe` is (available, cuda_version, torch_version, capability, arch_list).
+    Tests pass it so they never import torch. Without it, the live GPU is read.
+    """
+    if requested is None:
+        requested = os.environ.get("DENTALSEGMENTATOR_DEVICE", "")
+    choice = (requested or "").strip().lower() or "auto"
+    if choice == "cpu":
+        log("Dispositivo: CPU, elegido con DENTALSEGMENTATOR_DEVICE=cpu.")
+        return "cpu"
+    if choice not in ("auto", "cuda", "gpu"):
+        log(
+            "DENTALSEGMENTATOR_DEVICE=%s no es válido. Use cuda, o cpu si quiere el procesador."
+            % choice
+        )
+        raise SystemExit(1)
+    if probe is None:
+        probe = _live_cuda_probe()
+    reason = cuda_block_reason(*probe)
+    if reason:
+        log(reason)
+        raise SystemExit(1)
+    log("Dispositivo: CUDA.")
+    return "cuda"
+
+
 def run_dentalsegmentator_nnunet(input_path, output_path, target, seed=None, seed2=None):
+
+    # Stop before converting or predicting when the GPU cannot run. CPU is not a fallback.
+    device = resolve_inference_device()
 
     require_imports()
     dataset_dir = ensure_weights(default_model_dir())
@@ -2395,10 +2509,6 @@ def run_dentalsegmentator_nnunet(input_path, output_path, target, seed=None, see
     env.setdefault("nnUNet_raw", str(raw_dir))
     env.setdefault("nnUNet_preprocessed", str(prep_dir))
 
-    device = env.get("DENTALSEGMENTATOR_DEVICE", "auto").strip().lower() or "auto"
-    if device == "auto":
-        import torch
-        device = "cuda" if torch.cuda.is_available() else "cpu"
     log(f"Python: {sys.executable}")
 
     bone_from_totalsegmentator = False
