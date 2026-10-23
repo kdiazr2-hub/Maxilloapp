@@ -1111,7 +1111,7 @@ def seal_wall_perforations(mask, prediction, intensities, spacing_zyx, source_la
     return out
 
 
-def load_label_probability(prediction_or_npz, source_label, spatial_shape):
+def load_label_probability(prediction_or_npz, source_label, spatial_shape, crop_zyx=None):
     """One nnU-Net class from `<case>.npz`, aligned with the segmentation array (z, y, x).
 
     The file is what `--save_probabilities` writes. A missing or mismatched map leaves the probability
@@ -1134,14 +1134,26 @@ def load_label_probability(prediction_or_npz, source_label, spatial_shape):
             log("    [Hueso - Maxilar] Probabilidades con forma inesperada; se ignoran.")
             return None
         channel = probs[int(source_label)]
-        if channel.shape != tuple(spatial_shape):
-            if channel.shape == tuple(reversed(spatial_shape)):
+        wanted = tuple(spatial_shape)
+        if channel.shape == tuple(reversed(wanted)) and channel.shape != wanted:
+            channel = np.transpose(channel, (2, 1, 0))
+        if channel.shape != wanted and crop_zyx is not None:
+            start, box = crop_zyx
+            if channel.shape == tuple(reversed(box)) and channel.shape != tuple(box):
                 channel = np.transpose(channel, (2, 1, 0))
-            else:
-                log(f"    [Hueso - Maxilar] Probabilidades {channel.shape} no coinciden con {tuple(spatial_shape)}; "
-                    "se ignoran.")
-                return None
+            if channel.shape == tuple(box):
+                full = np.zeros(wanted, dtype=np.float32)
+                z0, y0, x0 = (int(v) for v in start)
+                dz, dy, dx = channel.shape
+                full[z0:z0 + dz, y0:y0 + dy, x0:x0 + dx] = channel
+                log("    [Hueso - Maxilar] Probabilidad del maxilar reinsertada en la grilla original.")
+                return np.ascontiguousarray(full, dtype=np.float32)
+        if channel.shape != wanted:
+            log(f"    [Hueso - Maxilar] Probabilidades {channel.shape} no coinciden con {wanted}; "
+                "se ignoran.")
+            return None
         loaded = np.ascontiguousarray(channel, dtype=np.float32)
+
     log("    [Hueso - Maxilar] Probabilidad del maxilar cargada.")
     return loaded
 
@@ -1855,7 +1867,7 @@ def write_lower_teeth_sidecar(teeth_mask, reference, output_path):
 
 
 def remap_prediction(input_path, prediction_path, output_path, target, seed=None, seed2=None,
-                     bone_from_totalsegmentator=False, probability_path=None):
+                     bone_from_totalsegmentator=False, probability_path=None, crop_zyx=None):
     import numpy as np
     import SimpleITK as sitk
 
@@ -1871,7 +1883,7 @@ def remap_prediction(input_path, prediction_path, output_path, target, seed=None
     maxilla_probability = None
     if arr is not None and (probability_path or prediction_path):
         maxilla_probability = load_label_probability(
-            probability_path or prediction_path, 1, arr.shape)
+            probability_path or prediction_path, 1, arr.shape, crop_zyx)
 
     input_image = None
     input_array = None
@@ -2286,6 +2298,178 @@ def remap_prediction(input_path, prediction_path, output_path, target, seed=None
             log(f"Maxilar de trabajo aparte: {work_path}")
 
 
+# A head CT is about 200 mm tall. A cone-beam study of the jaws is already the face, and cropping it
+# would risk the condyles. At or below this craniocaudal field the volume is left whole.
+FACIAL_CROP_SMALL_FOV_MM = 160.0
+FACIAL_ORBIT_ABOVE_MM = 20.0
+FACIAL_CHIN_BELOW_MM = 20.0
+FACIAL_CROP_MARGIN_MM = 10.0
+
+
+def _lps_axis(direction, row):
+    """Image axis that carries this LPS row, and +1 when increasing index moves that way.
+
+    `direction` is SimpleITK's 9-vector, row-major. Row 0 is left, 1 posterior, 2 superior.
+    """
+    comps = [abs(float(direction[row * 3 + i])) for i in range(3)]
+    axis = int(max(range(3), key=comps.__getitem__))
+    sign = 1.0 if float(direction[row * 3 + axis]) >= 0.0 else -1.0
+    return axis, sign
+
+
+def _np_axis(sitk_axis):
+    """GetArrayFromImage axis for a SimpleITK axis: array order is (z, y, x)."""
+    return 2 - int(sitk_axis)
+
+
+def facial_crop_box(image, small_fov_mm=FACIAL_CROP_SMALL_FOV_MM):
+    """Index and size, in SimpleITK (x, y, z), of the face crop. None when the field stays whole.
+
+    The box is the largest component above -500 HU, limited craniocaudally from 2 cm above the
+    orbits to 2 cm below the chin. Those two limits come from bone above 300 HU: the chin is the
+    lowest anterior bone, and the orbits are the highest anterior slice that still has a gap
+    between the left and the right rim. A 10 mm margin is added on every side. A craniocaudal
+    field of `small_fov_mm` or less (a cone-beam study of the jaws) is not cropped.
+    """
+    import numpy as np
+    import scipy.ndimage as ndi
+
+    direction = [float(v) for v in image.GetDirection()]
+    spacing = [float(v) for v in image.GetSpacing()]
+    origin = [float(v) for v in image.GetOrigin()]
+    size = [int(v) for v in image.GetSize()]
+    sup_axis, sup_sign = _lps_axis(direction, 2)
+    if float(size[sup_axis]) * spacing[sup_axis] <= float(small_fov_mm):
+        return None
+
+    arr = sitk.GetArrayFromImage(image)
+    tissue = arr > -500
+    if not np.any(tissue):
+        return None
+    labels, count = ndi.label(tissue, structure=np.ones((3, 3, 3), dtype=bool))
+    if count < 1:
+        return None
+    counts = np.bincount(labels.ravel())
+    counts[0] = 0
+    body = labels == int(np.argmax(counts))
+    del labels
+    bone = body & (arr > 300)
+    if not np.any(bone):
+        return None
+
+    post_axis, post_sign = _lps_axis(direction, 1)
+    lr_axis, _lr_sign = _lps_axis(direction, 0)
+    np_sup = _np_axis(sup_axis)
+    np_post = _np_axis(post_axis)
+    np_lr = _np_axis(lr_axis)
+
+    def span(mask, np_axis):
+        other = tuple(i for i in range(3) if i != np_axis)
+        idx = np.flatnonzero(mask.any(axis=other))
+        if idx.size == 0:
+            return None
+        return int(idx[0]), int(idx[-1])
+
+    body_post = span(body, np_post)
+    body_lr = span(body, np_lr)
+    body_sup = span(body, np_sup)
+    if body_post is None or body_lr is None or body_sup is None:
+        return None
+    post_lo, post_hi = body_post
+    width = post_hi - post_lo + 1
+    anterior = max(1, int(round(0.40 * width)))
+    if post_sign > 0:
+        ant_lo, ant_hi = post_lo, min(post_hi, post_lo + anterior - 1)
+    else:
+        ant_lo, ant_hi = max(post_lo, post_hi - anterior + 1), post_hi
+
+    anterior_bone = bone.copy()
+    cut = [slice(None)] * 3
+    cut[np_post] = slice(0, ant_lo)
+    anterior_bone[tuple(cut)] = False
+    cut[np_post] = slice(ant_hi + 1, None)
+    anterior_bone[tuple(cut)] = False
+    if not np.any(anterior_bone):
+        return None
+
+    sup_idx = span(anterior_bone, np_sup)
+    # Increasing index is superior when sup_sign > 0, so the chin is the other end.
+    chin_index = sup_idx[0] if sup_sign > 0 else sup_idx[1]
+
+    lr_lo, lr_hi = body_lr
+    lr_span = lr_hi - lr_lo + 1
+    third = max(1, lr_span // 3)
+    left = slice(lr_lo, lr_lo + third)
+    right = slice(lr_hi - third + 1, lr_hi + 1)
+    mid_lo = lr_lo + third
+    mid_hi = lr_hi - third
+    orbit_index = None
+    order = range(sup_idx[1], sup_idx[0] - 1, -1) if sup_sign > 0 else range(sup_idx[0], sup_idx[1] + 1)
+    for level in order:
+        taken = [slice(None)] * 3
+        taken[np_sup] = int(level)
+        taken[np_post] = slice(ant_lo, ant_hi + 1)
+        view = bone[tuple(taken)]
+        free = [axis for axis in range(3) if axis != np_sup]
+        lr_in_view = free.index(np_lr)
+        profile = np.any(view, axis=1 - lr_in_view)
+        has_left = bool(np.any(profile[left]))
+        has_right = bool(np.any(profile[right]))
+        has_gap = mid_hi >= mid_lo and not bool(np.all(profile[mid_lo:mid_hi + 1]))
+        if has_left and has_right and has_gap:
+            orbit_index = int(level)
+            break
+    if orbit_index is None:
+        orbit_index = sup_idx[1] if sup_sign > 0 else sup_idx[0]
+
+    def physical(axis, index, sign):
+        return origin[axis] + float(index) * spacing[axis] * sign
+
+    orbit_phys = physical(sup_axis, orbit_index, sup_sign)
+    chin_phys = physical(sup_axis, chin_index, sup_sign)
+    superior_limit = max(orbit_phys, chin_phys) + FACIAL_ORBIT_ABOVE_MM + FACIAL_CROP_MARGIN_MM
+    inferior_limit = min(orbit_phys, chin_phys) - FACIAL_CHIN_BELOW_MM - FACIAL_CROP_MARGIN_MM
+
+    def index_bounds(axis, sign, phys_a, phys_b, n):
+        scale = spacing[axis] * sign
+        if abs(scale) < 1e-9:
+            return 0, n - 1
+        first = (phys_a - origin[axis]) / scale
+        second = (phys_b - origin[axis]) / scale
+        lo = int(np.floor(min(first, second) + 1e-6))
+        hi = int(np.ceil(max(first, second) - 1e-6))
+        return max(0, lo), min(n - 1, hi)
+
+    start = [0, 0, 0]
+    box = [0, 0, 0]
+    sup_lo, sup_hi = index_bounds(sup_axis, sup_sign, inferior_limit, superior_limit, size[sup_axis])
+    # span() is a numpy index. Within one axis that is the same index SimpleITK uses.
+    ranges = {sup_axis: (sup_lo, sup_hi)}
+    for axis, np_axis in ((post_axis, np_post), (lr_axis, np_lr)):
+        lo_np, hi_np = span(body, np_axis)
+        margin = int(np.ceil(FACIAL_CROP_MARGIN_MM / max(spacing[axis], 1e-6)))
+        ranges[axis] = (max(0, lo_np - margin), min(size[axis] - 1, hi_np + margin))
+    for axis in range(3):
+        lo, hi = ranges[axis]
+        start[axis] = lo
+        box[axis] = hi - lo + 1
+    if box == size and start == [0, 0, 0]:
+        return None
+    return start, box
+
+
+def reinsert_label(cropped, reference, index_xyz):
+    """Paste `cropped` into a label image that copies `reference`'s grid. Outside the crop stays 0."""
+    dest = sitk.Image(reference.GetSize(), sitk.sitkUInt8)
+    dest.CopyInformation(reference)
+    source = sitk.Cast(cropped, sitk.sitkUInt8)
+    paster = sitk.PasteImageFilter()
+    paster.SetDestinationIndex([int(v) for v in index_xyz])
+    paster.SetSourceIndex([0, 0, 0])
+    paster.SetSourceSize([int(v) for v in source.GetSize()])
+    return paster.Execute(dest, source)
+
+
 def same_physical_grid(image, reference):
     return (image.GetSize() == reference.GetSize()
             and np.allclose(image.GetSpacing(), reference.GetSpacing(), rtol=0, atol=1e-5)
@@ -2524,9 +2708,30 @@ def run_dentalsegmentator_nnunet(input_path, output_path, target, seed=None, see
     prep_dir.mkdir(parents=True, exist_ok=True)
 
     log("20% Convirtiendo el TAC...")
-    image = sitk.ReadImage(str(input_path))
+    full_ct = sitk.ReadImage(str(input_path))
+    crop_box = facial_crop_box(full_ct)
+    crop_index = None
+    crop_zyx = None
+    image = full_ct
+    if crop_box is not None:
+        crop_index, crop_size = crop_box
+        image = sitk.RegionOfInterest(
+            full_ct, [int(v) for v in crop_size], [int(v) for v in crop_index])
+        crop_zyx = (
+            (int(crop_index[2]), int(crop_index[1]), int(crop_index[0])),
+            (int(crop_size[2]), int(crop_size[1]), int(crop_size[0])),
+        )
+        log("Recorte facial: %d x %d x %d voxeles, con 10 mm de margen. "
+            "La prediccion vuelve a la grilla del TAC."
+            % (int(crop_size[0]), int(crop_size[1]), int(crop_size[2])))
+    else:
+        cc_axis, _cc_sign = _lps_axis(full_ct.GetDirection(), 2)
+        cc_mm = float(full_ct.GetSize()[cc_axis]) * float(full_ct.GetSpacing()[cc_axis])
+        if cc_mm <= FACIAL_CROP_SMALL_FOV_MM:
+            log("Campo craneocaudal de %.0f mm: el FOV ya es pequeño y no se recorta." % cc_mm)
     case_input = images_dir / "case_0000.nii.gz"
     sitk.WriteImage(image, str(case_input), True)
+
 
     env = os.environ.copy()
     env["nnUNet_results"] = str(results_root)
@@ -2587,10 +2792,28 @@ def run_dentalsegmentator_nnunet(input_path, output_path, target, seed=None, see
         prediction_path = combined_path
         log("92% Craneo y mandibula de TotalSegmentator; dientes de DentalSegmentator. Sin canal.")
 
+    if crop_index is not None:
+        predicted = sitk.ReadImage(str(prediction_path))
+        if not same_physical_grid(predicted, image):
+            resampler = sitk.ResampleImageFilter()
+            resampler.SetReferenceImage(image)
+            resampler.SetInterpolator(sitk.sitkNearestNeighbor)
+            resampler.SetDefaultPixelValue(0)
+            predicted = resampler.Execute(predicted)
+        full_pred = reinsert_label(predicted, full_ct, crop_index)
+        full_path = pred_dir / "prediction_full_grid.nii.gz"
+        sitk.WriteImage(full_pred, str(full_path), True)
+        prediction_path = full_path
+        if not same_physical_grid(full_pred, full_ct):
+            raise RuntimeError("La prediccion reinsertada no conserva la grilla del TAC.")
+        log("La prediccion quedo con el origen, el espaciado y la direccion del TAC original.")
+
     log("93% Remapeando etiquetas a la app...")
     remap_prediction(input_path, prediction_path, output_path, target, seed, seed2,
                      bone_from_totalsegmentator=bone_from_totalsegmentator,
-                     probability_path=pred_dir / "case.npz")
+                     probability_path=pred_dir / "case.npz",
+                     crop_zyx=crop_zyx)
+
     if not Path(output_path).exists():
         raise RuntimeError("No se genero labelmap NRRD de salida.")
     log(f"100% Labelmap guardado: {output_path}")

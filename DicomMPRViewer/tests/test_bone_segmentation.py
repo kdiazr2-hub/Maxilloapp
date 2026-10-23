@@ -1492,3 +1492,59 @@ class SegmentationModeTests(unittest.TestCase):
     def test_an_unknown_mode_is_refused(self):
         with self.assertRaises(ValueError):
             segmentator.prediction_flags("cpu")
+
+def _face_volume():
+    """A 220 mm head: skull cap, orbital gap, chin in front, spine behind, and a separate table."""
+    shape = (220, 80, 80)  # z, y, x. Spacing will be 1, 0.8, 0.8 mm.
+    hu = np.full(shape, -1000, dtype=np.int16)
+    hu[0:210, 10:70, 10:70] = 0
+    hu[185:200, 10:70, 10:70] = 800  # calvarium
+    hu[145:156, 15:25, 15:60] = 800  # solid forehead
+    hu[115:131, 15:25, 15:28] = 800  # left orbital rim
+    hu[115:131, 15:25, 52:65] = 800  # right orbital rim
+    hu[45:56, 15:25, 30:48] = 800  # chin
+    hu[5:13, 55:68, 30:48] = 800  # cervical spine, posterior
+    hu[205:215, 0:5, 0:5] = 0  # scanner table, disconnected and above the vault
+    image = sitk.GetImageFromArray(hu)
+    image.SetSpacing((0.8, 0.8, 1.0))
+    image.SetOrigin((-30.0, -20.0, -100.0))
+    return image
+
+
+class FacialCropTests(unittest.TestCase):
+    def test_the_crop_keeps_the_face_and_drops_the_vault_the_spine_and_the_table(self):
+        image = _face_volume()
+        box = segmentator.facial_crop_box(image)
+        self.assertIsNotNone(box)
+        index, size = box
+        z0, z1 = index[2], index[2] + size[2] - 1
+        self.assertLess(z1, 185, "the cranial vault stayed in the crop")
+        self.assertGreater(z1, 131, "the crop does not clear the orbits")
+        self.assertLessEqual(z0, 45, "the chin was cut")
+        self.assertGreater(z0, 13, "the cervical spine set the lower limit")
+        self.assertLess(z1, 205, "the disconnected table stayed in the crop")
+        cropped = sitk.RegionOfInterest(image, [int(v) for v in size], [int(v) for v in index])
+        label = sitk.Image(cropped.GetSize(), sitk.sitkUInt8)
+        label.CopyInformation(cropped)
+        arr = sitk.GetArrayFromImage(label)
+        arr[arr.shape[0] // 2, arr.shape[1] // 2, arr.shape[2] // 2] = 7
+        label = sitk.GetImageFromArray(arr)
+        label.CopyInformation(cropped)
+        full = segmentator.reinsert_label(label, image, index)
+        self.assertEqual(full.GetSize(), image.GetSize())
+        self.assertTrue(np.allclose(full.GetOrigin(), image.GetOrigin()))
+        self.assertTrue(np.allclose(full.GetSpacing(), image.GetSpacing()))
+        self.assertTrue(np.allclose(full.GetDirection(), image.GetDirection()))
+        back = sitk.GetArrayFromImage(full)
+        self.assertEqual(int(back[z0 + arr.shape[0] // 2,
+                                  index[1] + arr.shape[1] // 2,
+                                  index[0] + arr.shape[2] // 2]), 7)
+        self.assertEqual(int(back[0, 0, 0]), 0)
+        self.assertEqual(int(np.count_nonzero(back)), 1)
+
+    def test_a_small_field_is_not_cropped(self):
+        hu = np.zeros((100, 40, 40), dtype=np.int16)
+        hu[20:40, 10:30, 10:30] = 800
+        image = sitk.GetImageFromArray(hu)
+        image.SetSpacing((0.4, 0.4, 1.0))  # 100 mm craniocaudal
+        self.assertIsNone(segmentator.facial_crop_box(image))
