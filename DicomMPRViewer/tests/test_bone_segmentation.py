@@ -899,6 +899,7 @@ class BoneRemapTests(unittest.TestCase):
             "DENTALSEGMENTATOR_BONE_CLOSE_RADIUS": "0",
             "DENTALSEGMENTATOR_TEETH_OPEN_RADIUS": "0",
             "DENTALSEGMENTATOR_TEETH_CLOSE_RADIUS": "0",
+            "DENTALSEGMENTATOR_EXTRA": "1",
         })
         self.env.start()
         self.addCleanup(self.env.stop)
@@ -1020,6 +1021,53 @@ class BoneRemapTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cuadricula fisica"):
             self.remap(shell(), "completo", shifted_prediction=True)
         self.assertFalse((self.root / "output.nrrd").exists())
+
+
+class SlicerIdentityTests(unittest.TestCase):
+    """The default automatic mask is DentalSegmentator's labels, nothing added."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.env = patch.dict(os.environ, {"DENTALSEGMENTATOR_EXTRA": "0"})
+        self.env.start()
+        self.addCleanup(self.env.stop)
+
+    def test_extra_postprocess_is_off_unless_asked(self):
+        self.assertFalse(segmentator.extra_anatomy_enabled())
+
+    def test_a_cavity_and_the_canal_stay_as_the_network_wrote_them(self):
+        labels = np.zeros((8, 8, 8), dtype=np.uint8)
+        labels[2:6, 2:6, 2:6] = 1
+        labels[3:5, 3:5, 3:5] = 0
+        labels[1, 1, 1] = 3
+        labels[6, 6, 6] = 5
+        intensities = np.full(labels.shape, 400, dtype=np.int16)
+        image = sitk.GetImageFromArray(intensities)
+        image.SetSpacing((0.4, 0.4, 0.4))
+        prediction = sitk.GetImageFromArray(labels)
+        prediction.CopyInformation(image)
+        input_path = self.root / "input.nrrd"
+        prediction_path = self.root / "prediction.nii.gz"
+        output_path = self.root / "output.nrrd"
+        sitk.WriteImage(image, str(input_path))
+        sitk.WriteImage(prediction, str(prediction_path))
+        segmentator.remap_prediction(input_path, prediction_path, output_path, "completo")
+        result = sitk.GetArrayFromImage(sitk.ReadImage(str(output_path)))
+        self.assertEqual(result[2, 2, 2], 5, "the maxillary voxel changed label")
+        self.assertEqual(result[3, 3, 3], 0, "the cavity was filled")
+        self.assertEqual(result[1, 1, 1], 3, "the tooth was merged into the jaw")
+        self.assertEqual(result[6, 6, 6], 7, "the canal was painted into the mandible")
+        self.assertEqual(int(np.count_nonzero(result)), int(np.count_nonzero(labels)))
+
+    def test_an_intermediate_nifti_is_not_gzip(self):
+        image = sitk.GetImageFromArray(np.zeros((2, 2, 2), dtype=np.uint8))
+        written = segmentator.write_uncompressed_nifti(image, self.root / "case_0000.nii.gz")
+        self.assertEqual(written.name, "case_0000.nii")
+        data = written.read_bytes()
+        self.assertNotEqual(data[:2], b"\x1f\x8b")
+        self.assertEqual(data[344:347], b"n+1")
 
 
 class OfflineWeightsTests(unittest.TestCase):

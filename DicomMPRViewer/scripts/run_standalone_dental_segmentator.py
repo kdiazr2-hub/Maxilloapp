@@ -32,10 +32,13 @@ FOLDS = "0"
 #   1 Maxilla & Upper Skull, 2 Mandible, 3 Upper Teeth, 4 Lower Teeth, 5 Mandibular canal
 # Bone (1 and 2) comes from DentalSegmentator (user's decision, 2026-10-19: TotalSegmentator's skull looked wrong
 # from below). DENTALSEGMENTATOR_BONE_SOURCE=totalsegmentator replaces it with TotalSegmentator, which then runs
-# first. The canal (5) is not an object in the automatic mode.
-# App labels for the automatic mode. Teeth stay their own objects. The canal is not an object.
-#   1 → 5 Maxilar, 2 → 6 Mandíbula, 3 → 3 Dientes superiores, 4 → 8 Dientes inferiores.
+# first. By default the automatic mode writes those labels as they are (canal as label 7).
+# DENTALSEGMENTATOR_EXTRA=1 is the older postprocess: teeth stay their own objects, the canal
+# is folded into the mandible, and the cavities are filled.
+# App labels. 1 → 5 Maxilar, 2 → 6 Mandíbula, 3 dientes superiores, 4 dientes inferiores.
 APP_LABEL_MAP = {1: 5, 2: 6, 3: 3, 4: 8}
+# DentalSegmentator's own labels, written as the app's objects. Nothing is added or removed.
+NETWORK_LABEL_MAP = {1: 5, 2: 6, 3: 3, 4: 8, 5: 7}
 BONE_CLOSE_MM = 0.5
 TOOTH_OPEN_MM = 0.5
 TOOTH_METAL_BAND_MM = 2.0
@@ -97,6 +100,36 @@ def keep_large_components(mask, spacing_zyx, min_mm3):
     keep = sizes > min_mm3
     keep[0] = False
     return keep[labels]
+
+
+def extra_anatomy_enabled():
+    """Bone fill, openings and soft tissue. Off unless DENTALSEGMENTATOR_EXTRA=1.
+
+    The automatic segmentation is then DentalSegmentator's labels only, as in the
+    3D Slicer extension.
+    """
+    return os.environ.get("DENTALSEGMENTATOR_EXTRA", "0").strip() == "1"
+
+
+def remap_network_labels(labels):
+    """Copy the network's voxels onto the app's label numbers. Holes stay holes."""
+    import numpy as np
+
+    source = np.asarray(labels)
+    out = np.zeros(source.shape, dtype=np.uint8)
+    for network_label, app_label in NETWORK_LABEL_MAP.items():
+        out[source == network_label] = app_label
+    return out
+
+
+def write_uncompressed_nifti(image, path):
+    """An intermediate NIfTI with compression off. A `.nii.gz` path is written as `.nii`."""
+    path = Path(path)
+    if path.suffix == ".gz":
+        path = path.with_suffix("")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sitk.WriteImage(image, str(path), False)
+    return path
 
 
 def compose_dental_labelmap(masks):
@@ -1954,6 +1987,8 @@ def remap_prediction(input_path, prediction_path, output_path, target, seed=None
         mask = arr == label_value
         if not np.any(mask):
             return mask
+        if not extra_anatomy_enabled():
+            return mask
         if label_value == 5:
             return mask  # The mandibular canal is not a bone smoothing target.
         # TotalSegmentator already returns the skull and the mandible. The DentalSegmentator
@@ -2042,12 +2077,16 @@ def remap_prediction(input_path, prediction_path, output_path, target, seed=None
     elif target in ("via aerea", "via_aerea", "airway"):
         pass
     else:
-        if arr is not None:
+        if arr is not None and not extra_anatomy_enabled():
+            out[:] = remap_network_labels(arr)
+            log("DentalSegmentator sin posproceso: la máscara es la de la red. "
+                "Sin relleno, sin aperturas ni tejidos blandos.")
+        elif arr is not None:
             composed = compose_dental_labelmap(
                 {source: conservative_mask(source) for source in (1, 2, 3, 4, 5)})
             out[:] = composed
 
-    if target in ("via aerea", "via_aerea", "airway"):
+    if extra_anatomy_enabled() and target in ("via aerea", "via_aerea", "airway"):
         log("95% Generando mascaras avanzadas de tejido y via aerea...")
         import scipy.ndimage as ndi
         img, img_arr = source_image()
@@ -2328,7 +2367,7 @@ def remap_prediction(input_path, prediction_path, output_path, target, seed=None
         lower = write_lower_teeth_sidecar(conservative_mask(4), seg, output_path)
         if lower:
             log(f"Dientes inferiores aparte: {lower}")
-    if arr is not None and np.any(out == 5):
+    if extra_anatomy_enabled() and arr is not None and np.any(out == 5):
         image, intensities = source_image()
         work = work_maxilla_mask(out == 5, intensities, image.GetSpacing()[::-1])
         work_path = write_teeth_sidecar(work, seg, output_path, "maxilar_trabajo")
@@ -2701,8 +2740,9 @@ def resolve_inference_device(requested=None, probe=None):
 
 
 def prediction_flags(mode):
-    """Preciso is the 3D Slicer default: test-time mirroring and step_size 0.5.
+    """Preciso matches the Slicer extension: Parameter(folds="0"), TTA on, step_size 0.5.
 
+    0.5 is nnU-Net's own default; the extension does not pass another value.
     Rápido drops the mirroring and keeps the same step. The model does not change.
     """
     name = (mode or "preciso").strip().lower()
@@ -2830,7 +2870,8 @@ class InMemoryPredictor:
         def attempt(on_device):
             predictor.perform_everything_on_device = bool(on_device)
             self.attempts.append(bool(on_device))
-            return predictor.predict_single_npy_array(array, properties, None, None, True)
+            return predictor.predict_single_npy_array(
+                array, properties, None, None, extra_anatomy_enabled())
 
         if self.device == "cpu":
             return attempt(False)
@@ -2851,7 +2892,11 @@ class InMemoryPredictor:
             log("DentalSegmentator: modo rápido, sin TTA, step_size 0.5, volumen en memoria.")
         else:
             log("DentalSegmentator: modo preciso, TTA activa, step_size 0.5, volumen en memoria.")
-        segmentation, probabilities = self.predict_array(array, properties, mode)
+        result = self.predict_array(array, properties, mode)
+        if extra_anatomy_enabled():
+            segmentation, probabilities = result
+        else:
+            segmentation, probabilities = result, None
         return image_from_nnunet_segmentation(segmentation, image), probabilities
 
 
@@ -2922,7 +2967,11 @@ def run_dentalsegmentator_nnunet(input_path, output_path, target, seed=None, see
 
     log("20% Convirtiendo el TAC...")
     full_ct = sitk.ReadImage(str(input_path))
-    crop_box = facial_crop_box(full_ct)
+    if os.environ.get("DENTALSEGMENTATOR_FACIAL_CROP", "0").strip() == "1":
+        crop_box = facial_crop_box(full_ct)
+    else:
+        crop_box = None
+        log("Sin recorte facial: entra el volumen entero, como en 3D Slicer.")
     crop_index = None
     crop_zyx = None
     image = full_ct
@@ -2937,12 +2986,13 @@ def run_dentalsegmentator_nnunet(input_path, output_path, target, seed=None, see
         log("Recorte facial: %d x %d x %d voxeles, con 10 mm de margen. "
             "La prediccion vuelve a la grilla del TAC."
             % (int(crop_size[0]), int(crop_size[1]), int(crop_size[2])))
-    else:
+    elif os.environ.get("DENTALSEGMENTATOR_FACIAL_CROP", "0").strip() == "1":
         cc_axis, _cc_sign = _lps_axis(full_ct.GetDirection(), 2)
         cc_mm = float(full_ct.GetSize()[cc_axis]) * float(full_ct.GetSpacing()[cc_axis])
         if cc_mm <= FACIAL_CROP_SMALL_FOV_MM:
             log("Campo craneocaudal de %.0f mm: el FOV ya es pequeño y no se recorta." % cc_mm)
-    case_input = images_dir / "case_0000.nii.gz"
+    case_input = images_dir / "case_0000.nii"
+    write_uncompressed_nifti(image, case_input)
 
     os.environ["nnUNet_results"] = str(results_root)
     os.environ.setdefault("nnUNet_raw", str(raw_dir))
@@ -2954,8 +3004,8 @@ def run_dentalsegmentator_nnunet(input_path, output_path, target, seed=None, see
     bone_from_totalsegmentator = False
     bone_source = os.environ.get("DENTALSEGMENTATOR_BONE_SOURCE", "dentalsegmentator").strip().lower()
     if target.lower() not in ("teeth", "dientes") and bone_source == "totalsegmentator":
-        sitk.WriteImage(image, str(case_input), True)
-        ts_path = pred_dir / "totalsegmentator_craniofacial.nii.gz"
+        write_uncompressed_nifti(image, case_input)
+        ts_path = pred_dir / "totalsegmentator_craniofacial.nii"
         run_totalsegmentator_bone(case_input, ts_path, device)
         bone_from_totalsegmentator = True
 
@@ -2963,6 +3013,7 @@ def run_dentalsegmentator_nnunet(input_path, output_path, target, seed=None, see
     folds = tuple(int(part) for part in env.get("DENTALSEGMENTATOR_FOLDS", FOLDS).split(",") if part.strip())
     predicted, probabilities = shared_predictor(device).predict_image(
         image, configuration_folder(dataset_dir), mode, folds or (0,))
+    write_uncompressed_nifti(predicted, pred_dir / "case.nii")
     log("88% Exportando dientes...")
 
     if bone_from_totalsegmentator:

@@ -109,12 +109,13 @@ cmake --build build-linux-core --parallel && ctest --test-dir build-linux-core -
 - AI segmentation: `StandaloneDentalSegmentatorService` runs `scripts/run_standalone_dental_segmentator.py`
   (log in `AISegmentation/<fecha>/segmentacion.log`): bone, teeth and canal from nnU-Net DentalSegmentator
   (user's decision, 2026-10-19; `DENTALSEGMENTATOR_BONE_SOURCE=totalsegmentator` takes skull and mandible from
-  TotalSegmentator instead, its blocks then re-read from the CT). Bone post-processing per jaw: closing, thicken,
-  then `solid_bone_mask` (closed cavities ≤ 8 mm, then marrow = free voxels the bone encloses: at most 3 of 26
-  directions run 15 mm without meeting it; never air nor within 2 mm of air, so the nose, the sinuses' mucosa,
-  the orbits and the cranial cavity stay open; no HU floor otherwise), `drop_bone_islands` (< 50 mm3) and a diagnostic report
-  in the log (spacing and anisotropy, cortical/medullary/air voxels, trimesh watertightness;
-  `DENTALSEGMENTATOR_MESH_CHECK=0` skips the mesh check). `fill_medullary_bone` is no longer called.
+  TotalSegmentator instead, its blocks then re-read from the CT). The automatic mode matches the 3D Slicer
+  extension: Dataset111_453CT, 3d_fullres, fold 0, test-time mirroring and step_size 0.5. The label map is the
+  network's own voxels (maxilla 5, mandible 6, upper teeth 3, lower teeth 8, canal 7); nothing is filled or opened.
+  Closing, thickening, `solid_bone_mask`, soft tissue and airway run only with `DENTALSEGMENTATOR_EXTRA=1`.
+  The facial crop runs only with `DENTALSEGMENTATOR_FACIAL_CROP=1`. Intermediate NIfTIs are written uncompressed.
+  If PyTorch cannot see a usable CUDA device the script stops in Spanish and names the cu128 install; it does not
+  fall back to CPU unless `DENTALSEGMENTATOR_DEVICE=cpu`.
 - Meshes: `MeshGenerator::generateMesh` contours a Gaussian-smoothed signed distance of each bone label; thin walls
   are protected by forcing only their medial voxels inside. `MaskToObjectCore` extracts a label without smoothing.
   Labels the script delivered solid (`MainWindow::m_solidBoneLabels`, AI labels 5/6, optional project key
