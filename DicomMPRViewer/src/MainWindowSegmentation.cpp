@@ -139,8 +139,7 @@ void MainWindow::importToothSidecar(const QString& outputSegmentationPath, const
         statusBar()->showMessage(tr("%1: %2").arg(objectName, error), 8000);
         return;
     }
-    const auto exact = MeshGenerator::generateMesh(teeth, 1, false, 0, &error, false);
-    const auto mesh = exact ? MeshGenerator::smoothToothMesh(exact) : nullptr;
+    const auto mesh = MaskToObjectCore::SlicerSurface(teeth, 1, dentalSmoothingFactor(), &error);
     if (!mesh || mesh->GetNumberOfPolys() == 0) {
         statusBar()->showMessage(tr("%1: %2").arg(objectName, error), 8000);
         return;

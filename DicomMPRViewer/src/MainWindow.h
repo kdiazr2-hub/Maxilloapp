@@ -870,6 +870,8 @@ private:
     // older project and a project that never ran the automatic segmentation omit the key.
     QString                           m_dentalSegmentatorMode;
     QComboBox*                        m_dentalModeCombo = nullptr;
+    QSlider*                          m_dentalSmoothSlider = nullptr;
+    double dentalSmoothingFactor() const;
     bool closeCorticesFor(int label) const {
         // Teeth are their own objects. The chord fill is for hollow cortical bone.
         if (label == kUpperTeethLabel || label == kLowerTeethLabel || label == kWorkMaxillaLabel)

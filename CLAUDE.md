@@ -118,6 +118,9 @@ cmake --build build-linux-core --parallel && ctest --test-dir build-linux-core -
   fall back to CPU unless `DENTALSEGMENTATOR_DEVICE=cpu`.
 - Meshes: `MeshGenerator::generateMesh` contours a Gaussian-smoothed signed distance of each bone label; thin walls
   are protected by forcing only their medial voxels inside. `MaskToObjectCore` extracts a label without smoothing.
+  Automatic DentalSegmentator objects use `MaskToObjectCore::SlicerSurface`: discrete flying edges on the label,
+  one voxel of padding, then windowed sinc with the extension's factor (the Suavizado slider, 0–1; 0.5 gives
+  passband 0.01 and 40 iterations). Exact voxel conversion stays on the mask menu.
   Labels the script delivered solid (`MainWindow::m_solidBoneLabels`, AI labels 5/6, optional project key
   `solidBoneLabels`) skip `fillBetweenCortices`, whose 20 mm axis chords put rectangular slabs in the nose and palate.
 - Modelos: `ModelWorkflowCore` gates the eight guided steps (`MainWindowModels.cpp`); `RegistrationCore` registers

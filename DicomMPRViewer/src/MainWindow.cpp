@@ -141,6 +141,7 @@
 #include <vtkTriangleFilter.h>
 #include <vtkTubeFilter.h>
 #include <vtkXMLPolyDataWriter.h>
+#include "MaskToObjectCore.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 static MeasurementViewOrientation toMeasurementView(MPROrientation orientation)
@@ -1095,6 +1096,17 @@ void MainWindow::buildToolBar()
             "Rápido: una sola orientación. El modelo y el solape de 0,5 son los mismos."));
         m_dentalModeCombo->setCurrentIndex(0);
         row->addWidget(m_dentalModeCombo);
+
+        row->addWidget(new QLabel(tr("Suavizado"), page));
+        m_dentalSmoothSlider = new QSlider(Qt::Horizontal, page);
+        m_dentalSmoothSlider->setObjectName(QStringLiteral("DentalSegmentatorSmoothing"));
+        m_dentalSmoothSlider->setRange(0, 100);
+        m_dentalSmoothSlider->setValue(50);
+        m_dentalSmoothSlider->setFixedWidth(90);
+        m_dentalSmoothSlider->setToolTip(tr(
+            "Suavizado de la superficie automática, el de la extensión de 3D Slicer. "
+            "0 deja el escalón del vóxel y 1 es el máximo. 0,5 es el valor de la extensión."));
+        row->addWidget(m_dentalSmoothSlider);
 
         m_manualAirwayAct = new QAction(tr("Vía Aérea\nManual"), this);
         connect(m_manualAirwayAct, &QAction::triggered, this, [this] {
@@ -8334,6 +8346,11 @@ void MainWindow::onSegmentationCancelled()
     statusBar()->showMessage(tr("Segmentación cancelada. La segmentación actual no cambió."));
 }
 
+double MainWindow::dentalSmoothingFactor() const
+{
+    return m_dentalSmoothSlider ? m_dentalSmoothSlider->value() / 100.0 : 0.5;
+}
+
 void MainWindow::onSegmentationFinished(const QString& outputSegmentationPath)
 {
     closeSegmentationProgress();
@@ -8388,13 +8405,8 @@ void MainWindow::onSegmentationFinished(const QString& outputSegmentationPath)
 
     for (int currentLabel : labelsToGenerate) {
         QString meshError;
-        const int smoothingIterations = (pendingLabel == -2)
-            ? smoothingIterationsForPreset(MeshSmoothingPreset::Optimal)
-            : smoothingIterationsForPreset(MeshSmoothingPreset::Moderate);
-        m_maskSmoothingIterations[currentLabel] = smoothingIterations;
-        auto mesh = MeshGenerator::generateMesh(
-            m_segmentationLabelmap, currentLabel, true, smoothingIterations, &meshError,
-            closeCorticesFor(currentLabel), m_volume);
+        auto mesh = MaskToObjectCore::SlicerSurface(
+            m_segmentationLabelmap, currentLabel, dentalSmoothingFactor(), &meshError);
         if (!mesh) {
             statusBar()->showMessage(
                 tr("Malla %1: %2").arg(meshLabelName(currentLabel), meshError));

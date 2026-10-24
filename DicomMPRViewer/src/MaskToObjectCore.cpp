@@ -2,6 +2,15 @@
 #include "BoneCavityFill.h"
 #include "MeshGenerator.h"
 
+#include <algorithm>
+#include <cmath>
+
+#include <vtkDiscreteFlyingEdges3D.h>
+#include <vtkImageConstantPad.h>
+#include <vtkImageThreshold.h>
+#include <vtkPolyDataNormals.h>
+#include <vtkWindowedSincPolyDataFilter.h>
+
 #include <vtkDataArray.h>
 #include <vtkExtractVOI.h>
 #include <vtkFlyingEdges3D.h>
@@ -138,4 +147,75 @@ vtkSmartPointer<vtkPolyData> MaskToObjectCore::Convert(vtkImageData* mask, int l
     if (surface == Surface::Exact)
         return MeshGenerator::generateMesh(mask, label, false, 0, error, closeCortices, hounsfield);
     return smoothSurface(mask, label, error, hounsfield, closeCortices);
+}
+
+double MaskToObjectCore::SlicerPassband(double factor)
+{
+    const double f = std::clamp(factor, 0.0, 1.0);
+    return std::pow(10.0, -4.0 * f);
+}
+
+int MaskToObjectCore::SlicerIterations(double factor)
+{
+    const double f = std::clamp(factor, 0.0, 1.0);
+    return static_cast<int>(std::lround(20.0 + 40.0 * f));
+}
+
+vtkSmartPointer<vtkPolyData> MaskToObjectCore::SlicerSurface(vtkImageData* mask, int label, double factor,
+                                                            QString* error)
+{
+    if (error) error->clear();
+    if (!mask || !mask->GetPointData() || !mask->GetPointData()->GetScalars()
+        || mask->GetNumberOfScalarComponents() != 1) {
+        if (error) *error = QStringLiteral("Se necesita una máscara de etiquetas válida.");
+        return nullptr;
+    }
+    if (label <= 0) {
+        if (error) *error = QStringLiteral("Etiqueta inválida.");
+        return nullptr;
+    }
+
+    auto binary = vtkSmartPointer<vtkImageThreshold>::New();
+    binary->SetInputData(mask);
+    binary->ThresholdBetween(label, label);
+    binary->SetInValue(1);
+    binary->SetOutValue(0);
+    binary->SetOutputScalarTypeToUnsignedChar();
+    binary->Update();
+
+    int extent[6];
+    binary->GetOutput()->GetExtent(extent);
+    auto padded = vtkSmartPointer<vtkImageConstantPad>::New();
+    padded->SetInputConnection(binary->GetOutputPort());
+    padded->SetConstant(0.0);
+    padded->SetOutputWholeExtent(extent[0] - 1, extent[1] + 1,
+                                 extent[2] - 1, extent[3] + 1,
+                                 extent[4] - 1, extent[5] + 1);
+    padded->Update();
+
+    auto flying = vtkSmartPointer<vtkDiscreteFlyingEdges3D>::New();
+    flying->SetInputConnection(padded->GetOutputPort());
+    flying->SetValue(0, 1);
+    flying->Update();
+    if (!flying->GetOutput() || flying->GetOutput()->GetNumberOfPolys() == 0) {
+        if (error) *error = QStringLiteral("La etiqueta no tiene vóxeles.");
+        return nullptr;
+    }
+
+    auto sinc = vtkSmartPointer<vtkWindowedSincPolyDataFilter>::New();
+    sinc->SetInputConnection(flying->GetOutputPort());
+    sinc->SetNumberOfIterations(SlicerIterations(factor));
+    sinc->SetPassBand(SlicerPassband(factor));
+    sinc->NormalizeCoordinatesOn();
+    sinc->BoundarySmoothingOff();
+    sinc->FeatureEdgeSmoothingOff();
+    sinc->NonManifoldSmoothingOn();
+    sinc->Update();
+
+    auto normals = vtkSmartPointer<vtkPolyDataNormals>::New();
+    normals->SetInputConnection(sinc->GetOutputPort());
+    normals->ConsistencyOn();
+    normals->SplittingOff();
+    normals->Update();
+    return normals->GetOutput();
 }

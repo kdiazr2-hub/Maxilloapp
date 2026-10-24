@@ -9,6 +9,7 @@
 #include <vtkMath.h>
 #include <vtkNrrdReader.h>
 #include <vtkPNGWriter.h>
+#include <vtkPointData.h>
 #include <vtkPolyData.h>
 #include <vtkPolyDataConnectivityFilter.h>
 #include <vtkPolyDataMapper.h>
@@ -59,6 +60,47 @@ static double slopeResidual(vtkPolyData* mesh)
     }
     require(count > 50, "Slope fixture has no top surface");
     return std::sqrt(sum / count);
+}
+
+
+static vtkIdType boundaryEdges(vtkPolyData* mesh)
+{
+    auto edges = vtkSmartPointer<vtkFeatureEdges>::New();
+    edges->SetInputData(mesh);
+    edges->BoundaryEdgesOn();
+    edges->FeatureEdgesOff();
+    edges->NonManifoldEdgesOff();
+    edges->ManifoldEdgesOff();
+    edges->Update();
+    return edges->GetOutput()->GetNumberOfLines();
+}
+
+static void testSlicerFactorMatchesTheExtension()
+{
+    require(std::abs(MaskToObjectCore::SlicerPassband(0.5) - 0.01) < 1e-12, "Slicer passband at 0.5");
+    require(MaskToObjectCore::SlicerIterations(0.5) == 40, "Slicer iterations at 0.5");
+    require(std::abs(MaskToObjectCore::SlicerPassband(0.0) - 1.0) < 1e-12, "Slicer passband at 0");
+    require(MaskToObjectCore::SlicerIterations(0.0) == 20, "Slicer iterations at 0");
+    require(MaskToObjectCore::SlicerIterations(1.0) == 60, "Slicer iterations at 1");
+}
+
+static void testSlicerSurfaceClosesALabelOnTheBorder()
+{
+    auto mask = vtkSmartPointer<vtkImageData>::New();
+    mask->SetDimensions(8, 8, 8);
+    mask->SetSpacing(0.5, 0.5, 0.5);
+    mask->AllocateScalars(VTK_UNSIGNED_CHAR, 1);
+    std::memset(mask->GetScalarPointer(), 0, static_cast<size_t>(mask->GetNumberOfPoints()));
+    for (int z = 2; z <= 5; ++z)
+        for (int y = 2; y <= 5; ++y)
+            mask->SetScalarComponentFromDouble(0, y, z, 0, 5);
+    QString error;
+    const auto mesh = MaskToObjectCore::SlicerSurface(mask, 5, 0.5, &error);
+    require(mesh && mesh->GetNumberOfPolys() > 0, "Slicer surface produced no triangles");
+    require(error.isEmpty(), "Slicer surface reported an error");
+    require(boundaryEdges(mesh) == 0, "A label on the volume border stayed open");
+    require(mesh->GetPointData()->GetNormals() != nullptr, "Slicer surface has no normals");
+    require(!MaskToObjectCore::SlicerSurface(mask, 4, 0.5, &error), "An empty label produced a mesh");
 }
 
 // A plane sampled on 0.6 mm slices: the exact surface is a staircase, the smooth one is not.
@@ -291,6 +333,8 @@ int main()
         }
         testSmoothRemovesSliceTerraces();
         testSolidBoneSkipsTheCorticalFill();
+        testSlicerFactorMatchesTheExtension();
+        testSlicerSurfaceClosesALabelOnTheBorder();
         require(!MaskToObjectCore::Convert(nullptr, 5), "Invalid mask accepted");
         require(!MaskToObjectCore::Convert(nullptr, 5, nullptr, Surface::Smooth), "Invalid mask accepted (smooth)");
         realDataReport();

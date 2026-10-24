@@ -19,4 +19,12 @@ public:
                                                 vtkImageData* hounsfield = nullptr,
                                                 bool closeCortices = true);
     static constexpr double SmoothSigmaVoxels = 0.6;
+
+    // The 3D Slicer extension surface: discrete flying edges on the label, one voxel of
+    // padding, then windowed sinc. factor is 0..1. passband = 10^(-4*factor),
+    // iterations = 20 + 40*factor. 0.5 is the extension's default (passband 0.01, 40 iterations).
+    static double SlicerPassband(double factor);
+    static int SlicerIterations(double factor);
+    static vtkSmartPointer<vtkPolyData> SlicerSurface(vtkImageData* mask, int label, double factor,
+                                                      QString* error = nullptr);
 };
