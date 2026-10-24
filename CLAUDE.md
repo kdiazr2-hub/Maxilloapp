@@ -112,6 +112,7 @@ cmake --build build-linux-core --parallel && ctest --test-dir build-linux-core -
   TotalSegmentator instead, its blocks then re-read from the CT). The automatic mode matches the 3D Slicer
   extension: Dataset111_453CT, 3d_fullres, fold 0, test-time mirroring and step_size 0.5. The label map is the
   network's own voxels (maxilla 5, mandible 6, upper teeth 3, lower teeth 8, canal 7); nothing is filled or opened.
+  Face-connected islands under 60 mm³ are dropped on the jaws and the teeth, as in the extension; the canal stays.
   Closing, thickening, `solid_bone_mask`, soft tissue and airway run only with `DENTALSEGMENTATOR_EXTRA=1`.
   The facial crop runs only with `DENTALSEGMENTATOR_FACIAL_CROP=1`. Intermediate NIfTIs are written uncompressed.
   If PyTorch cannot see a usable CUDA device the script stops in Spanish and names the cu128 install; it does not

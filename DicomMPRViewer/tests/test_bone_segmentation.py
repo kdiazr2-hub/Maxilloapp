@@ -1045,7 +1045,7 @@ class SlicerIdentityTests(unittest.TestCase):
         labels[6, 6, 6] = 5
         intensities = np.full(labels.shape, 400, dtype=np.int16)
         image = sitk.GetImageFromArray(intensities)
-        image.SetSpacing((0.4, 0.4, 0.4))
+        image.SetSpacing((4.0, 4.0, 4.0))
         prediction = sitk.GetImageFromArray(labels)
         prediction.CopyInformation(image)
         input_path = self.root / "input.nrrd"
@@ -1068,6 +1068,30 @@ class SlicerIdentityTests(unittest.TestCase):
         data = written.read_bytes()
         self.assertNotEqual(data[:2], b"\x1f\x8b")
         self.assertEqual(data[344:347], b"n+1")
+
+
+    def test_specks_under_60_mm3_go_and_the_canal_stays(self):
+        labels = np.zeros((12, 12, 12), dtype=np.uint8)
+        labels[0:5, 0:5, 0:5] = 1          # 125 mm³, kept
+        labels[0, 8, 0] = 1                 # 1 mm³ speck, dropped
+        labels[0:4, 0:5, 8:10] = 2          # 40 mm³
+        labels[4:8, 5:10, 10:12] = 2        # 40 mm³, touching the first only at a corner
+        labels[11, 11, 11] = 5              # canal, kept even though it is one voxel
+        image = sitk.GetImageFromArray(np.zeros(labels.shape, dtype=np.int16))
+        image.SetSpacing((1.0, 1.0, 1.0))
+        prediction = sitk.GetImageFromArray(labels)
+        prediction.CopyInformation(image)
+        input_path = self.root / "input.nrrd"
+        prediction_path = self.root / "prediction.nii.gz"
+        output_path = self.root / "islands.nrrd"
+        sitk.WriteImage(image, str(input_path))
+        sitk.WriteImage(prediction, str(prediction_path))
+        segmentator.remap_prediction(input_path, prediction_path, output_path, "completo")
+        result = sitk.GetArrayFromImage(sitk.ReadImage(str(output_path)))
+        self.assertEqual(result[2, 2, 2], 5)
+        self.assertEqual(result[0, 8, 0], 0)
+        self.assertFalse(np.any(result == 6), "corner-touching blocks were kept as one island")
+        self.assertEqual(result[11, 11, 11], 7)
 
 
 class OfflineWeightsTests(unittest.TestCase):

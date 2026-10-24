@@ -122,6 +122,56 @@ def remap_network_labels(labels):
     return out
 
 
+# DentalSegmentator drops face-connected specks under this size on every segment except the canal.
+SLICER_ISLAND_MM3 = 60.0
+
+
+def drop_slicer_islands(labels, spacing_zyx):
+    """Remove components smaller than 60 mm³ from the jaws and the teeth.
+
+    The mandibular canal is kept whole. Connectivity is the six faces, which is what
+    Slicer's island tool uses (vtkITKIslandMath with fully-connected off). A component
+    is kept when its voxel count is at least ceil(60 / voxel volume).
+    """
+    import numpy as np
+    import scipy.ndimage as ndi
+
+    source = np.asarray(labels)
+    spacing = np.asarray(spacing_zyx, dtype=np.float64)
+    voxel_mm3 = float(np.prod(spacing))
+    if voxel_mm3 <= 0 or source.size == 0:
+        return source
+    minimum = int(np.ceil(SLICER_ISLAND_MM3 / voxel_mm3))
+    structure = ndi.generate_binary_structure(3, 1)
+    removed = 0
+    for label in (1, 2, 3, 4):
+        mask = source == label
+        if not np.any(mask):
+            continue
+        bounds = []
+        for axis in range(3):
+            other = tuple(i for i in range(3) if i != axis)
+            occupied = np.flatnonzero(mask.any(axis=other))
+            bounds.append((int(occupied[0]), int(occupied[-1]) + 1))
+        (z0, z1), (y0, y1), (x0, x1) = bounds
+        crop = mask[z0:z1, y0:y1, x0:x1]
+        islands, count = ndi.label(crop, structure=structure)
+        if count == 0:
+            continue
+        sizes = np.bincount(islands.ravel())
+        small = np.nonzero(sizes < minimum)[0]
+        small = small[small != 0]
+        if small.size == 0:
+            continue
+        remove = np.isin(islands, small)
+        removed += int(np.count_nonzero(remove))
+        view = source[z0:z1, y0:y1, x0:x1]
+        view[remove] = 0
+    if removed:
+        log("Islas de menos de 60 mm³ eliminadas: %d vóxeles. El canal se conserva." % removed)
+    return source
+
+
 def write_uncompressed_nifti(image, path):
     """An intermediate NIfTI with compression off. A `.nii.gz` path is written as `.nii`."""
     path = Path(path)
@@ -2078,6 +2128,7 @@ def remap_prediction(input_path, prediction_path, output_path, target, seed=None
         pass
     else:
         if arr is not None and not extra_anatomy_enabled():
+            drop_slicer_islands(arr, seg.GetSpacing()[::-1])
             out[:] = remap_network_labels(arr)
             log("DentalSegmentator sin posproceso: la máscara es la de la red. "
                 "Sin relleno, sin aperturas ni tejidos blandos.")
